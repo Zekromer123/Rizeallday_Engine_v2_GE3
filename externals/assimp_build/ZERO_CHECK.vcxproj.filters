@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="D:\Rizeallday_Engine_v2\externals\assimp_build\CMakeFiles\9f3c9faf79c05d59d43317938ecacb71\generate.stamp.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{E98FCCDF-DFBF-3B4F-8C52-F7BF3B615FAB}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>
