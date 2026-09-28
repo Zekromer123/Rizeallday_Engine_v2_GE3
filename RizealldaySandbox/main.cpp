@@ -1,4 +1,5 @@
 #include <RizeEngine.h>
+#include <cassert>
 
 /// Windowsアプリでのエントリーポイント(main関数)
 int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
@@ -26,6 +27,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		camera.Update();
 		lights->Update();
 
+		assert(false && "assert Test");
 		// --- 更新処理ここまで ---
 
 #ifdef USE_IMGUI
