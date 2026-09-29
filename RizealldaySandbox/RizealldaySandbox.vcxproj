@@ -94,6 +94,7 @@ copy "$(ProjectDir)dxcompiler.dll" "$(OutDir)" /Y
 copy "$(ProjectDir)dxil.dll" "$(OutDir)" /Y
 copy "$(ProjectDir)..\RizealldayEngine\shaders\*.*" "$(OutDir)shaders\" /Y
 copy "$(ProjectDir)..\RizealldayEngine\shaders\*.*" "$(ProjectDir)shaders\" /Y
+if exist "$(ProjectDir)Resources" xcopy "$(ProjectDir)Resources" "$(OutDir)Resources" /E /I /Y
       </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
@@ -129,6 +130,7 @@ copy "$(ProjectDir)dxcompiler.dll" "$(OutDir)" /Y
 copy "$(ProjectDir)dxil.dll" "$(OutDir)" /Y
 copy "$(ProjectDir)..\RizealldayEngine\shaders\*.*" "$(OutDir)shaders\" /Y
 copy "$(ProjectDir)..\RizealldayEngine\shaders\*.*" "$(ProjectDir)shaders\" /Y
+if exist "$(ProjectDir)Resources" xcopy "$(ProjectDir)Resources" "$(OutDir)Resources" /E /I /Y
       </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
@@ -167,10 +169,12 @@ copy "$(ProjectDir)dxcompiler.dll" "$(OutDir)" /Y
 copy "$(ProjectDir)dxil.dll" "$(OutDir)" /Y
 copy "$(ProjectDir)..\RizealldayEngine\shaders\*.*" "$(OutDir)shaders\" /Y
 copy "$(ProjectDir)..\RizealldayEngine\shaders\*.*" "$(ProjectDir)shaders\" /Y
+if exist "$(ProjectDir)Resources" xcopy "$(ProjectDir)Resources" "$(OutDir)Resources" /E /I /Y
       </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="IsometricCamera.cpp" />
     <ClCompile Include="main.cpp">
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
       <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
@@ -183,6 +187,9 @@ copy "$(ProjectDir)..\RizealldayEngine\shaders\*.*" "$(ProjectDir)shaders\" /Y
     <ProjectReference Include="..\externals\DirectXTex\DirectXTex\DirectXTex_Desktop_2022_Win10.vcxproj">
       <Project>{371b9fa9-4c90-4ac6-a123-aced756d6c77}</Project>
     </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="IsometricCamera.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

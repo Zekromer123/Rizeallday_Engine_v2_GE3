@@ -22,6 +22,7 @@
 #include "3d/PointLight.h"
 #include "3d/SpotLight.h"
 #include "3d/PrimitiveDrawer.h"
+#include "3d/CircleShadow.h"
 
 // 2D
 #include "2d/Sprite.h"

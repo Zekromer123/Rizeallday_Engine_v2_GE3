@@ -1,6 +1,9 @@
 # Rizeallday Engine v2
 
+[English](README_EN.md) | [日本語](README_JA.md) | **Bahasa Indonesia**
+
 Selamat datang di **Rizeallday Engine v2**!
+
 Project ini adalah evolusi dari Rizeallday Engine yang telah direstrukturisasi menggunakan arsitektur modular **Engine + Sandbox** (mengikuti pola arsitektur modern seperti [TheCherno Hazel Engine](https://www.youtube.com/@TheCherno) dan template [KamataEngine](file:///D:/KamataEngine%20New%20Version)).
 
 Engine ini dikembangkan khusus dengan **DirectX 12** murni, C++20, static library linkage, integrasi **Assimp** (mendukung model 3D FBX, OBJ, GLTF, DAE, dsb.), sistem **Multi-Lighting** (Directional, Point, Spot, dan Ambient), serta **ImGui** terintegrasi untuk debugging visual.
@@ -14,10 +17,12 @@ Engine ini dikembangkan khusus dengan **DirectX 12** murni, C++20, static librar
 4. [Referensi API & Perintah (Command Reference)](#4-referensi-api--perintah-command-reference)
    - [Core Lifecycle (`RizeEngine`)](#core-lifecycle-rizeengine)
    - [Grafik & Device (`DirectXCommon`)](#grafik--device-directxcommon)
+   - [Pipeline & Blend Mode (`GraphicPipeline` / `BlendMode`)](#pipeline--blend-mode-graphicpipeline--blendmode)
    - [Model 3D & Assimp Loader (`Model`)](#model-3d--assimp-loader-model)
    - [Objek 3D Instance (`Object3d`)](#objek-3d-instance-object3d)
+   - [Bayangan Lingkaran 3D (`CircleShadow`)](#bayangan-lingkaran-3d-circleshadow)
    - [Transformasi Dunia (`WorldTransform`)](#transformasi-dunia-worldtransform)
-   - [Kamera 3D (`Camera` & `DebugCamera`)](#kamera-3d-camera--debugcamera)
+   - [Kamera 3D & Isometrik (`Camera`, `IsometricCamera`, `DebugCamera`)](#kamera-3d--isometrik-camera-isometriccamera-debugcamera)
    - [Sistem Pencahayaan (`LightGroup`)](#sistem-pencahayaan-lightgroup)
    - [Sprite 2D (`Sprite`)](#sprite-2d-sprite)
    - [Primitive Debug Drawer (`PrimitiveDrawer`)](#primitive-debug-drawer-primitivedrawer)
@@ -26,21 +31,22 @@ Engine ini dikembangkan khusus dengan **DirectX 12** murni, C++20, static librar
    - [Sistem Audio WAV (`Audio`)](#sistem-audio-wav-audio)
    - [Fungsi Matematika (`Mathematics` / `MathUtil`)](#fungsi-matematika-mathematics--mathutil)
 5. [Format 3D & Shader Pipeline](#5-format-3d--shader-pipeline)
-6. [Catatan Keamanan & Isolasi Tugas Kuliah](#6-catatan-keamanan--isolasi-tugas-kuliah)
 
 ---
 
 ## 1. Arsitektur & Struktur Folder
 
 Solusi terbagi menjadi dua proyek utama:
-- **`RizealldayEngine`**: Dibuat sebagai **Static Library (`.lib`)**. Berisi seluruh core rendering DX12, math, shader, assimp loader, input, audio, dan lighting. Anda tidak perlu mengutak-atik folder ini lagi saat membuat game.
+- **`RizealldayEngine`**: Dibuat sebagai **Static Library (`.lib`)**. Berisi seluruh core rendering DX12, math, shader, assimp loader, skeletal animation, input, audio, multi-lighting, blend mode, dan circle shadow. Anda tidak perlu mengutak-atik folder ini lagi saat membuat game.
 - **`RizealldaySandbox`**: Dibuat sebagai **Executable (`.exe`)**. Tempat Anda menulis logika game, scene, entitas, dan gameplay loop. Project ini diset sebagai **Startup Project**.
 
 ```
 D:\Rizeallday_Engine_v2\
 │
 ├── Rizeallday_Engine_v2.slnx              # File Solution Visual Studio
-├── README.md                               # Dokumentasi lengkap engine ini
+├── README.md                               # Dokumentasi lengkap engine ini (Bahasa Indonesia)
+├── README_EN.md                            # Documentation in English
+├── README_JA.md                            # 日本語版ドキュメント
 │
 ├── RizealldayEngine/                       # [LIBRARY] Core Engine
 │   ├── RizealldayEngine.vcxproj            # Project Static Library
@@ -48,15 +54,17 @@ D:\Rizeallday_Engine_v2\
 │   │   ├── RizeEngine.h / .cpp             # Master include & lifecycle engine
 │   │   ├── DirectXCommon.h / .cpp          # Inisialisasi DX12, Device, SwapChain, Heap
 │   │   ├── WinApp.h / .cpp                 # Pembuatan & manajemen window Windows
+│   │   ├── BlendMode.h                     # Enum BlendMode (Opaque, AlphaBlend, Add, Multiply)
 │   │   ├── TextureManager.h / .cpp         # Auto-allocating descriptor & texture cache
-│   │   ├── GraphicPipeline.h / .cpp        # Pipeline State Object (PSO) & Root Signature
+│   │   ├── GraphicPipeline.h / .cpp        # Pipeline State Object (PSO 4 Blend Mode) & Root Signature
 │   │   ├── DXCManager.h / .cpp             # Runtime HLSL Shader Compiler (DXC)
 │   │   ├── Log.h / .cpp                    # Logger output ke debug console
 │   │   ├── ConvertString.h / .cpp          # Utilitas konversi wstring <-> string
 │   │   └── CrashHandler.h / .cpp           # Minidump crash handler
 │   ├── 3d/                                 # 3D Graphics & Lighting
-│   │   ├── Model.h / .cpp                  # Assimp loader (FBX, OBJ, GLTF) + GPU Buffers
-│   │   ├── Object3d.h / .cpp               # Enkapsulasi Model + WorldTransform + Camera
+│   │   ├── Model.h / .cpp                  # Assimp loader (FBX, OBJ, GLTF) + Bone Transforms
+│   │   ├── Object3d.h / .cpp               # Enkapsulasi Model + WorldTransform + Camera + BlendMode
+│   │   ├── CircleShadow.h / .cpp           # Blob shadow lingkaran 3D (soft-falloff quad di lantai)
 │   │   ├── Camera.h / .cpp                 # ViewProjection matrix generator
 │   │   ├── DebugCamera.h / .cpp            # Orbit/pan debug camera via mouse
 │   │   ├── WorldTransform.h / .cpp         # Transform SRV/CBV buffer manager
@@ -78,8 +86,10 @@ D:\Rizeallday_Engine_v2\
 │   │   └── VertexData.h                    # Definisi Vertex, Material, ModelData
 │   └── shaders/                            # HLSL Shaders
 │       ├── Object3d.hlsli                  # Header shader 3D (VertexShaderOutput)
-│       ├── Object3d.VS.hlsl                # Vertex shader 3D (+ worldPosition output)
+│       ├── Object3d.VS.hlsl                # Vertex shader 3D (+ GPU Skinning & bone palette)
 │       ├── Object3d.PS.hlsl                # Pixel shader multi-light (Dir+Point+Spot+Ambient)
+│       ├── CircleShadow.VS.hlsl            # Vertex shader khusus Circle Shadow 3D
+│       ├── CircleShadow.PS.hlsl            # Pixel shader Circle Shadow (radial gradient falloff)
 │       ├── Sprite.hlsli                    # Header shader sprite 2D
 │       ├── Sprite.VS.hlsl                  # Vertex shader sprite 2D
 │       └── Sprite.PS.hlsl                  # Pixel shader sprite 2D
@@ -87,10 +97,11 @@ D:\Rizeallday_Engine_v2\
 ├── RizealldaySandbox/                      # [GAME APPLICATION] Ruang Kerja Pembuatan Game
 │   ├── RizealldaySandbox.vcxproj           # Project Executable (Startup Project)
 │   ├── main.cpp                            # Game loop & logika game Anda
+│   ├── IsometricCamera.h / .cpp            # Kamera isometrik ARPG (Q/E orbit rotation & smooth follow)
 │   ├── dxcompiler.dll, dxil.dll            # DXC binaries pendukung runtime
 │   ├── assimp-vc143-mt.dll                 # Assimp runtime DLL
 │   └── Resources/                          # Asset game
-│       ├── Model/                          # Simpan file .fbx, .obj, .gltf di sini
+│       ├── Model/                          # Simpan file .fbx, .obj, .gltf di sini (Idle, Running, Combo)
 │       ├── Texture/                        # Simpan gambar .png, .jpg, .dds di sini
 │       └── Sound/                          # Simpan audio .wav di sini
 │
@@ -106,9 +117,15 @@ D:\Rizeallday_Engine_v2\
 
 1. Buka file **`D:\Rizeallday_Engine_v2\Rizeallday_Engine_v2.slnx`** menggunakan **Visual Studio 2022** (v145 atau v143).
 2. Di panel **Solution Explorer**, pastikan **`RizealldaySandbox`** bertuliskan **tebal (Bold)** yang menandakan ia adalah **Startup Project**. Jika belum, klik kanan pada `RizealldaySandbox` lalu pilih **Set as Startup Project**.
-3. Pilih konfigurasi:
-   - **`Debug | x64`**: ImGui aktif, verifikasi GPU & debug layer aktif.
-   - **`Release | x64`**: Optimasi penuh kecepatan tinggi, ImGui dinonaktifkan.
+3. Pilih konfigurasi target:
+   - **`Development | x64` (Direkomendasikan untuk pengembangan)**:
+     - ImGui aktif (`USE_IMGUI`).
+     - Assertion aktif (`assert()` aktif, `NDEBUG` tidak didefinisikan pada sandbox).
+     - Kode sandbox dioptimasi `/Od` agar breakpoint dan debugging variabel akurat, sementara engine core tetap berjalan di `/O2` untuk performa maksimal.
+   - **`Debug | x64`**:
+     - ImGui aktif, Direct3D 12 Debug Layer aktif, verifikasi GPU penuh.
+   - **`Release | x64`**:
+     - Optimasi penuh kecepatan tinggi (`/O2`), ImGui dan debug logging dinonaktifkan untuk rilis pemain akhir.
 4. Tekan tombol **F5** atau menu **Debug -> Start Debugging**.
 5. Project akan otomatis mengompilasi library `RizealldayEngine`, menyalin shader dan DLL pendukung, lalu membuka jendela game.
 
@@ -225,30 +242,90 @@ Singleton pengelola DirectX 12 (`DirectXCommon::GetInstance()`):
 
 ---
 
+### Pipeline & Blend Mode (`GraphicPipeline` / `BlendMode`)
+Engine menyediakan manajemen Pipeline State Object (PSO) terpisah untuk setiap mode blending:
+```cpp
+enum class BlendMode : int {
+    Opaque     = 0, // Tidak transparan, Depth Write aktif (Default)
+    AlphaBlend = 1, // Transparansi normal (SrcAlpha / InvSrcAlpha), Depth Write mati
+    Add        = 2, // Additive blending (efek sihir, api, laser, kilau)
+    Multiply   = 3, // Multiply blending (bayangan gelap, aura kutukan)
+    Count      = 4
+};
+```
+- Setiap `Object3d` memiliki properti `blendMode`.
+- Saat objek dengan `AlphaBlend` atau `Add` digambar, engine otomatis menonaktifkan penulisan kedalaman (`DepthWriteMask = ZERO`) sehingga objek semi-transparan tidak menghalangi objek di belakangnya.
+- Mengubah mode blending objek:
+  ```cpp
+  character.SetBlendMode(BlendMode::AlphaBlend);
+  character.GetMaterial()->color.w = 0.5f; // Transparansi 50%
+  ```
+
+---
+
 ### Model 3D & Assimp Loader (`Model`)
 Memuat dan me-render model 3D kompleks:
 - `Model* Model::CreateFromFile(const std::string& directoryPath, const std::string& filename)`
   **Perintah Pemuat Model**:
   Membaca file model 3D menggunakan Assimp. Otomatis mengenali ekstensi:
-  - `.fbx` (Autodesk FBX - model bertekstur, animasi pose)
+  - `.fbx` (Autodesk FBX - model bertekstur, animasi pose & skeletal mesh)
   - `.obj` (Wavefront OBJ)
   - `.gltf` / `.glb` (GL Transmission Format)
   - `.dae` (Collada)
   - `.3ds` (3D Studio)
-  Otomatis membaca susunan vertex, normal, UV texcoord, face indices, dan men-generate Index Buffer serta Vertex Buffer di VRAM.
+  Otomatis membaca susunan vertex, normal, UV texcoord, face indices, serta struktur hierarki node / bone weighting untuk skinning.
   *Model yang sama di-cache secara otomatis sehingga pemanggilan berulang tidak membuang memori.*
+- `bool HasBones() const`: Mengembalikan `true` jika model memiliki rig tulang untuk animasi.
+- `size_t GetBoneCount() const`: Jumlah tulang pada model.
+- `float GetAnimationDuration(int animIndex = 0) const`: Durasi animasi dalam detik.
+- `void SetLockRootMotion(bool lock)`: Mengunci translasi akar karakter (in-place lock) agar animasi lari atau kombo tidak melompat dari posisi asal.
 - `void Draw(ID3D12GraphicsCommandList* cmdList)`: Mengikat vertex & index buffer lalu menjalankan `DrawIndexedInstanced`.
 
 ---
 
 ### Objek 3D Instance (`Object3d`)
 Merepresentasikan satu entitas nyata di dunia 3D:
-- `void Initialize()`: Mengalokasikan memory material & transform di GPU.
-- `void SetModel(Model* model)`: Mengaitkan model 3D yang akan digambar.
+- `void Initialize()`: Mengalokasikan memory material, transform, dan bone palette (128 matriks) di GPU.
+- `void SetModel(Model* model, bool resetAnim = true)`: Mengaitkan model 3D yang akan digambar.
 - `void SetCamera(Camera* camera)`: Mengaitkan kamera yang melihat objek ini.
 - `worldTransform`: Variabel publik bertipe `WorldTransform` untuk mengatur posisi, skala, dan rotasi.
-- `void Update()`: Menghitung matriks WVP (World-View-Projection) terbaru dan mentransfer ke GPU.
-- `void Draw(ID3D12GraphicsCommandList* cmdList)`: Mengirim ConstantBuffer material ke root slot 0, WVP ke slot 1, dan menggambar model.
+- `blendMode`: Mode blending objek (`BlendMode::Opaque`, `AlphaBlend`, `Add`, `Multiply`).
+- `void SetBlendMode(BlendMode mode)` / `BlendMode GetBlendMode() const`: Setter & getter blend mode.
+- `Material* GetMaterial() const`: Akses data material GPU (warna RGBA, enableLighting, dsb.).
+- **Kontrol Animasi Tulang (Skeletal Animation)**:
+  - `void PlayAnimation(int animIndex, bool loop = true, float speed = 1.0f)`
+  - `void SetAnimationSpeed(float speed)`
+  - `float GetAnimationTime() const` / `float GetAnimationDuration() const`
+- `void Update(float deltaTime = 1.0f / 60.0f)`: Menghitung matriks WVP terbaru dan mengevaluasi pose transformasi tulang ke bone palette GPU.
+- `void Draw(ID3D12GraphicsCommandList* cmdList)`: Otomatis mengikat PSO sesuai `blendMode`, mengirim material ke root 0, WVP ke root 1, bone palette ke root 4, dan menggambar model.
+
+---
+
+### Bayangan Lingkaran 3D (`CircleShadow`)
+Sistem bayangan lingkaran/elips dinamis (blob shadow) yang dirender di lantai di bawah karakter:
+- **Teknik**: Menggunakan quad datar 3D dengan pipeline shader khusus (`CircleShadow.VS.hlsl` & `CircleShadow.PS.hlsl`) yang menghitung radial smoothstep falloff secara real-time.
+- `static void StaticInitialize(DirectXCommon* dxCommon, DXCManager* dxcManager)`: Diinisialisasi otomatis oleh `RizeEngine::Initialize()`.
+- `void Initialize()`: Membuat vertex buffer quad, index buffer, constant buffer material & transform.
+- `void Update(const Vector3& characterPos, float floorY, float radius, float opacity)`:
+  - `characterPos`: Posisi karakter di dunia (bayangan mengikuti X dan Z karakter).
+  - `floorY`: Ketinggian lantai (misal `-1.5f`).
+  - `radius`: Ukuran radius bayangan di dunia 3D.
+  - `opacity`: Tingkat kegelapan bayangan (0.0 = tak terlihat, 1.0 = hitam pekat).
+- `void Draw(ID3D12GraphicsCommandList* cmdList, Camera* camera)`: Me-render quad bayangan dengan alpha blending dan depth-write disabled.
+- `CircleShadowMaterialGPU* GetMaterial()`: Mengatur kelembutan tepi (`softness`), warna dasar (`color`), dan radius UV.
+
+Contoh penggunaan:
+```cpp
+CircleShadow shadow;
+shadow.Initialize();
+shadow.GetMaterial()->color = { 0.0f, 0.0f, 0.0f, 0.45f }; // Hitam 45%
+shadow.GetMaterial()->softness = 0.5f;
+
+// Di dalam game loop:
+shadow.Update(character.worldTransform.translation, -1.5f, 0.35f, 0.45f);
+shadow.Draw(cmdList, &camera); // Render SEBELUM karakter
+character.Draw(cmdList);       // Render karakter di atas bayangan
+```
 
 ---
 
@@ -262,7 +339,7 @@ Mengatur transformasi objek di ruang 3D:
 
 ---
 
-### Kamera 3D (`Camera` & `DebugCamera`)
+### Kamera 3D & Isometrik (`Camera`, `IsometricCamera`, `DebugCamera`)
 - **`Camera`**:
   - `Vector3 translation`: Posisi kamera `{x, y, z}`.
   - `Vector3 rotation`: Sudut pandang kamera radian `{pitch, yaw, roll}`.
@@ -271,6 +348,13 @@ Mengatur transformasi objek di ruang 3D:
   - `float nearClip`, `float farClip`: Jarak potong dekat dan jauh (`0.1f` - `1000.0f`).
   - `void Update()`: Menghitung matriks View (inversi affine) dan Projection.
   - `const Matrix4x4& GetViewProjectionMatrix() const`: Matriks siap pakai untuk shader.
+
+- **`IsometricCamera`**:
+  - Kamera sudut pandang isometrik / diagonal Action-RPG (*Hades*, *Diablo*, *Lunarium*):
+  - `void Initialize(Camera* targetCamera, float distance = 14.0f, float pitch = 0.7854f, float yaw = 0.7854f)`
+  - `void Update(const Vector3& targetPosition, float deltaTime)`: Mengikuti target dengan redaman halus (smooth damping).
+  - `void RotateYaw(float deltaYaw)`: Memutar sudut pandang kamera melingkari target (tombol Q / E).
+  - `float GetYaw() const`: Mendapatkan sudut yaw aktif untuk menghitung arah gerak karakter yang sinkron dengan kamera.
 
 - **`DebugCamera`**:
   - Kamera pembantu navigasi scene menggunakan mouse:
@@ -393,6 +477,8 @@ Kelas statis untuk kalkulasi matriks 3D:
 | `POSITION0` | `R32G32B32A32_FLOAT` | Posisi koordinat lokal 3D (x, y, z, 1.0) |
 | `TEXCOORD0` | `R32G32_FLOAT` | Koordinat tekstur UV (u, v) |
 | `NORMAL0`   | `R32G32B32_FLOAT` | Vektor Normal permukaan (nx, ny, nz) |
+| `BLENDINDICES0` | `R32G32B32A32_UINT` | 4 indeks tulang untuk GPU Skinning |
+| `BLENDWEIGHT0`  | `R32G32B32A32_FLOAT` | 4 bobot pengaruh tulang (total bobot = 1.0) |
 
 ### Skema Root Signature (`GraphicPipeline.cpp`):
 | Slot | Register | Shader Stage | Tipe | Konten |
@@ -401,11 +487,9 @@ Kelas statis untuk kalkulasi matriks 3D:
 | **1** | `b0` | Vertex Shader | CBV | TransformationMatrix (WVP, World Matrix) |
 | **2** | `t0` | Pixel Shader | Descriptor Table (SRV) | Tekstur 2D Diffuse |
 | **3** | `b1` | Pixel Shader | CBV | **LightGroup** (Ambient, Directional, Point[3], Spot[3]) |
+| **4** | `b1` | Vertex Shader | CBV | **BonePalette** (Array 128 Matriks Transformasi Tulang) |
 
----
+### Pipeline Shader Circle Shadow (`CircleShadow.VS.hlsl` & `CircleShadow.PS.hlsl`):
+- **Vertex Shader**: Menghitung transformasi posisi vertex quad datar di sumbu XZ dengan input `POSITION0`, `TEXCOORD0`, `NORMAL0` (tanpa beban skinning tulang).
+- **Pixel Shader**: Menghitung jarak radial elips dari pusat UV `(0.5, 0.5)` dengan fungsi `smoothstep` halus untuk menghasilkan tepi bayangan lembut yang alami tanpa perlu tekstur bitmap eksternal.
 
-## 6. Catatan Keamanan & Isolasi Tugas Kuliah
-
-> [!IMPORTANT]
-> **Project Tugas Kuliah Anda (`D:\Rizeallday_Engine`) Tetap 100% Aman:**
-> Seluruh kode, konfigurasi, dan pembaruan arsitektur ini dibangun sepenuhnya di dalam folder **`D:\Rizeallday_Engine_v2`**. Folder asli tugas kuliah Anda tidak pernah dimodifikasi sama sekali sehingga Anda tidak perlu khawatir melanggar kurikulum atau kriteria penilaian evaluasi tugas kampus Anda.

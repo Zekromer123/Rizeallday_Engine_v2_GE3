@@ -14,6 +14,7 @@ void Sprite::Initialize(DirectXCommon* dxCommon)
 	indexBufferViewSprite.Format = DXGI_FORMAT_R32_UINT;
 	VertexData* vertexDataSprite = nullptr;
 	vertexResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&vertexDataSprite));
+	std::memset(vertexDataSprite, 0, sizeof(VertexData) * 6);
 	// 1枚目の三角形
 	vertexDataSprite[0].position = { 0.0f, 360.0f, 0.0f, 1.0f }; // 左下
 	vertexDataSprite[0].texcoord = { 0.0f, 1.0f };

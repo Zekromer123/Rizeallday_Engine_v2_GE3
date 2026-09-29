@@ -1,9 +1,11 @@
 #include "base/TextureManager.h"
 #include "base/DirectXCommon.h"
 #include "base/ConvertString.h"
+#include "base/Log.h"
 #include "d3dx12.h"
 #include <cassert>
 #include <vector>
+#include <filesystem>
 
 TextureManager* TextureManager::GetInstance()
 {
@@ -16,6 +18,45 @@ void TextureManager::Initialize(DirectXCommon* dxCommon)
 	dxCommon_ = dxCommon;
 	nextIndex_ = 1; // 0 reserved for ImGui
 	textureCache_.clear();
+
+	// 1x1 white fallback texture
+	DirectX::ScratchImage whiteImg;
+	HRESULT hr = whiteImg.Initialize2D(DXGI_FORMAT_R8G8B8A8_UNORM, 1, 1, 1, 1);
+	if (SUCCEEDED(hr)) {
+		const DirectX::Image* img = whiteImg.GetImage(0, 0, 0);
+		if (img && img->pixels) {
+			uint32_t whitePixel = 0xFFFFFFFF;
+			memcpy(img->pixels, &whitePixel, sizeof(whitePixel));
+
+			uint32_t handle = nextIndex_++;
+			defaultWhiteHandle_ = handle;
+
+			ID3D12Resource* resource = CreateTextureResource(whiteImg.GetMetadata());
+
+			dxCommon_->GetCommandAllocator()->Reset();
+			dxCommon_->GetCommandList()->Reset(dxCommon_->GetCommandAllocator(), nullptr);
+
+			ID3D12Resource* intermediateResource = UploadTextureData(resource, whiteImg);
+
+			dxCommon_->GetCommandList()->Close();
+			ID3D12CommandList* commandLists[] = { dxCommon_->GetCommandList() };
+			dxCommon_->GetCommandQueue()->ExecuteCommandLists(1, commandLists);
+			dxCommon_->SignalAndWaitFence();
+			intermediateResource->Release();
+
+			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+			srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Texture2D.MipLevels = 1;
+
+			D3D12_CPU_DESCRIPTOR_HANDLE srvCPUHandle = dxCommon_->GetSrvDescriptorHeap()->GetCPUDescriptorHandleForHeapStart();
+			srvCPUHandle.ptr += dxCommon_->GetSrvDescriptorSize() * handle;
+			dxCommon_->GetDevice()->CreateShaderResourceView(resource, &srvDesc, srvCPUHandle);
+
+			textureResources_[handle].Attach(resource);
+		}
+	}
 }
 
 uint32_t TextureManager::LoadTexture(const std::string& filePath)
@@ -24,6 +65,11 @@ uint32_t TextureManager::LoadTexture(const std::string& filePath)
 	auto it = textureCache_.find(filePath);
 	if (it != textureCache_.end()) {
 		return it->second;
+	}
+
+	if (!std::filesystem::exists(filePath)) {
+		Log::GetInstance()->logOutput(std::format("Texture not found: {}, using default white.\n", filePath));
+		return defaultWhiteHandle_;
 	}
 
 	assert(nextIndex_ < kMaxTextures && "Texture limit exceeded");
@@ -40,7 +86,10 @@ uint32_t TextureManager::LoadTexture(const std::string& filePath)
 		// Try DDS
 		hr = DirectX::LoadFromDDSFile(filePathW.c_str(), DirectX::DDS_FLAGS_NONE, nullptr, image);
 	}
-	assert(SUCCEEDED(hr));
+	if (FAILED(hr)) {
+		Log::GetInstance()->logOutput(std::format("Failed to decode texture: {}\n", filePath));
+		return defaultWhiteHandle_;
+	}
 
 	// MipMap
 	DirectX::ScratchImage mipImages{};
@@ -57,12 +106,13 @@ uint32_t TextureManager::LoadTexture(const std::string& filePath)
 	dxCommon_->GetCommandList()->Reset(dxCommon_->GetCommandAllocator(), nullptr);
 
 	ID3D12GraphicsCommandList* commandList = dxCommon_->GetCommandList();
-	UploadTextureData(resource, mipImages);
+	ID3D12Resource* intermediateResource = UploadTextureData(resource, mipImages);
 
 	commandList->Close();
 	ID3D12CommandList* commandLists[] = { commandList };
 	dxCommon_->GetCommandQueue()->ExecuteCommandLists(1, commandLists);
 	dxCommon_->SignalAndWaitFence();
+	intermediateResource->Release();
 
 	// Create SRV
 	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
@@ -121,7 +171,7 @@ ID3D12Resource* TextureManager::CreateTextureResource(const DirectX::TexMetadata
 	return resource;
 }
 
-void TextureManager::UploadTextureData(ID3D12Resource* textureResource, const DirectX::ScratchImage& mipImages)
+ID3D12Resource* TextureManager::UploadTextureData(ID3D12Resource* textureResource, const DirectX::ScratchImage& mipImages)
 {
 	ID3D12Device* device = dxCommon_->GetDevice();
 	ID3D12GraphicsCommandList* commandList = dxCommon_->GetCommandList();
@@ -138,5 +188,5 @@ void TextureManager::UploadTextureData(ID3D12Resource* textureResource, const Di
 	barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
 	barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_GENERIC_READ;
 	commandList->ResourceBarrier(1, &barrier);
-	intermediateResource->Release();
+	return intermediateResource;
 }

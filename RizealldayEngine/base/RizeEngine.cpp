@@ -13,6 +13,7 @@
 #include "3d/WorldTransform.h"
 #include "3d/LightGroup.h"
 #include "3d/PrimitiveDrawer.h"
+#include "3d/CircleShadow.h"
 
 namespace {
 	WinApp* sWinApp = nullptr;
@@ -26,6 +27,9 @@ namespace {
 namespace RizeEngine {
 
 void Initialize(const char* title, int width, int height) {
+	// Logger
+	Log::GetInstance()->saveLogs();
+
 	// Crash Handler
 	CrashHandler::GetInstance()->Initialize();
 
@@ -63,6 +67,12 @@ void Initialize(const char* title, int width, int height) {
 	LightGroup::StaticInitialize(sDxCommon);
 	PrimitiveDrawer::GetInstance()->Initialize(sDxCommon);
 
+	// Daftarkan pipeline ke Object3d agar Draw() bisa bind blend mode
+	Object3d::StaticSetPipeline(sGraphicPipeline);
+
+	// Inisialisasi Circle Shadow system
+	CircleShadow::StaticInitialize(sDxCommon, sDxcManager);
+
 	Log::GetInstance()->logOutput("Rizeallday Engine v2 initialized.\n");
 }
 
@@ -79,6 +89,9 @@ void BeginFrame() {
 
 	// Bind the graphics pipeline
 	sGraphicPipeline->Bind(sDxCommon->GetCommandList());
+
+	// Set Descriptor Heaps for textures
+	TextureManager::GetInstance()->SetDescriptorHeaps(sDxCommon->GetCommandList());
 }
 
 void EndFrame() {

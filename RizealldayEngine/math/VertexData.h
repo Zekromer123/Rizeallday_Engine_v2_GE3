@@ -10,6 +10,8 @@ struct VertexData {
 	Vector4 position;
 	Vector2 texcoord;
 	Vector3 normal;
+	uint32_t boneIndices[4] = { 0, 0, 0, 0 };
+	float boneWeights[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 };
 
 struct Material {

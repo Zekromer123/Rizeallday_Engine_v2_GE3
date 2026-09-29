@@ -34,7 +34,7 @@ private:
 	TextureManager& operator=(const TextureManager&) = delete;
 
 	ID3D12Resource* CreateTextureResource(const DirectX::TexMetadata& metadata);
-	void UploadTextureData(ID3D12Resource* texture, const DirectX::ScratchImage& mipImages);
+	[[nodiscard]] ID3D12Resource* UploadTextureData(ID3D12Resource* texture, const DirectX::ScratchImage& mipImages);
 
 	static const uint32_t kMaxTextures = 128;
 	DirectXCommon* dxCommon_ = nullptr;
