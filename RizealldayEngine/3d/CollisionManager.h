@@ -1,45 +1,54 @@
 #pragma once
 #include "3d/Collider.h"
-#include <functional>
 #include <vector>
 #include <cstdint>
 
-/// A registered collidable object entry in the CollisionManager.
-/// Each ICollidable provides a SphereCollider and an OnCollision callback.
+/// Base interface for any game object that participates in collision detection.
+/// Supports SphereCollider, AABBCollider, and OBBCollider (rotated box).
 class ICollidable {
 public:
     virtual ~ICollidable() = default;
 
-    /// Return the sphere collider (updated every frame by the owner)
-    virtual const SphereCollider& GetSphereCollider() const = 0;
+    /// Return the active collider shape (Sphere, AABB, or OBB)
+    virtual ColliderShape GetColliderShape() const { return ColliderShape::Sphere; }
 
-    /// Called when a collision is detected with another ICollidable
+    /// Return SphereCollider (if GetColliderShape() == ColliderShape::Sphere)
+    virtual const SphereCollider& GetSphereCollider() const {
+        static SphereCollider dummy;
+        return dummy;
+    }
+
+    /// Return AABBCollider (if GetColliderShape() == ColliderShape::AABB)
+    virtual const AABBCollider& GetAABBCollider() const {
+        static AABBCollider dummy;
+        return dummy;
+    }
+
+    /// Return OBBCollider (if GetColliderShape() == ColliderShape::OBB)
+    virtual const OBBCollider& GetOBBCollider() const {
+        static OBBCollider dummy;
+        return dummy;
+    }
+
+    /// Called when collision is detected with another ICollidable
     virtual void OnCollision(ICollidable* other) {}
 
-    /// Called when a collision is detected (simple, no other info)
+    /// Parameterless callback overload
     virtual void OnCollision() {}
 };
 
 /// Central collision detection manager.
-/// 
-/// Usage:
-///   1. Register every collidable object with RegisterCollider().
-///   2. Call CheckAllCollisions() once per frame (after Update, before Draw).
-///   3. CollisionManager calls OnCollision() on both objects when a hit is detected.
-///
-/// Pattern: Based on the KamataEngine / GE3 curriculum Collision System
-///  (conversation f44d8d3a-49b8-4e90-aa49-300a74de5732)
+/// Checks registered objects each frame using round-robin pairwise checks.
+/// Handles any combination of Sphere, AABB, and OBB colliders.
 class CollisionManager {
 public:
     /// Singleton access
     static CollisionManager* GetInstance();
 
     /// Register a collidable for this frame's check.
-    /// Call once per frame (before CheckAllCollisions) for each active object.
     void RegisterCollider(ICollidable* collidable);
 
-    /// Perform all registered collision checks this frame.
-    /// Then clears the registration list (you must re-register every frame).
+    /// Perform all registered collision checks this frame and clear the list.
     void CheckAllCollisions();
 
     /// Clear all registered colliders without checking
