@@ -7,7 +7,7 @@
 
 業界標準の現代的な **Engine + Sandbox アーキテクチャ**（[TheCherno Hazel Engine](https://www.youtube.com/@TheCherno) や国内ゲーム制作フレームワーク [KamataEngine](https://github.com) の設計思想）を採用し、再利用可能な静的ライブラリ（`.lib`）とゲーム制作 sandbox（`.exe`）に完全分離して再構築しました。
 
-純粋な **DirectX 12**、**C++20**、**Assimp**（FBX・OBJ・GLTF・DAE対応）、GPUアクセラレーションによる **スケルタルアニメーション（ボーンパレット最大128本）**、**マルチライティング**（平行光源・点光源・スポットライト・環境光）、**アイソメトリック（クォータービュー）ARPGカメラ**、および **Dear ImGui** によるランタイムデバッグ機能を標準搭載しています。
+純粋な **DirectX 12**、**C++20**、**Assimp**（FBX・OBJ・GLTF・DAE対応）、GPUアクセラレーションによる **スケルタルアニメーション（ボーンパレット最大128本）**、**マルチライティング**（平行光源・点光源・スポットライト・環境光）、`StructuredBuffer + SV_InstanceID` による **GPUパーティクルインスタンシング描画**、GE3カリキュラム準拠の **衝突判定システム（Sphere / AABB / 総当たり判定 / OnCollisionコールバック）**、および **Dear ImGui** によるランタイムデバッグ機能を標準搭載しています。
 
 ---
 
@@ -23,9 +23,13 @@
    - [3Dオブジェクト実体 (`Object3d`)](#3dオブジェクト実体-object3d)
    - [プロシージャル丸影 (`CircleShadow`)](#プロシージャル丸影-circleshadow)
    - [ワールド変換行列 (`WorldTransform`)](#ワールド変換行列-worldtransform)
-   - [カメラ & アイソメトリックカメラ (`Camera`, `IsometricCamera`, `DebugCamera`)](#カメラ--アイソメトリックカメラ)
+   - [カメラ (`Camera`, `DebugCamera`)](#カメラ-camera-debugcamera)
    - [ライティングシステム (`LightGroup`)](#ライティングシステム-lightgroup)
+   - [GPUインスタンシング・パーティクル板ポリ (`ParticleQuad`)](#gpuインスタンシングパーティクル板ポリ-particlequad)
+   - [衝突判定システム (`Collider` / `CollisionManager`)](#衝突判定システム-collider--collisionmanager)
    - [2Dスプライト描画 (`Sprite`)](#2dスプライト描画-sprite)
+   - [プリミティブデバッグ描画 (`PrimitiveDrawer`)](#プリミティブデバッグ描画-primitivedrawer)
+   - [テクスチャマネージャ (`TextureManager`)](#テクスチャマネージャ-texturemanager)
    - [入力処理システム (`Input`)](#入力処理システム-input)
    - [オーディオ再生システム (`Audio`)](#オーディオ再生システム-audio)
    - [数学ライブラリ (`Mathematics` / `MathUtil`)](#数学ライブラリ-mathematics--mathutil)
@@ -39,9 +43,18 @@
 - **マルチブレンドモード描画**:
   - `Opaque`（通常不透明）、`AlphaBlend`（半透明合成）、`Add`（加算合成・エフェクト/発光）、`Multiply`（乗算合成・暗影/呪いオーラ）の独立PSOをキャッシュ。
   - 半透明描画時は自動的に深度書き込みを無効化（`DepthWriteMask = ZERO`）し、前後オブジェクトのクリッピング破綻を防止。
+- **GPUインスタンシング描画（課題 01_00「たくさんの板ポリを出そう」対応）**:
+  - `StructuredBuffer<TransformationMatrix>` と `SV_InstanceID` を用いた高速インスタンス描画。
+  - `DrawInstanced(6, N, 0, 0)` により1回のドローコールで多数の板ポリゴンを一括描画。
+  - 独立した専用RootSignature・PSO・SRV（スロット20）を備えた `ParticleQuad` クラス。
+- **衝突判定システム（Collision Detection System）**【新規搭載】:
+  - `SphereCollider`（球判定）および `AABBCollider`（直方体境界判定）。
+  - 全登録オブジェクトを1フレーム内で判定する `CollisionManager`（総当たり判定方式）。
+  - GE3講義準拠の `ICollidable` インターフェースと `OnCollision()` コールバック設計。
+  - `attribute`（属性）と `mask`（対象）のビットマスクによる柔軟な当たり判定フィルタリング。
 - **プロシージャル丸影（Blob Shadow / Circle Shadow）**:
   - キャラクターの足元地面に投影される滑らかな円形ドロップシャドウ。
-  - クォータービュー視点に最適化した楕円スケーリングと、`smoothstep` によるリアルタイム放射状グラデーション。外部テクスチャ画像不要。
+  - `smoothstep` によるリアルタイム放射状グラデーション。外部テクスチャ画像不要。
   - 半径・不透明度・エッジの柔らかさ・カラーをリアルタイム調整可能。
 - **スケルタルメッシュ & ボーンアニメーション**:
   - Assimpライブラリを統合し、Mixamo等のリギング済みFBX、OBJ、GLTF、Collada DAEを自動ロード。
@@ -54,28 +67,24 @@
   - ポイントライト 3基（位置、到達半径、距離減衰率）。
   - スポットライト 3基（位置、照射方向、照射距離、コーン角度・フォールオフ調整）。
   - 環境光（アンビエントカラー & 強度）。
-- **アイソメトリック（クォータービュー）ARPGカメラ**:
-  - 『Lunarium』『Hades』『Diablo』スタイルの見下ろし斜め視角（ピッチ45度、ヨー45度）。
-  - プレイヤーのスムーズ追従（Smooth Target Damping）。
-  - Q/Eキーによるプレイヤー周囲360度オービット回転と、視点角度に連動した8方向移動（Camera-Relative Movement）。
 - **Development | x64 開発用ハイブリッド構成**:
   - `assert()` の検証を有効化（`NDEBUG` 未定義）、Dear ImGui 有効、ゲームサンドボックス側のみ `/Od`（最適化無効）でステップ実行デバッグを快適にし、エンジンコア側は `/O2` で高フレームレートを維持する実用構成。
 - **入力システム**: DirectInput 8（キーボード・マウス） + XInput（Xboxコントローラー、デッドゾーン処理・デュアルモーター振動対応）。
 - **サウンド再生**: XAudio2による低遅延PCM WAV再生。
-- **デバッグUI**: Dear ImGuiを標準統合。トランスフォーム、ライト色、アニメーション再生速度、ブレンドモード、影のプロパティを実行中にリアルタイム調整可能。
+- **デバッグUI**: Dear ImGuiを標準統合。トランスフォーム、ライト色、アニメーション再生速度、ブレンドモード、影、パーティクルの各プロパティを実行中にリアルタイム調整可能。
 
 ---
 
 ## 2. アーキテクチャとディレクトリ構成
 
-ソリューション（`Rizeallday_Engine_v2.slnx`）は2つのプロジェクトで構成されています：
-- **`RizealldayEngine`**: **スタティックライブラリ（`.lib`）**。DX12描画、シェーダー、数学、Assimpロード、アニメーション、入力、サウンド等の全コア機能をカプセル化。
+ソリューション（`Rizeallday_Engine_v2_GE3.slnx`）は2つのプロジェクトで構成されています：
+- **`RizealldayEngine`**: **スタティックライブラリ（`.lib`）**。DX12描画、シェーダー、数学、Assimpロード、アニメーション、入力、サウンド、衝突判定等の全コア機能をカプセル化。
 - **`RizealldaySandbox`**: **実行可能アプリケーション（`.exe`）**。ゲームロジック、シーン、キャラクター制御を記述するスタートアッププロジェクト。
 
 ```
-D:\Rizeallday_Engine_v2\
+D:\GE3\Rizeallday_Engine_v2_GE3\
 │
-├── Rizeallday_Engine_v2.slnx              # Visual Studio ソリューションファイル
+├── Rizeallday_Engine_v2_GE3.slnx          # Visual Studio ソリューションファイル
 ├── README.md                               # インドネシア語ドキュメント
 ├── README_EN.md                            # 英語ドキュメント
 ├── README_JA.md                            # 日本語ドキュメント（本ファイル）
@@ -90,8 +99,9 @@ D:\Rizeallday_Engine_v2\
 │   │   ├── GraphicPipeline.h / .cpp        # パイプラインステート（4ブレンドモードPSO）& ルートシグネチャ
 │   │   ├── DXCManager.h / .cpp             # 実行時HLSLシェーダーコンパイラ（DXC）
 │   │   ├── Log.h / .cpp                    # スレッドセーフログ出力
+│   │   ├── ConvertString.h / .cpp          # 文字列型変換ヘルパー
 │   │   └── CrashHandler.h / .cpp           # クラッシュ時ミニダンプ出力ハンドラ
-│   ├── 3d/                                 # 3Dグラフィックス & アニメーション
+│   ├── 3d/                                 # 3Dグラフィックス・照明・当たり判定
 │   │   ├── Model.h / .cpp                  # Assimp読み込み、骨アニメーション、GPUバッファ生成
 │   │   ├── Object3d.h / .cpp               # 3Dオブジェクト実体（モデル＋変換行列＋マテリアル＋ブレンドモード）
 │   │   ├── CircleShadow.h / .cpp           # プロシージャル足元丸影（床面クアッド・ソフトグラデーション）
@@ -102,7 +112,9 @@ D:\Rizeallday_Engine_v2\
 │   │   ├── DirectionalLight.h              # 平行光源データ構造体
 │   │   ├── PointLight.h                    # 点光源データ構造体
 │   │   ├── SpotLight.h                     # スポットライトデータ構造体
-│   │   └── PrimitiveDrawer.h / .cpp        # デバッグ用3Dライン & グリッド描画
+│   │   ├── PrimitiveDrawer.h / .cpp        # デバッグ用3Dライン & グリッド描画
+│   │   ├── Collider.h / .cpp               # 【新規】SphereCollider, AABBCollider & 交差判定関数
+│   │   └── CollisionManager.h / .cpp       # 【新規】CollisionManager シングルトン & ICollidable
 │   ├── 2d/                                 # 2Dグラフィックス
 │   │   └── Sprite.h / .cpp                 # 2Dスプライト & UIクアッド描画
 │   ├── input/                              # 入力処理
@@ -120,18 +132,20 @@ D:\Rizeallday_Engine_v2\
 │       ├── Object3d.PS.hlsl                # マルチライト対応ピクセルシェーダー
 │       ├── CircleShadow.VS.hlsl            # 丸影専用3D頂点シェーダー（軽量クアッド用）
 │       ├── CircleShadow.PS.hlsl            # 丸影専用ピクセルシェーダー（放射状フォールオフ計算）
+│       ├── Particle.VS.hlsl                # 【新規】GPUインスタンシング頂点シェーダー
+│       ├── Particle.PS.hlsl                # 【新規】パーティクルピクセルシェーダー（透過破棄）
 │       ├── Sprite.hlsli                    # 2Dスプライト共通構造体
 │       ├── Sprite.VS.hlsl                  # 2Dスプライト頂点シェーダー
 │       └── Sprite.PS.hlsl                  # 2Dスプライトピクセルシェーダー
 │
 ├── RizealldaySandbox/                      # 【ゲーム本体】制作ワークスペース
 │   ├── main.cpp                            # ゲームループ & キャラクターコントローラー
-│   ├── IsometricCamera.h / .cpp            # スムーズ追従式クォータービューカメラ
+│   ├── ParticleQuad.h / .cpp               # 【新規】10枚板ポリインスタンシング管理クラス
 │   ├── dxcompiler.dll, dxil.dll            # DXCシェーダーコンパイラバイナリ
 │   ├── assimp-vc143-mt.dll                 # AssimpランタイムDLL
 │   └── Resources/                          # ゲームアセットフォルダ
-│       ├── Model/                          # .fbx, .obj, .gltf 3Dモデル & テクスチャ（Idle, Running, Combo）
-│       ├── Texture/                        # .png, .dds 画像ファイル
+│       ├── Model/                          # .fbx, .obj, .gltf 3Dモデル & テクスチャ
+│       ├── circle.png                      # 【新規】256x256 白丸板ポリ用テクスチャ
 │       └── Sound/                          # .wav 音声ファイル
 │
 └── externals/                              # 外部サードパーティライブラリ
@@ -145,7 +159,7 @@ D:\Rizeallday_Engine_v2\
 ## 3. クイックスタート（ビルドと実行）
 
 ### ビルド手順
-1. Visual Studio 2022 で **`D:\Rizeallday_Engine_v2\Rizeallday_Engine_v2.slnx`** を開きます。
+1. Visual Studio 2022 で **`Rizeallday_Engine_v2_GE3.slnx`** を開きます。
 2. ソリューションエクスプローラーで **`RizealldaySandbox`** が太字（スタートアッププロジェクト）になっていることを確認します。
 3. ターゲット構成を選択します：
    - **`Development | x64`（推奨・日常の開発構成）**:
@@ -168,7 +182,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
     // 2. 3Dモデルのロード（FBX / OBJ対応）
     Model* heroModel = Model::CreateFromFile("Resources/Model", "Idle.fbx");
-    heroModel->SetLockRootMotion(true); // ルートモーションの水平移動を固定し、自然な足踏み走りを実現
+    heroModel->SetLockRootMotion(true); // 水平ルート移動を固定
 
     // 3. カメラ初期化
     Camera camera;
@@ -181,7 +195,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
     hero.Initialize();
     hero.SetModel(heroModel);
     hero.SetCamera(&camera);
-    hero.worldTransform.scale = { 0.018f, 0.018f, 0.018f };
+    hero.worldTransform.scale = { 0.006f, 0.006f, 0.006f };
 
     // 5. ライティング設定
     LightGroup* lights = LightGroup::Create();
@@ -194,16 +208,14 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
         float deltaTime = 0.016f;
         Input* input = RizeEngine::GetInput();
 
-        // 操作処理（Wキーで前進）
         if (input->PushKey(DIK_W)) {
             hero.worldTransform.translation.z += 4.5f * deltaTime;
         }
 
         camera.Update();
-        hero.Update(deltaTime); // アニメーション更新とボーン計算
+        hero.Update(deltaTime);
         lights->Update();
 
-        // 描画コマンド発行
         auto* cmdList = RizeEngine::GetDirectXCommon()->GetCommandList();
         lights->Draw(cmdList, 3);
         hero.Draw(cmdList);
@@ -211,7 +223,6 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
         RizeEngine::EndFrame();
     }
 
-    // 7. 解放処理
     RizeEngine::Finalize();
     return 0;
 }
@@ -255,11 +266,6 @@ enum class BlendMode : int {
 ```
 - 各 `Object3d` インスタンスは個別の `blendMode` プロパティを保持。
 - `AlphaBlend` や `Add` が選択された際、深度書き込みを自動的に無効化（`DepthWriteMask = ZERO`）するため、半透明ポリゴンが背景ジオメトリを不自然に隠蔽する描画順序破綻を回避。
-- 利用例：
-  ```cpp
-  character.SetBlendMode(BlendMode::AlphaBlend);
-  character.GetMaterial()->color.w = 0.5f; // 透過率50%
-  ```
 
 ---
 
@@ -269,10 +275,8 @@ enum class BlendMode : int {
 - `bool HasBones() const`: スケルトンボーンデータが含まれているかを判定。
 - `size_t GetBoneCount() const`: メッシュに関連付けられたボーン総数を取得。
 - `float GetAnimationDuration(int animIndex = 0) const`: アニメーションの総時間を秒単位で取得。
-- `void CalculateBoneTransforms(float timeInSeconds, int animIndex, std::vector<Matrix4x4>& outMatrices)`:
-  指定時刻の階層ツリーを走査し、Slerp/Lerp補間により最終的なスキニング変形行列（`offsetMatrix * globalTransform`）を算出。
-- `void SetLockRootMotion(bool lock)`:
-  ルートボーン（Hips）の水平方向（X・Z座標）移動を初期フレームに固定。コードによる移動処理と競合した際の引き戻し現象（ラバーバンド）を防ぎます（Y軸の自然な上下振動は保持）。
+- `void CalculateBoneTransforms(...)`: 指定時刻の階層ツリーを走査し、Slerp/Lerp補間により最終的なスキニング変形行列を算出。
+- `void SetLockRootMotion(bool lock)`: ルートボーンの水平移動を固定し、アニメーションループ時のラバーバンド引き戻しを防止。
 
 ---
 
@@ -280,88 +284,139 @@ enum class BlendMode : int {
 - `void Initialize()`: マテリアル用定数バッファ、ワールド変換、およびGPUボーンパレットバッファ（128行列分）を割り当て。
 - `void SetModel(Model* model, bool resetAnim = true)`: 描画対象の3Dモデルをバインド。
 - `void SetCamera(Camera* camera)`: 撮影用カメラをバインド。
-- `WorldTransform worldTransform`: 公開メンバ。`scale`（拡大縮小）、`rotation`（回転角）、`translation`（平行移動座標）を保持。
-- `BlendMode blendMode`: オブジェクトのブレンドモード（`BlendMode::Opaque`, `AlphaBlend`, `Add`, `Multiply`）。
-- `void SetBlendMode(BlendMode mode)` / `BlendMode GetBlendMode() const`: ブレンドモード設定・取得。
-- `Material* GetMaterial() const`: GPUマテリアルデータ（RGBAカラー、ライティングフラグ等）への直接ポインタ。
-- **ボーンアニメーション制御**:
-  - `void PlayAnimation(int animIndex, bool loop = true, float speed = 1.0f)`
-  - `void SetAnimationSpeed(float speed)`
-  - `float GetAnimationTime() const` / `float GetAnimationDuration() const`
+- `WorldTransform worldTransform`: `scale`, `rotation`, `translation` を管理。
+- `BlendMode blendMode`: オブジェクトのブレンドモード。
 - `void Update(float deltaTime = 1.0f / 60.0f)`: アニメーション時間を進め、ボーン行列を評価してWVP行列とともにGPU定数バッファへ転送。
-- `void Draw(ID3D12GraphicsCommandList* cmdList)`: 指定ブレンドモードのPSOを自動バインドし、スロット0にマテリアル、スロット1にWVP、スロット2にテクスチャSRV、スロット4にボーンパレットを設定してメッシュを描画。
+- `void Draw(ID3D12GraphicsCommandList* cmdList)`: 指定ブレンドモードのPSOを自動バインドしメッシュを描画。
 
 ---
 
 ### プロシージャル丸影 (`CircleShadow`)
-3Dキャラクターの足元地面に投影するリアルタイム円形ドロップシャドウ（Blob Shadow）：
-- **描画技術**: 床面水平クアッドを専用シェーダー（`CircleShadow.VS.hlsl` / `PS.hlsl`）で描画。UV中心 `(0.5, 0.5)` からの幾何学的楕円距離を `smoothstep` でフォールオフ計算するため、外部テクスチャ画像のロードが一切不要。
-- `static void StaticInitialize(DirectXCommon* dxCommon, DXCManager* dxcManager)`: `RizeEngine::Initialize()` 内で自動初期化。
-- `void Initialize()`: クアッド頂点・インデックス・マテリアル・変換バッファを生成。
-- `void Update(const Vector3& characterPos, float floorY, float radius, float opacity)`:
-  - `characterPos`: キャラクターのワールド座標（影がXZ座標を追従）。
-  - `floorY`: 床面（地面）のY座標高さ（例: `-1.5f`）。
-  - `radius`: ワールド空間における影の半径サイズ。
-  - `opacity`: 影の暗さ・不透明度（0.0 = 完全透明、1.0 = 濃い黒）。
-- `void Draw(ID3D12GraphicsCommandList* cmdList, Camera* camera)`: アルファブレンド・深度書き込みOFFで丸影を描画。
-- `CircleShadowMaterialGPU* GetMaterial()`: エッジのぼかし（`softness`）、基本色（`color`）をリアルタイム調整可能。
-
-使用例：
-```cpp
-CircleShadow shadow;
-shadow.Initialize();
-shadow.GetMaterial()->color = { 0.0f, 0.0f, 0.0f, 0.45f }; // 45%黒
-shadow.GetMaterial()->softness = 0.5f;
-
-// ゲームループ内:
-shadow.Update(character.worldTransform.translation, -1.5f, 0.35f, 0.45f);
-shadow.Draw(cmdList, &camera); // キャラクターより「先」に描画
-character.Draw(cmdList);       // キャラクターを影の上に描画
-```
+- **描画技術**: 専用シェーダー（`CircleShadow.VS.hlsl` / `PS.hlsl`）で床面クアッドに描画。テクスチャ画像不要で滑らかな影を描画。
+- `void Initialize()`, `void Update(const Vector3& characterPos, float floorY, float radius, float opacity)`, `void Draw(ID3D12GraphicsCommandList* cmdList, Camera* camera)`.
 
 ---
 
-### カメラ & アイソメトリックカメラ
+### カメラ (`Camera`, `DebugCamera`)
 - **`Camera`**:
   - `Vector3 translation`, `Vector3 rotation`（ラジアン指定）。
   - `float fovY`, `float aspectRatio`, `float nearClip`, `float farClip`。
   - `void Update()`: アフィン逆行列によるビュー行列と透視投影行列を再計算。
-- **`IsometricCamera`**:
-  - クォータービュー（ピッチ45度、ヨー45度）に対応した追従カメラ。
-  - プレイヤー追従時のジッターや遅延ズレを排除するスムーズダンピング（Smooth Target Damping）内蔵。
-  - `RotateYaw(float deltaYaw)`: Q/Eキー等による360度オービット旋回機能。
-  - `float GetYaw() const`: カメラ角度に即したプレイヤー8方向移動ベクトルの算出に利用。
 - **`DebugCamera`**:
   - 開発用マウスフリー操作カメラ。右ドラッグで回転、中ドラッグでパン、WASDQEで移動。
 
 ---
 
 ### ライティングシステム (`LightGroup`)
-1つの定数バッファにまとめた高効率マルチライティング：
-- `static LightGroup* Create()`: インスタンスを生成。
-- `void SetDefaultLighting()`: 標準的な白系ディレクショナルライトと環境光を設定。
-- `void SetAmbientColor(const Vector3& color)` & `SetAmbientIntensity(float intensity)`: シーン全体の環境光を制御。
-- `DirectionalLightData& GetDirectionalLight()`: 平行光源データ（`color`, `direction`, `intensity`, `active`）。
-- `PointLightData& GetPointLight(int index)`（インデックス 0〜2）：点光源データ（`position`, `color`, `radius`, `decay`, `intensity`, `active`）。
-- `SpotLightData& GetSpotLight(int index)`（インデックス 0〜2）：スポットライトデータ（`position`, `direction`, `distance`, `cosAngle`, `cosFalloffStart`, `active`）。
-- `void Draw(ID3D12GraphicsCommandList* cmdList, uint32_t rootParameterIndex = 3)`: ピクセルシェーダーのルートパラメータ3番に定数バッファをバインド。
+- `static LightGroup* Create()`, `SetDefaultLighting()`, `SetAmbientColor()`, `SetAmbientIntensity()`.
+- `DirectionalLightData& GetDirectionalLight()`, `PointLightData& GetPointLight(int index)`, `SpotLightData& GetSpotLight(int index)`.
+
+---
+
+### GPUインスタンシング・パーティクル板ポリ (`ParticleQuad`)
+課題01_00「たくさんの板ポリを出そう」に対応した、GPU Instancingによる高速板ポリゴン描画システム：
+- **特徴**:
+  - 1つの頂点バッファ（6頂点＝クアッド1枚分）のみをGPUに配置。
+  - 各インスタンスのワールド行列＋WVP行列を `StructuredBuffer<TransformationMatrix>` に一括転送。
+  - 頂点シェーダー側で `SV_InstanceID` を受け取り、各インスタンスの位置・回転・拡大を個別に適用。
+  - 1回のドローコール `DrawInstanced(6, instanceCount, 0, 0)` でN個の板ポリを同時に描画。
+- **使い方**:
+  ```cpp
+  uint32_t circleTex = TextureManager::GetInstance()->LoadTexture("Resources/circle.png");
+  ParticleQuad particleQuads;
+  particleQuads.Initialize(RizeEngine::GetDirectXCommon(), &dxc, circleTex, 10);
+
+  // ゲームループ内:
+  particleQuads.Update(camera.GetViewProjectionMatrix());
+  particleQuads.Draw(cmdList);
+  ```
+
+---
+
+### 衝突判定システム (`Collider` / `CollisionManager`)
+日本工学院専門学校（GE3）の当たり判定設計に準拠した、3D衝突判定システム：
+- **コライダー形状**:
+  - `SphereCollider`: `Vector3 center`, `float radius`, `attribute`, `mask`.
+  - `AABBCollider`: `Vector3 min`, `Vector3 max`, `attribute`, `mask`.
+- **ビットマスク属性（Attribute & Mask）**:
+  ```cpp
+  enum CollisionAttribute : uint32_t {
+      Player       = 1 << 0,
+      Enemy        = 1 << 1,
+      PlayerBullet = 1 << 2,
+      EnemyBullet  = 1 << 3,
+      Ground       = 1 << 4,
+      All          = 0xFFFFFFFF,
+  };
+  ```
+- **ゲームオブジェクトへの組み込み (`ICollidable`)**:
+  ```cpp
+  class Player : public ICollidable {
+  public:
+      SphereCollider collider_;
+
+      const SphereCollider& GetSphereCollider() const override { return collider_; }
+
+      void OnCollision(ICollidable* other) override {
+          // 衝突時のコールバック処理（被弾・ダメージ処理など）
+      }
+
+      void Update() {
+          // コライダーの中心座標をワールド位置に同期
+          collider_.center = worldTransform.translation;
+      }
+  };
+  ```
+- **毎フレームの判定実行手順（`GameScene::Update` 内）**:
+  ```cpp
+  // 1. 各オブジェクトの移動・更新
+  player.Update();
+  enemy.Update();
+
+  // 2. 判定マネージャへ登録
+  CollisionManager::GetInstance()->RegisterCollider(&player);
+  CollisionManager::GetInstance()->RegisterCollider(&enemy);
+
+  // 3. 総当たり判定を実行（衝突したペアに対して OnCollision() を自動呼び出し）
+  CollisionManager::GetInstance()->CheckAllCollisions();
+  ```
+- **独立判定関数**:
+  - `CheckSphereVsSphere(const SphereCollider& a, const SphereCollider& b)`: 平方距離比較（$dx^2 + dy^2 + dz^2 \le (r_a + r_b)^2$）により平方根（`sqrt`）を排除した高速計算。
+  - `CheckAABBvsAABB(const AABBCollider& a, const AABBCollider& b)`.
+  - `CheckSphereVsAABB(const SphereCollider& sphere, const AABBCollider& aabb)`.
+
+---
+
+### 2Dスプライト描画 (`Sprite`)
+- `void Initialize(DirectXCommon* dxCommon)`, `void SetTexture(D3D12_GPU_DESCRIPTOR_HANDLE handle)`, `void Update()`, `void Draw(ID3D12GraphicsCommandList* cmdList)`.
+
+---
+
+### プリミティブデバッグ描画 (`PrimitiveDrawer`)
+- `DrawLine3d(p1, p2, color)`, `DrawGrid(size, subdivisions, color)`, `Render(cmdList)`.
+
+---
+
+### テクスチャマネージャ (`TextureManager`)
+- `uint32_t LoadTexture(filePath)`: 画像をロードしてSRVを作成、`textureHandle` を返却。
+- `D3D12_GPU_DESCRIPTOR_HANDLE GetGPUHandle(textureHandle)`: GPUデスクリプタハンドルを取得。
 
 ---
 
 ### 入力処理システム (`Input`)
-- **キーボード（DirectInput 8）**:
-  - `bool PushKey(BYTE keyNumber)`: 押下中判定（例: `DIK_W`, `DIK_SPACE`）。
-  - `bool TriggerKey(BYTE keyNumber)`: 押した最初の1フレームのみ判定。
-  - `bool ReleaseKey(BYTE keyNumber)`: 離した瞬間の1フレーム判定。
-- **マウス**:
-  - `bool PushMouseButton(int button)`: 0 = 左クリック, 1 = 右クリック, 2 = 中クリック。
-  - `bool IsTriggerMouse(int button)`: クリックトリガー判定。
-  - `int GetMouseMoveX()`, `int GetMouseMoveY()`, `int GetMouseWheel()`.
-- **ゲームパッド（XInput）**:
-  - `bool IsGamepadConnected(int padIndex = 0)`.
-  - `bool PushGamepadButton(WORD button)`, `bool TriggerGamepadButton(WORD button)`.
-  - `float GetLeftStickX()`, `float GetLeftStickY()`（デッドゾーン自動補正済み）。
-  - `void SetVibration(int padIndex, float leftMotor, float rightMotor)`.
+- **キーボード**: `PushKey()`, `TriggerKey()`, `ReleaseKey()`.
+- **マウス**: `PushMouseButton()`, `IsTriggerMouse()`, `GetMouseMoveX()`, `GetMouseMoveY()`, `GetMouseWheel()`.
+- **ゲームパッド**: `IsGamepadConnected()`, `PushGamepadButton()`, `TriggerGamepadButton()`, `GetLeftStickX()`, `GetLeftStickY()`, `SetVibration()`.
+
+---
+
+### オーディオ再生システム (`Audio`)
+- `SoundLoadWave(filename)`, `SoundPlayWave(soundData)`, `SoundUnload(soundData)`.
+
+---
+
+### 数学ライブラリ (`Mathematics` / `MathUtil`)
+- `MakeIdentity4x4()`, `MakeAffineMatrix()`, `MakePerspectiveFovMatrix()`, `MakeOrthographicMatrix()`, `Multiply()`, `Inverse()`, `Transform()`.
 
 ---
 
@@ -376,7 +431,7 @@ character.Draw(cmdList);       // キャラクターを影の上に描画
 | `BLENDINDICES0` | `R32G32B32A32_UINT` | GPUスキニング用ボーンインデックス（最大4本） |
 | `BLENDWEIGHT0`  | `R32G32B32A32_FLOAT` | ボーンウェイト重み係数（合計1.0） |
 
-### ルートシグネチャ構成 (`GraphicPipeline.cpp`):
+### ルートシグネチャ構成 (`GraphicPipeline.cpp` — Object3d):
 | ルートスロット | レジスタ | 可視シェーダー | タイプ | バッファ内容 |
 |:---:|:---:|:---:|:---:|---|
 | **0** | `b0` | Pixel Shader | CBV | Material（基本色、ライティング有効フラグ、陰影計算タイプ） |
@@ -385,6 +440,9 @@ character.Draw(cmdList);       // キャラクターを影の上に描画
 | **3** | `b1` | Pixel Shader | CBV | LightGroup（環境光、平行光源、点光源3基、スポットライト3基） |
 | **4** | `b1` | Vertex Shader | CBV | **BonePalette**（128本のボーンスキニング変形行列配列） |
 
-### 丸影シェーダー構成 (`CircleShadow.VS.hlsl` & `CircleShadow.PS.hlsl`):
-- **頂点シェーダー**: スキニング計算を行わず、水平床面クアッド頂点の座標変換を軽量に処理。
-- **ピクセルシェーダー**: UV中心 `(0.5, 0.5)` からの楕円ユークリッド距離を解析計算し、`smoothstep` で滑らかに減衰するアルファ値をリアルタイム算出。テクスチャ不要で高品質な丸影を生成。
+### パーティクルインスタンシングルートシグネチャ (`ParticleQuad`):
+| ルートスロット | レジスタ | 可視シェーダー | タイプ | バッファ内容 |
+|:---:|:---:|:---:|:---:|---|
+| **0** | `b0` | Pixel Shader | CBV | Material（カラー、透明度） |
+| **1** | `t0` | Vertex Shader | Descriptor Table (SRV) | `StructuredBuffer<TransformationMatrix>` (SRV Slot 20) |
+| **2** | `t0` | Pixel Shader | Descriptor Table (SRV) | 2Dディフューズテクスチャ (`circle.png`) |

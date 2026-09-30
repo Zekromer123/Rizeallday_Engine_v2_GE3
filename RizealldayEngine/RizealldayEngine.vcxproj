@@ -126,6 +126,8 @@
     <ClCompile Include="3d\WorldTransform.cpp" />
     <ClCompile Include="3d\LightGroup.cpp" />
     <ClCompile Include="3d\CircleShadow.cpp" />
+    <ClCompile Include="3d\Collider.cpp" />
+    <ClCompile Include="3d\CollisionManager.cpp" />
     <ClCompile Include="3d\PrimitiveDrawer.cpp" />
     <!-- 2d/ -->
     <ClCompile Include="2d\Sprite.cpp" />
@@ -188,6 +190,8 @@
     <ClInclude Include="3d\SpotLight.h" />
     <ClInclude Include="3d\CircleShadow.h" />
     <ClInclude Include="3d\PrimitiveDrawer.h" />
+    <ClInclude Include="3d\Collider.h" />
+    <ClInclude Include="3d\CollisionManager.h" />
     <ClInclude Include="2d\Sprite.h" />
     <ClInclude Include="input\Input.h" />
     <ClInclude Include="audio\Audio.h" />

@@ -5,7 +5,7 @@
 Welcome to **Rizeallday Engine v2**!  
 This project is an advanced evolution of the custom DirectX 12 game engine developed as part of game programming coursework at Nihon Kougakuin College (日本工学院専門学校). It has been restructured using a modern modular **Engine + Sandbox** architecture (inspired by [TheCherno Hazel Engine](https://www.youtube.com/@TheCherno) and the Japanese industry template [KamataEngine](https://github.com)).
 
-Built with pure **DirectX 12**, **C++20**, static library linkage, **Assimp** integration (supporting animated 3D FBX, OBJ, GLTF, DAE, etc.), a GPU-accelerated **Skeletal Animation** system (up to 128 bones palette), a unified **Multi-Lighting** pipeline (Directional, Point, Spot, and Ambient lights), an **Isometric Action-RPG Camera**, and runtime **Dear ImGui** debugging.
+Built with pure **DirectX 12**, **C++20**, static library linkage, **Assimp** integration (supporting animated 3D FBX, OBJ, GLTF, DAE, etc.), GPU-accelerated **Skeletal Animation** (up to 128 bones palette), a unified **Multi-Lighting** pipeline (Directional, Point, Spot, and Ambient lights), **GPU Particle Instancing** via `StructuredBuffer + SV_InstanceID`, a **Collision Detection System** (Sphere/AABB + Callback pattern), and runtime **Dear ImGui** debugging.
 
 ---
 
@@ -21,9 +21,13 @@ Built with pure **DirectX 12**, **C++20**, static library linkage, **Assimp** in
    - [3D Entity Instance (`Object3d`)](#3d-entity-instance-object3d)
    - [Dynamic Circle Shadow (`CircleShadow`)](#dynamic-circle-shadow-circleshadow)
    - [World Transform (`WorldTransform`)](#world-transform-worldtransform)
-   - [Camera & Isometric Camera (`Camera`, `IsometricCamera`, `DebugCamera`)](#camera--isometric-camera)
+   - [Camera (`Camera`, `DebugCamera`)](#camera-camera-debugcamera)
    - [Lighting System (`LightGroup`)](#lighting-system-lightgroup)
+   - [GPU Instancing & Particles (`ParticleQuad`)](#gpu-instancing--particles-particlequad)
+   - [Collision Detection System (`Collider` / `CollisionManager`)](#collision-detection-system-collider--collisionmanager)
    - [2D Sprite Renderer (`Sprite`)](#2d-sprite-renderer-sprite)
+   - [Primitive Debug Drawer (`PrimitiveDrawer`)](#primitive-debug-drawer-primitivedrawer)
+   - [Texture Manager (`TextureManager`)](#texture-manager-texturemanager)
    - [Input System (`Input`)](#input-system-input)
    - [Audio System (`Audio`)](#audio-system-audio)
    - [Math Library (`Mathematics` / `MathUtil`)](#math-library-mathematics--mathutil)
@@ -37,43 +41,46 @@ Built with pure **DirectX 12**, **C++20**, static library linkage, **Assimp** in
 - **Multi-Blend Mode Rendering**:
   - Independent PSOs for `Opaque`, `AlphaBlend`, `Add` (additive glow/spells/fire), and `Multiply` (darkening/curse effects).
   - Automatic `DepthWriteMask = ZERO` handling for transparent objects to prevent depth occlusion artifacts.
+- **GPU Instancing (Assignment 01_00)**:
+  - High-performance multi-quad instancing using `StructuredBuffer<TransformationMatrix>` and `SV_InstanceID`.
+  - Single-draw-call rendering with `DrawInstanced(6, N, 0, 0)`.
+  - Self-contained `ParticleQuad` component with dedicated Root Signature and PSO (descriptor table binding at SRV slot 20).
+- **Collision Detection System** (New!):
+  - `SphereCollider` and `AABBCollider` structures with intersection routines.
+  - `CollisionManager` singleton performing round-robin (総当たり) collision checks per frame.
+  - `ICollidable` interface with `OnCollision()` callback pattern matching the GE3 curriculum.
+  - Bitmask filtering via collision `attribute` and detection `mask`.
 - **Dynamic Circle / Blob Shadows**:
   - Ground-projected circular drop shadow with smooth radial `smoothstep` falloff.
-  - Perspective ellipse adjustment for isometric top-down projection.
-  - Real-time controls for shadow radius, opacity, softness, and tint color.
+  - Real-time controls for shadow radius, opacity, softness, and tint color without external textures.
 - **Skeletal Mesh Animation**:
   - Full Assimp integration supporting FBX (Mixamo rigs, etc.), OBJ, GLTF, GLB, and Collada DAE.
-  - Skinned vertex shader computing dual quaternion / linear matrix blending for up to 4 bone influences per vertex (`BLENDINDICES` + `BLENDWEIGHT`).
+  - Skinned vertex shader computing matrix blending for up to 4 bone influences per vertex (`BLENDINDICES` + `BLENDWEIGHT`).
   - ConstantBuffer bone palette supporting up to 128 bones per mesh.
-  - Slerp quaternion & Lerp vector keyframe interpolation.
-  - **In-Place / Root Motion Lock**: Built-in toggle to prevent character rubber-banding during animation cycles.
+  - Slerp quaternion & Lerp vector keyframe interpolation with in-place root motion locking.
 - **Unified Multi-Lighting**:
   - Directional Light (Lambertian / Half-Lambert diffuse with color & intensity control).
   - 3 Point Lights with radius and exponential distance decay attenuation.
   - 3 Spot Lights with distance attenuation and smoothstep cone falloff.
   - Ambient Lighting with customizable color and intensity.
-- **Isometric ARPG Camera**:
-  - Top-down diagonal isometric view ($45^\circ$ pitch, $45^\circ$ yaw) styled after modern action-RPGs (*Lunarium*, *Hades*, *Diablo*).
-  - Smooth target damping (cinematic follow).
-  - Real-time Q/E orbit camera rotation with camera-relative 8-way movement translation.
 - **Development | x64 Configuration**:
   - Optimized hybrid configuration with `assert()` enabled (no `NDEBUG`), Dear ImGui active (`USE_IMGUI`), `/Od` unoptimized sandbox for accurate debugging, and `/O2` engine core for top frame rates.
 - **Input System**: DirectInput 8 (Keyboard & Mouse) + XInput (Xbox Gamepad with analog deadzone filtering & dual-motor vibration).
 - **Audio System**: Low-latency PCM WAV audio playback powered by XAudio2.
-- **Debug UI**: Seamlessly integrated Dear ImGui for live inspection and tweaking of transforms, lighting, animation playback, blend modes, shadows, and camera properties.
+- **Debug UI**: Seamlessly integrated Dear ImGui for live inspection and tweaking of transforms, lighting, animation playback, blend modes, shadows, and particles.
 
 ---
 
 ## 2. Architecture & Directory Structure
 
-The solution (`Rizeallday_Engine_v2.slnx`) is separated into two clean projects:
-- **`RizealldayEngine`**: **Static Library (`.lib`)**. Contains all DX12 core rendering, shaders, mathematics, Assimp loaders, skeletal animation, input, lighting, and audio.
+The solution (`Rizeallday_Engine_v2_GE3.slnx`) is separated into two clean projects:
+- **`RizealldayEngine`**: **Static Library (`.lib`)**. Contains all DX12 core rendering, shaders, mathematics, Assimp loaders, skeletal animation, input, lighting, audio, and collision detection.
 - **`RizealldaySandbox`**: **Executable (`.exe`)**. The active gameplay application and startup project where game logic, scenes, entities, and controllers are implemented.
 
 ```
-D:\Rizeallday_Engine_v2\
+D:\GE3\Rizeallday_Engine_v2_GE3\
 │
-├── Rizeallday_Engine_v2.slnx              # Visual Studio Solution
+├── Rizeallday_Engine_v2_GE3.slnx          # Visual Studio Solution
 ├── README.md                               # Indonesian Documentation
 ├── README_EN.md                            # English Documentation
 ├── README_JA.md                            # Japanese Documentation
@@ -88,8 +95,9 @@ D:\Rizeallday_Engine_v2\
 │   │   ├── GraphicPipeline.h / .cpp        # Pipeline State Objects (PSO 4 Blend Modes) & Root Signature
 │   │   ├── DXCManager.h / .cpp             # Runtime HLSL DXC shader compiler
 │   │   ├── Log.h / .cpp                    # Thread-safe logging subsystem
+│   │   ├── ConvertString.h / .cpp          # String <-> wstring conversion utility
 │   │   └── CrashHandler.h / .cpp           # Minidump crash reporter
-│   ├── 3d/                                 # 3D Graphics & Animation
+│   ├── 3d/                                 # 3D Graphics, Lighting & Collision
 │   │   ├── Model.h / .cpp                  # Assimp loader, skeletal animation & GPU buffers
 │   │   ├── Object3d.h / .cpp               # 3D Entity instance (Model + Transform + Material + BlendMode)
 │   │   ├── CircleShadow.h / .cpp           # Procedural 3D blob drop shadow on floor quad
@@ -100,7 +108,9 @@ D:\Rizeallday_Engine_v2\
 │   │   ├── DirectionalLight.h              # Directional light data definition
 │   │   ├── PointLight.h                    # Point light data definition
 │   │   ├── SpotLight.h                     # Spot light data definition
-│   │   └── PrimitiveDrawer.h / .cpp        # Debug 3D line & grid renderer
+│   │   ├── PrimitiveDrawer.h / .cpp        # Debug 3D line & grid renderer
+│   │   ├── Collider.h / .cpp               # [NEW] SphereCollider, AABBCollider & intersection checks
+│   │   └── CollisionManager.h / .cpp       # [NEW] CollisionManager singleton & ICollidable interface
 │   ├── 2d/                                 # 2D Graphics
 │   │   └── Sprite.h / .cpp                 # 2D Sprite & UI quad renderer
 │   ├── input/                              # Input Subsystem
@@ -118,24 +128,26 @@ D:\Rizeallday_Engine_v2\
 │       ├── Object3d.PS.hlsl                # Multi-light pixel shader (Lambert / Half-Lambert)
 │       ├── CircleShadow.VS.hlsl            # Unskinned quad vertex shader for drop shadow
 │       ├── CircleShadow.PS.hlsl            # Radial smoothstep gradient pixel shader
+│       ├── Particle.VS.hlsl                # [NEW] GPU Instancing vertex shader (StructuredBuffer + SV_InstanceID)
+│       ├── Particle.PS.hlsl                # [NEW] Instancing pixel shader (textured + alpha discard)
 │       ├── Sprite.hlsli                    # 2D sprite shader header
 │       ├── Sprite.VS.hlsl                  # 2D sprite vertex shader
 │       └── Sprite.PS.hlsl                  # 2D sprite pixel shader
 │
 ├── RizealldaySandbox/                      # [APPLICATION] Game Sandbox
 │   ├── main.cpp                            # Gameplay loop & character controller
-│   ├── IsometricCamera.h / .cpp            # Smooth action-RPG isometric follow camera
+│   ├── ParticleQuad.h / .cpp               # [NEW] 10-quad GPU instancing implementation
 │   ├── dxcompiler.dll, dxil.dll            # DirectX Shader Compiler binaries
 │   ├── assimp-vc143-mt.dll                 # Assimp runtime DLL
 │   └── Resources/                          # Game Assets
 │       ├── Model/                          # .fbx, .obj, .gltf 3D models & textures
-│       ├── Texture/                        # .png, .dds images
+│       ├── circle.png                      # [NEW] 256x256 white circle texture
 │       └── Sound/                          # .wav audio files
 │
 └── externals/                              # Third-Party Dependencies
     ├── assimp/                             # Open Asset Import Library
     ├── DirectXTex/                         # Microsoft DirectXTex texture processing
-    └── imgui/                              # Dear ImGui (Docking / Viewport branch)
+    └── imgui/                              # Dear ImGui library
 ```
 
 ---
@@ -143,7 +155,7 @@ D:\Rizeallday_Engine_v2\
 ## 3. Quick Start Guide
 
 ### Building and Running
-1. Open **`D:\Rizeallday_Engine_v2\Rizeallday_Engine_v2.slnx`** in Visual Studio 2022 (v143 / v145 toolset).
+1. Open **`Rizeallday_Engine_v2_GE3.slnx`** in Visual Studio 2022 (v143 / v145 toolset).
 2. Set **`RizealldaySandbox`** as the **Startup Project** in Solution Explorer.
 3. Select your target configuration:
    - **`Development | x64` (Recommended for Day-to-Day Development)**:
@@ -179,7 +191,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
     hero.Initialize();
     hero.SetModel(heroModel);
     hero.SetCamera(&camera);
-    hero.worldTransform.scale = { 0.018f, 0.018f, 0.018f };
+    hero.worldTransform.scale = { 0.006f, 0.006f, 0.006f };
 
     // 5. Setup Lighting
     LightGroup* lights = LightGroup::Create();
@@ -303,31 +315,13 @@ Procedural ground-projected circular drop shadow (blob shadow) beneath 3D charac
 - `void Draw(ID3D12GraphicsCommandList* cmdList, Camera* camera)`: Renders the shadow with alpha blending and depth writing disabled.
 - `CircleShadowMaterialGPU* GetMaterial()`: Provides real-time control over `softness`, `color`, and UV parameters.
 
-Example usage:
-```cpp
-CircleShadow shadow;
-shadow.Initialize();
-shadow.GetMaterial()->color = { 0.0f, 0.0f, 0.0f, 0.45f }; // 45% black
-shadow.GetMaterial()->softness = 0.5f;
-
-// Inside game loop:
-shadow.Update(character.worldTransform.translation, -1.5f, 0.35f, 0.45f);
-shadow.Draw(cmdList, &camera); // Render BEFORE character
-character.Draw(cmdList);       // Render character on top
-```
-
 ---
 
-### Camera & Isometric Camera
+### Camera (`Camera`, `DebugCamera`)
 - **`Camera`**:
   - `Vector3 translation`, `Vector3 rotation` (Euler pitch/yaw/roll in radians).
   - `float fovY`, `float aspectRatio`, `float nearClip`, `float farClip`.
   - `void Update()`: Recomputes view matrix (affine inverse) and perspective projection.
-- **`IsometricCamera`**:
-  - High-level isometric camera with $45^\circ$ pitch and $45^\circ$ yaw.
-  - Smooth target follow damping without desynchronization.
-  - `RotateYaw(float deltaYaw)`: Q/E 360-degree orbit rotation around the player.
-  - `float GetYaw() const`: Returns current yaw for camera-aligned player locomotion.
 - **`DebugCamera`**:
   - Free-look mouse-driven development camera. Right-click drag to rotate, middle-click drag to pan, WASDQE to fly.
 
@@ -342,6 +336,101 @@ Unified multi-light ConstantBuffer manager:
 - `PointLightData& GetPointLight(int index)` (Index 0 to 2): Point light data (`position`, `color`, `radius`, `decay`, `intensity`, `active`).
 - `SpotLightData& GetSpotLight(int index)` (Index 0 to 2): Spot light data (`position`, `direction`, `distance`, `cosAngle`, `cosFalloffStart`, `active`).
 - `void Draw(ID3D12GraphicsCommandList* cmdList, uint32_t rootParameterIndex = 3)`: Binds lighting buffer to root parameter 3.
+
+---
+
+### GPU Instancing & Particles (`ParticleQuad`)
+A high-performance batch quad renderer using GPU Instancing (Assignment 01_00):
+- **Mechanism**:
+  - A single vertex buffer with 6 vertices forming a quad.
+  - An instance `StructuredBuffer<TransformationMatrix>` holding world transforms for each instance.
+  - `Particle.VS.hlsl` dynamically indexes instance matrices via `SV_InstanceID`.
+  - Single API call: `cmdList->DrawInstanced(6, instanceCount, 0, 0)`.
+- **Usage**:
+  ```cpp
+  uint32_t circleTex = TextureManager::GetInstance()->LoadTexture("Resources/circle.png");
+  ParticleQuad particleQuads;
+  particleQuads.Initialize(RizeEngine::GetDirectXCommon(), &dxc, circleTex, 10);
+
+  // In loop:
+  particleQuads.Update(camera.GetViewProjectionMatrix());
+  particleQuads.Draw(cmdList);
+  ```
+
+---
+
+### Collision Detection System (`Collider` / `CollisionManager`)
+Modular 3D collision system conforming to Nihon Kougakuin GE3 curriculum standards:
+- **Available Colliders**:
+  - `SphereCollider`: `Vector3 center`, `float radius`, `uint32_t attribute`, `uint32_t mask`.
+  - `AABBCollider`: `Vector3 min`, `Vector3 max`, `uint32_t attribute`, `uint32_t mask`.
+- **Filtering via Bitmask Attributes**:
+  ```cpp
+  enum CollisionAttribute : uint32_t {
+      Player       = 1 << 0,
+      Enemy        = 1 << 1,
+      PlayerBullet = 1 << 2,
+      EnemyBullet  = 1 << 3,
+      Ground       = 1 << 4,
+      All          = 0xFFFFFFFF,
+  };
+  ```
+- **Object Integration with `ICollidable`**:
+  ```cpp
+  class Player : public ICollidable {
+  public:
+      SphereCollider collider_;
+
+      const SphereCollider& GetSphereCollider() const override { return collider_; }
+
+      void OnCollision(ICollidable* other) override {
+          // Response when hit
+      }
+
+      void Update() {
+          collider_.center = worldTransform.translation;
+      }
+  };
+  ```
+- **Frame-by-Frame Workflow (Inside `Update()`)**:
+  ```cpp
+  // 1. Update entities
+  player.Update();
+  enemy.Update();
+
+  // 2. Register to CollisionManager
+  CollisionManager::GetInstance()->RegisterCollider(&player);
+  CollisionManager::GetInstance()->RegisterCollider(&enemy);
+
+  // 3. Perform round-robin check and trigger OnCollision() callbacks
+  CollisionManager::GetInstance()->CheckAllCollisions();
+  ```
+- **Standalone Intersection Functions**:
+  - `CheckSphereVsSphere(const SphereCollider& a, const SphereCollider& b)`: Uses squared distance ($dx^2 + dy^2 + dz^2 \le (r_a + r_b)^2$) without square roots.
+  - `CheckAABBvsAABB(const AABBCollider& a, const AABBCollider& b)`.
+  - `CheckSphereVsAABB(const SphereCollider& sphere, const AABBCollider& aabb)`.
+
+---
+
+### 2D Sprite Renderer (`Sprite`)
+For UI, backgrounds, and HUD elements:
+- `void Initialize(DirectXCommon* dxCommon)`
+- `void SetTexture(D3D12_GPU_DESCRIPTOR_HANDLE handle)`
+- `transformSprite`: 2D screen-space position, rotation, and size (e.g. 0-1280, 0-720).
+- `void Update()`, `void Draw(ID3D12GraphicsCommandList* cmdList)`
+
+---
+
+### Primitive Debug Drawer (`PrimitiveDrawer`)
+- `void DrawLine3d(const Vector3& p1, const Vector3& p2, const Vector4& color)`: Draws a 3D debug line.
+- `void DrawGrid(float size, float subdivisions, const Vector4& color)`: Draws a floor grid.
+- `void Render(ID3D12GraphicsCommandList* cmdList)`: Flushes registered line vertices.
+
+---
+
+### Texture Manager (`TextureManager`)
+- `uint32_t LoadTexture(const std::string& filePath)`: Loads PNG/JPG/DDS, generates mipmaps, creates SRV descriptor, and returns `textureHandle`.
+- `D3D12_GPU_DESCRIPTOR_HANDLE GetGPUHandle(uint32_t textureHandle)`: Retrieves GPU descriptor handle for binding.
 
 ---
 
@@ -362,6 +451,24 @@ Unified multi-light ConstantBuffer manager:
 
 ---
 
+### Audio System (`Audio`)
+- `SoundData SoundLoadWave(const std::string& filename)`: Loads uncompressed WAV file.
+- `void SoundPlayWave(const SoundData& soundData)`: Plays audio voice via XAudio2.
+- `void SoundUnload(SoundData* soundData)`: Frees memory.
+
+---
+
+### Math Library (`Mathematics` / `MathUtil`)
+- `Matrix4x4 MakeIdentity4x4()`.
+- `Matrix4x4 MakeAffineMatrix(const Vector3& scale, const Vector3& rotate, const Vector3& translate)`.
+- `Matrix4x4 MakePerspectiveFovMatrix(float fovY, float aspect, float nearClip, float farClip)`.
+- `Matrix4x4 MakeOrthographicMatrix(...)`.
+- `Matrix4x4 Multiply(const Matrix4x4& m1, const Matrix4x4& m2)`.
+- `Matrix4x4 Inverse(const Matrix4x4& m)`.
+- `Vector3 Transform(const Vector3& vector, const Matrix4x4& matrix)`.
+
+---
+
 ## 5. Shader & Root Signature Pipeline
 
 ### Vertex Input Layout (`Object3d.VS.hlsl`):
@@ -373,7 +480,7 @@ Unified multi-light ConstantBuffer manager:
 | `BLENDINDICES0` | `R32G32B32A32_UINT` | 4 bone indices for GPU skinning |
 | `BLENDWEIGHT0`  | `R32G32B32A32_FLOAT` | 4 bone blending weights (sum = 1.0) |
 
-### Root Signature Bindings (`GraphicPipeline.cpp`):
+### Root Signature Bindings (`GraphicPipeline.cpp` — Object3d):
 | Root Slot | Register | Visibility | Type | Buffer Content |
 |:---:|:---:|:---:|:---:|---|
 | **0** | `b0` | Pixel Shader | CBV | Material (Color, EnableLighting, LightingType) |
@@ -382,7 +489,9 @@ Unified multi-light ConstantBuffer manager:
 | **3** | `b1` | Pixel Shader | CBV | LightGroup (Ambient, Directional, Point[3], Spot[3]) |
 | **4** | `b1` | Vertex Shader | CBV | **BonePalette** (Array of 128 Skinning Matrices) |
 
-### Circle Shadow Shaders (`CircleShadow.VS.hlsl` & `CircleShadow.PS.hlsl`):
-- **Vertex Shader**: Transforms flat XZ quad vertices with position, texcoord, and normal without bone skinning overhead.
-- **Pixel Shader**: Calculates an analytical radial ellipse distance from the center UV `(0.5, 0.5)` with `smoothstep` edge falloff, generating soft circular shadows with zero texture lookups.
-
+### Particle Instancing Root Signature (`ParticleQuad`):
+| Root Slot | Register | Visibility | Type | Buffer Content |
+|:---:|:---:|:---:|:---:|---|
+| **0** | `b0` | Pixel Shader | CBV | Material (Tint Color, Alpha) |
+| **1** | `t0` | Vertex Shader | Descriptor Table (SRV) | `StructuredBuffer<TransformationMatrix>` (SRV Slot 20) |
+| **2** | `t0` | Pixel Shader | Descriptor Table (SRV) | 2D Diffuse Texture (`circle.png`) |
