@@ -390,7 +390,7 @@ particles.Draw(cmdList);
 
 ### Collision Detection (`Collider` / `CollisionManager`)
 
-Sistem deteksi tabrakan berdasarkan kurikulum GE3 — **Sphere vs Sphere** dengan algoritma kuadrat jarak (tanpa `sqrt`) dan pola callback `OnCollision()`.
+Sistem deteksi tabrakan **Sphere vs Sphere** dengan algoritma kuadrat jarak (tanpa `sqrt`) dan pola callback `OnCollision()`.
 
 **Tersedia dua tipe collider:**
 ```cpp
