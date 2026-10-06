@@ -4,6 +4,7 @@ struct TransformationMatrix
 {
     float32_t4x4 WVP;
     float32_t4x4 World;
+    float32_t4 color;
 };
 
 // Root Parameter 1: Descriptor Table -> StructuredBuffer (t0, Vertex Shader)
@@ -18,15 +19,27 @@ struct VertexShaderInput
     float4 boneWeights : BLENDWEIGHT0;
 };
 
-VertexShaderOutput main(VertexShaderInput input, uint instanceId : SV_InstanceID)
+struct ParticleVertexOutput
 {
-    VertexShaderOutput output;
+    float32_t4 position : SV_POSITION;
+    float32_t2 texcoord : TEXCOORD0;
+    float32_t3 normal : NORMAL0;
+    float32_t3 worldPosition : TEXCOORD1;
+    float32_t4 color : COLOR0;
+};
+
+ParticleVertexOutput main(VertexShaderInput input, uint instanceId : SV_InstanceID)
+{
+    ParticleVertexOutput output;
     
     // Ambil matriks WVP dan World dari StructuredBuffer sesuai instance ID
     output.position = mul(input.position, gTransformationMatrices[instanceId].WVP);
     output.texcoord = input.texcoord;
     output.normal = normalize(mul(input.normal, (float32_t3x3)gTransformationMatrices[instanceId].World));
     output.worldPosition = mul(input.position, gTransformationMatrices[instanceId].World).xyz;
+    
+    // Ambil warna individual per partikel dari StructuredBuffer
+    output.color = gTransformationMatrices[instanceId].color;
     
     return output;
 }

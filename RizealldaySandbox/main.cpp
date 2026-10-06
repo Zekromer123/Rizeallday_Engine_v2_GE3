@@ -30,15 +30,13 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	lights->GetDirectionalLight().direction = { 0.5f, -1.0f, 0.5f };
 	lights->GetDirectionalLight().color = { 1.0f, 0.95f, 0.9f, 1.0f };
 
-	// ===== 4.5. Assignment 01_00: 10 Quad Instancing (circle.png) =====
+	// ===== 4.5. Assignment 01_00: 3D Particle System (Instancing + Billboard + Wind) =====
 	DXCManager dxc;
 	dxc.Initialize();
 	uint32_t circleTextureHandle = TextureManager::GetInstance()->LoadTexture("Resources/circle.png");
 	ParticleQuad particleQuads;
-	particleQuads.Initialize(RizeEngine::GetDirectXCommon(), &dxc, circleTextureHandle, 10);
+	particleQuads.Initialize(RizeEngine::GetDirectXCommon(), &dxc, circleTextureHandle, 100);
 	bool showParticleQuads = true;
-	bool showCharacter = true;
-
 
 	auto lastTime = std::chrono::high_resolution_clock::now();
 
@@ -64,7 +62,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		// Update Camera
 		camera.Update();
 
-		particleQuads.Update(camera.GetViewProjectionMatrix());
+		particleQuads.Update(deltaTime, camera);
 
 		lights->Update();
 
@@ -74,12 +72,45 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		ImGui::Text("FPS: %.1f (dt: %.4f s)", ImGui::GetIO().Framerate, deltaTime);
 		ImGui::Separator();
 
-		// ===== Assignment 01_00: 10 Quad Instancing =====
-		ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "Assignment 01_00: 10 Quad Instancing");
-		ImGui::Checkbox("Show 10 Quad Instancing (circle.png)", &showParticleQuads);
-		ImGui::Checkbox("Show FBX Character", &showCharacter);
+		// ===== Particle System Settings =====
+		ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "Particle System Settings");
+		ImGui::Checkbox("Show Particles", &showParticleQuads);
 		if (showParticleQuads) {
-			ImGui::ColorEdit4("Particle Color", &particleQuads.color.x);
+			ImGui::Checkbox("Update Particles", &particleQuads.isUpdate);
+			ImGui::Checkbox("Use Billboard", &particleQuads.useBillboard);
+
+			// Blend Mode Selector
+			const char* blendModes[] = { "Normal (AlphaBlend)", "Add (Additive Glow)" };
+			int currentBlend = (particleQuads.blendType == ParticleQuad::BlendType::Add) ? 1 : 0;
+			if (ImGui::Combo("Blend Mode", &currentBlend, blendModes, 2)) {
+				particleQuads.blendType = (currentBlend == 1) ? ParticleQuad::BlendType::Add : ParticleQuad::BlendType::Normal;
+			}
+
+			ImGui::ColorEdit4("Global Color", &particleQuads.globalColor.x);
+			ImGui::Text("Active Particles: %u / %u", particleQuads.GetActiveCount(), particleQuads.GetMaxParticles());
+
+			// Emitter Controls
+			if (ImGui::CollapsingHeader("Emitter Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+				ImGui::Checkbox("Auto Emit", &particleQuads.emitter.emit);
+				ImGui::DragFloat3("Emitter Pos", &particleQuads.emitter.translate.x, 0.1f);
+				ImGui::DragFloat3("Emitter Radius", &particleQuads.emitter.radius.x, 0.1f, 0.0f, 10.0f);
+				int emitCount = static_cast<int>(particleQuads.emitter.count);
+				if (ImGui::DragInt("Spawn Count", &emitCount, 1.0f, 1, 20)) {
+					particleQuads.emitter.count = static_cast<uint32_t>(emitCount);
+				}
+				ImGui::DragFloat("Spawn Frequency", &particleQuads.emitter.frequency, 0.01f, 0.01f, 2.0f);
+				if (ImGui::Button("Burst (10 Particles)")) {
+					particleQuads.EmitBurst(10);
+				}
+			}
+
+			// Wind / Acceleration Field Controls
+			if (ImGui::CollapsingHeader("Wind Field", ImGuiTreeNodeFlags_DefaultOpen)) {
+				ImGui::Checkbox("Enable Wind Field", &particleQuads.windField.enabled);
+				ImGui::DragFloat3("Wind Acceleration", &particleQuads.windField.acceleration.x, 0.5f);
+				ImGui::DragFloat3("Field Area Min", &particleQuads.windField.area.min.x, 0.5f);
+				ImGui::DragFloat3("Field Area Max", &particleQuads.windField.area.max.x, 0.5f);
+			}
 		}
 
 		ImGui::Separator();
@@ -87,10 +118,6 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		ImGui::DragFloat3("Camera Position", &camera.translation.x, 0.1f);
 		ImGui::DragFloat3("Camera Rotation", &camera.rotation.x, 0.02f);
 		ImGui::BulletText("Hold [Q] / [E] to Rotate Camera Yaw");
-
-
-
-
 
 		ImGui::Separator();
 		ImGui::ColorEdit4("Light Color", &lights->GetDirectionalLight().color.x);
