@@ -11,6 +11,7 @@
 #include "3d/Model.h"
 #include "3d/Object3d.h"
 #include "3d/WorldTransform.h"
+#include "3d/Camera.h"
 #include "3d/LightGroup.h"
 #include "3d/PrimitiveDrawer.h"
 #include "3d/CircleShadow.h"
@@ -37,9 +38,12 @@ void Initialize(const char* title, int width, int height) {
 	sWinApp = WinApp::GetInstance();
 	sWinApp->CreateGameWindow(title, width, height);
 
+	int clientW = sWinApp->GetClientWidth();
+	int clientH = sWinApp->GetClientHeight();
+
 	// DirectX
 	sDxCommon = DirectXCommon::GetInstance();
-	sDxCommon->Initialize(sWinApp->GetHWND(), width, height);
+	sDxCommon->Initialize(sWinApp->GetHWND(), clientW, clientH);
 
 	// DXC Shader Compiler
 	sDxcManager = new DXCManager();
@@ -64,6 +68,7 @@ void Initialize(const char* title, int width, int height) {
 	Model::StaticInitialize(sDxCommon);
 	Object3d::StaticInitialize(sDxCommon);
 	WorldTransform::StaticInitialize(sDxCommon);
+	Camera::StaticInitialize(sDxCommon);
 	LightGroup::StaticInitialize(sDxCommon);
 	PrimitiveDrawer::GetInstance()->Initialize(sDxCommon);
 
@@ -80,9 +85,18 @@ bool ProcessMessage() {
 	return !sWinApp->ProcessMessage();
 }
 
+static bool sFrameActive = false;
+
 void BeginFrame() {
 	// Input update
 	sInput->Update();
+
+	if (!sDxCommon || sDxCommon->IsDeviceLost()) {
+		sFrameActive = false;
+		return;
+	}
+
+	sFrameActive = true;
 
 	// PreDraw (clears screen, sets render targets, starts ImGui frame)
 	sDxCommon->PreDraw();
@@ -95,13 +109,19 @@ void BeginFrame() {
 }
 
 void EndFrame() {
+	if (!sDxCommon || !sFrameActive) {
+		return;
+	}
+	sFrameActive = false;
 	// PostDraw (renders ImGui, presents)
 	sDxCommon->PostDraw();
 }
 
 void Finalize() {
 	// Wait for GPU to finish
-	sDxCommon->SignalAndWaitFence();
+	if (sDxCommon && !sDxCommon->IsDeviceLost()) {
+		sDxCommon->SignalAndWaitFence();
+	}
 
 	// Cleanup
 	sAudio->Finalize();

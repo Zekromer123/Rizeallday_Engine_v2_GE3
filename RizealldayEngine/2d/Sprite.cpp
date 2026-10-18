@@ -60,7 +60,7 @@ void Sprite::Initialize(DirectXCommon* dxCommon)
 	directionalLightData->intensity = 1.0f;
 	directionalLightData->active = 1;
 
-	transformationMatrixResourceSprite.Attach(dxCommon->CreateBufferResource(sizeof(TransformationMatrix)));
+	transformationMatrixResourceSprite.Attach(dxCommon->CreateBufferResource((sizeof(TransformationMatrix) + 255) & ~255));
 	transformationMatrixResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&transformationMatrixDataSprite));
 	transformationMatrixDataSprite->WVP = Mathematics::MakeIdentity4x4();
 	transformationMatrixDataSprite->World = Mathematics::MakeIdentity4x4();

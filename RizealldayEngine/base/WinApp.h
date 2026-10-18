@@ -27,6 +27,8 @@ public:
 
 	HWND GetHWND() const { return hwnd_; }
 	HINSTANCE GetHInstance() const { return wc_.hInstance; }
+	int GetClientWidth() const;
+	int GetClientHeight() const;
 
 private:
 	WinApp() = default;

@@ -14,6 +14,17 @@ LightGroup* LightGroup::Create() {
     return instance;
 }
 
+LightGroup::~LightGroup() {
+    if (constBuffer_) {
+        constBuffer_->Unmap(0, nullptr);
+        mappedData_ = nullptr;
+        if (sDxCommon_) {
+            sDxCommon_->DeferRelease(constBuffer_);
+        }
+        constBuffer_.Reset();
+    }
+}
+
 void LightGroup::Initialize() {
     assert(sDxCommon_);
     
@@ -77,6 +88,12 @@ void LightGroup::Update() {
         for (int i = 0; i < MaxSpotLights; ++i) {
             mappedData_->spotLights[i] = spotLights_[i];
         }
+
+        mappedData_->lightViewProjection = lightViewProjection_;
+        mappedData_->shadowActive = shadowActive_;
+        mappedData_->shadowBias = shadowBias_;
+        mappedData_->shadowStrength = shadowStrength_;
+        mappedData_->shadowNormalBias = shadowNormalBias_;
     }
 }
 

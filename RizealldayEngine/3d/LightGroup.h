@@ -3,6 +3,8 @@
 #include "3d/PointLight.h"
 #include "3d/SpotLight.h"
 #include "math/Vector3.h"
+#include "math/Matrix4x4.h"
+#include "math/MathUtil.h"
 #include <d3d12.h>
 #include <wrl.h>
 #include <cstdint>
@@ -15,6 +17,11 @@ struct LightGroupGPU {
     DirectionalLightData directionalLight;
     PointLightData pointLights[3];
     SpotLightData spotLights[3];
+    Matrix4x4 lightViewProjection;
+    int32_t shadowActive;
+    float shadowBias;
+    float shadowStrength;
+    float shadowNormalBias;
 };
 
 class LightGroup {
@@ -25,6 +32,9 @@ public:
     static void StaticInitialize(DirectXCommon* dxCommon);
     static LightGroup* Create();
 
+    LightGroup() = default;
+    ~LightGroup();
+
     void Initialize();
     void Update();
     void Draw(ID3D12GraphicsCommandList* cmdList, uint32_t rootParameterIndex);
@@ -32,6 +42,14 @@ public:
 
     void SetAmbientColor(const Vector3& color) { ambientColor_ = color; }
     void SetAmbientIntensity(float intensity) { ambientIntensity_ = intensity; }
+    void SetCameraPosition(const Vector3&) {}
+    Vector3 GetCameraPosition() const { return Vector3{0.0f, 0.0f, 0.0f}; }
+
+    void SetLightViewProjection(const Matrix4x4& mat) { lightViewProjection_ = mat; }
+    void SetShadowActive(int32_t active) { shadowActive_ = active; }
+    void SetShadowBias(float bias) { shadowBias_ = bias; }
+    void SetShadowStrength(float strength) { shadowStrength_ = strength; }
+    void SetShadowNormalBias(float normalBias) { shadowNormalBias_ = normalBias; }
     
     DirectionalLightData& GetDirectionalLight() { return directionalLight_; }
     PointLightData& GetPointLight(int32_t index) { return pointLights_[index]; }
@@ -49,4 +67,10 @@ private:
     DirectionalLightData directionalLight_;
     PointLightData pointLights_[MaxPointLights];
     SpotLightData spotLights_[MaxSpotLights];
+
+    Matrix4x4 lightViewProjection_ = Mathematics::MakeIdentity4x4();
+    int32_t shadowActive_ = 1;
+    float shadowBias_ = 0.002f;
+    float shadowStrength_ = 1.0f;
+    float shadowNormalBias_ = 0.02f;
 };

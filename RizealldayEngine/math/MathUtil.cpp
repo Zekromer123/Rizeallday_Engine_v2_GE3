@@ -172,3 +172,14 @@ Matrix4x4 Mathematics::MakeAffineMatrix(const Vector3& scale, const Vector3& rot
 	Matrix4x4 result = Multiply(scaleMatrix, Multiply(rotateXYZMatrix, translateMatrix));
 	return result;
 }
+
+Matrix4x4 Mathematics::Transpose(const Matrix4x4& m)
+{
+	Matrix4x4 result;
+	for (int i = 0; i < 4; ++i) {
+		for (int j = 0; j < 4; ++j) {
+			result.m[i][j] = m.m[j][i];
+		}
+	}
+	return result;
+}

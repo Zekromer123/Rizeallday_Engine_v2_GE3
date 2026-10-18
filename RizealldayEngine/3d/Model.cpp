@@ -18,8 +18,25 @@ void Model::StaticInitialize(DirectXCommon* dxCommon) {
     sDxCommon_ = dxCommon;
 }
 
+Model::~Model() {
+    for (auto& mesh : meshes_) {
+        if (mesh.vertexBuffer) {
+            if (sDxCommon_) {
+                sDxCommon_->DeferRelease(mesh.vertexBuffer);
+            }
+            mesh.vertexBuffer.Reset();
+        }
+        if (mesh.indexBuffer) {
+            if (sDxCommon_) {
+                sDxCommon_->DeferRelease(mesh.indexBuffer);
+            }
+            mesh.indexBuffer.Reset();
+        }
+    }
+}
+
 Model* Model::CreateFromFile(const std::string& directoryPath, const std::string& filename) {
-    std::string fullPath = directoryPath + "/" + filename;
+    std::string fullPath = directoryPath.empty() ? filename : (directoryPath + "/" + filename);
     
     auto it = sCache_.find(fullPath);
     if (it != sCache_.end()) {
@@ -34,21 +51,286 @@ Model* Model::CreateFromFile(const std::string& directoryPath, const std::string
         ext = filename.substr(extPos + 1);
     }
     
-    // convert ext to lowercase
     for (auto& c : ext) {
         c = static_cast<char>(std::tolower(c));
     }
     
-    if (ext == "obj") {
+    model->LoadAssimpModel(fullPath);
+    if (model->meshes_.empty() && ext == "obj") {
         model->LoadOBJ(directoryPath, filename);
-    } else {
-        model->LoadAssimpModel(fullPath);
     }
     
     model->CreateGPUBuffers();
     
     Model* rawPtr = model.get();
     sCache_[fullPath] = std::move(model);
+    return rawPtr;
+}
+
+std::unique_ptr<Model> Model::CreatePreviewFromFile(const std::string& filePath) {
+    std::unique_ptr<Model> model = std::make_unique<Model>();
+    std::filesystem::path p(filePath);
+    std::string ext = p.extension().string();
+    for (auto& c : ext) {
+        c = static_cast<char>(std::tolower(c));
+    }
+
+    model->LoadAssimpModel(filePath);
+    if (model->meshes_.empty() && ext == ".obj") {
+        model->LoadOBJ(p.parent_path().string(), p.filename().string());
+    }
+
+    model->CreateGPUBuffers();
+    return model;
+}
+
+uint32_t Model::GetTotalVertexCount() const {
+    uint32_t total = 0;
+    for (const auto& m : meshes_) {
+        total += static_cast<uint32_t>(m.vertices.size());
+    }
+    return total;
+}
+
+uint32_t Model::GetTotalTriangleCount() const {
+    uint32_t total = 0;
+    for (const auto& m : meshes_) {
+        total += static_cast<uint32_t>(m.indices.size() / 3);
+    }
+    return total;
+}
+
+void Model::GetBounds(Vector3& outCenter, float& outMaxExtent) const {
+    Vector3 minPos = { 1e9f, 1e9f, 1e9f };
+    Vector3 maxPos = { -1e9f, -1e9f, -1e9f };
+    bool hasVerts = false;
+
+    std::vector<Matrix4x4> boneMatrices;
+    const bool hasBones = HasBones();
+    if (hasBones) {
+        CalculateBoneTransforms(0.0f, 0, boneMatrices);
+    }
+
+    for (const auto& m : meshes_) {
+        for (const auto& v : m.vertices) {
+            hasVerts = true;
+            Vector3 pos = { v.position.x, v.position.y, v.position.z };
+
+            if (hasBones && !boneMatrices.empty()) {
+                float totalWeight = v.boneWeights[0] + v.boneWeights[1] + v.boneWeights[2] + v.boneWeights[3];
+                if (totalWeight > 0.0001f) {
+                    Vector3 skinned = { 0.0f, 0.0f, 0.0f };
+                    for (int k = 0; k < 4; ++k) {
+                        float w = v.boneWeights[k];
+                        uint32_t bIdx = v.boneIndices[k];
+                        if (w > 0.0001f && bIdx < boneMatrices.size()) {
+                            const Matrix4x4& bm = boneMatrices[bIdx];
+                            float tx = pos.x * bm.m[0][0] + pos.y * bm.m[1][0] + pos.z * bm.m[2][0] + bm.m[3][0];
+                            float ty = pos.x * bm.m[0][1] + pos.y * bm.m[1][1] + pos.z * bm.m[2][1] + bm.m[3][1];
+                            float tz = pos.x * bm.m[0][2] + pos.y * bm.m[1][2] + pos.z * bm.m[2][2] + bm.m[3][2];
+                            skinned.x += tx * w;
+                            skinned.y += ty * w;
+                            skinned.z += tz * w;
+                        }
+                    }
+                    pos = skinned;
+                }
+            }
+
+            minPos.x = (std::min)(minPos.x, pos.x);
+            minPos.y = (std::min)(minPos.y, pos.y);
+            minPos.z = (std::min)(minPos.z, pos.z);
+            maxPos.x = (std::max)(maxPos.x, pos.x);
+            maxPos.y = (std::max)(maxPos.y, pos.y);
+            maxPos.z = (std::max)(maxPos.z, pos.z);
+        }
+    }
+
+    if (!hasVerts) {
+        outCenter = { 0.0f, 0.0f, 0.0f };
+        outMaxExtent = 1.0f;
+        return;
+    }
+
+    outCenter = {
+        (minPos.x + maxPos.x) * 0.5f,
+        (minPos.y + maxPos.y) * 0.5f,
+        (minPos.z + maxPos.z) * 0.5f
+    };
+    float dx = maxPos.x - minPos.x;
+    float dy = maxPos.y - minPos.y;
+    float dz = maxPos.z - minPos.z;
+    outMaxExtent = (std::max)({ dx, dy, dz, 0.001f });
+}
+
+Model* Model::CreateCube() {
+    const std::string cacheKey = "__primitive_cube";
+    auto it = sCache_.find(cacheKey);
+    if (it != sCache_.end()) {
+        return it->second.get();
+    }
+
+    auto model = std::unique_ptr<Model>(new Model());
+    MeshData mesh;
+    mesh.textureHandle = TextureManager::GetInstance()->GetDefaultWhiteTexture();
+
+    struct FaceDef {
+        Vector3 normal;
+        Vector3 corners[4];
+    };
+    FaceDef faces[6] = {
+        // Front (+Z)
+        { {0.0f, 0.0f, 1.0f}, { {-0.5f, -0.5f,  0.5f}, {-0.5f,  0.5f,  0.5f}, { 0.5f,  0.5f,  0.5f}, { 0.5f, -0.5f,  0.5f} } },
+        // Back (-Z)
+        { {0.0f, 0.0f, -1.0f}, { { 0.5f, -0.5f, -0.5f}, { 0.5f,  0.5f, -0.5f}, {-0.5f,  0.5f, -0.5f}, {-0.5f, -0.5f, -0.5f} } },
+        // Top (+Y)
+        { {0.0f, 1.0f, 0.0f}, { {-0.5f,  0.5f,  0.5f}, {-0.5f,  0.5f, -0.5f}, { 0.5f,  0.5f, -0.5f}, { 0.5f,  0.5f,  0.5f} } },
+        // Bottom (-Y)
+        { {0.0f, -1.0f, 0.0f}, { {-0.5f, -0.5f, -0.5f}, {-0.5f, -0.5f,  0.5f}, { 0.5f, -0.5f,  0.5f}, { 0.5f, -0.5f, -0.5f} } },
+        // Right (+X)
+        { {1.0f, 0.0f, 0.0f}, { { 0.5f, -0.5f,  0.5f}, { 0.5f,  0.5f,  0.5f}, { 0.5f,  0.5f, -0.5f}, { 0.5f, -0.5f, -0.5f} } },
+        // Left (-X)
+        { {-1.0f, 0.0f, 0.0f}, { {-0.5f, -0.5f, -0.5f}, {-0.5f,  0.5f, -0.5f}, {-0.5f,  0.5f,  0.5f}, {-0.5f, -0.5f,  0.5f} } }
+    };
+
+    Vector2 uvs[4] = { {0.0f, 1.0f}, {0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f} };
+
+    for (int f = 0; f < 6; f++) {
+        uint32_t baseIdx = static_cast<uint32_t>(mesh.vertices.size());
+        for (int v = 0; v < 4; v++) {
+            VertexData vd{};
+            vd.position = { faces[f].corners[v].x, faces[f].corners[v].y, faces[f].corners[v].z, 1.0f };
+            vd.normal = faces[f].normal;
+            vd.texcoord = uvs[v];
+            mesh.vertices.push_back(vd);
+        }
+        mesh.indices.push_back(baseIdx + 0);
+        mesh.indices.push_back(baseIdx + 1);
+        mesh.indices.push_back(baseIdx + 2);
+        mesh.indices.push_back(baseIdx + 0);
+        mesh.indices.push_back(baseIdx + 2);
+        mesh.indices.push_back(baseIdx + 3);
+    }
+
+    model->meshes_.push_back(std::move(mesh));
+    model->CreateGPUBuffers();
+
+    Model* rawPtr = model.get();
+    sCache_[cacheKey] = std::move(model);
+    return rawPtr;
+}
+
+Model* Model::CreatePlane() {
+    const std::string cacheKey = "__primitive_plane";
+    auto it = sCache_.find(cacheKey);
+    if (it != sCache_.end()) {
+        return it->second.get();
+    }
+
+    auto model = std::unique_ptr<Model>(new Model());
+    MeshData mesh;
+    mesh.textureHandle = TextureManager::GetInstance()->GetDefaultWhiteTexture();
+
+    VertexData v0{ {-5.0f, 0.0f, -5.0f, 1.0f}, {0.0f, 10.0f}, {0.0f, 1.0f, 0.0f} };
+    VertexData v1{ {-5.0f, 0.0f,  5.0f, 1.0f}, {0.0f,  0.0f}, {0.0f, 1.0f, 0.0f} };
+    VertexData v2{ { 5.0f, 0.0f,  5.0f, 1.0f}, {10.0f, 0.0f}, {0.0f, 1.0f, 0.0f} };
+    VertexData v3{ { 5.0f, 0.0f, -5.0f, 1.0f}, {10.0f,10.0f}, {0.0f, 1.0f, 0.0f} };
+
+    mesh.vertices = { v0, v1, v2, v3 };
+    // Double-sided indices so the plane is visible from top and bottom regardless of culling
+    mesh.indices = { 0, 2, 1, 0, 3, 2, 0, 1, 2, 0, 2, 3 };
+
+    model->meshes_.push_back(std::move(mesh));
+    model->CreateGPUBuffers();
+
+    Model* rawPtr = model.get();
+    sCache_[cacheKey] = std::move(model);
+    return rawPtr;
+}
+
+Model* Model::CreateQuad() {
+    const std::string cacheKey = "__primitive_quad";
+    auto it = sCache_.find(cacheKey);
+    if (it != sCache_.end()) {
+        return it->second.get();
+    }
+
+    auto model = std::unique_ptr<Model>(new Model());
+    MeshData mesh;
+    mesh.textureHandle = TextureManager::GetInstance()->GetDefaultWhiteTexture();
+
+    VertexData v0{ {-0.5f, -0.5f, 0.0f, 1.0f}, {0.0f, 1.0f}, {0.0f, 0.0f, -1.0f} };
+    VertexData v1{ {-0.5f,  0.5f, 0.0f, 1.0f}, {0.0f, 0.0f}, {0.0f, 0.0f, -1.0f} };
+    VertexData v2{ { 0.5f,  0.5f, 0.0f, 1.0f}, {1.0f, 0.0f}, {0.0f, 0.0f, -1.0f} };
+    VertexData v3{ { 0.5f, -0.5f, 0.0f, 1.0f}, {1.0f, 1.0f}, {0.0f, 0.0f, -1.0f} };
+
+    mesh.vertices = { v0, v1, v2, v3 };
+    mesh.indices = { 0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2 };
+
+    model->meshes_.push_back(std::move(mesh));
+    model->CreateGPUBuffers();
+
+    Model* rawPtr = model.get();
+    sCache_[cacheKey] = std::move(model);
+    return rawPtr;
+}
+
+Model* Model::CreateSphere() {
+    const std::string cacheKey = "__primitive_sphere";
+    auto it = sCache_.find(cacheKey);
+    if (it != sCache_.end()) {
+        return it->second.get();
+    }
+
+    auto model = std::unique_ptr<Model>(new Model());
+    MeshData mesh;
+    mesh.textureHandle = TextureManager::GetInstance()->GetDefaultWhiteTexture();
+
+    const int latitudeBands = 16;
+    const int longitudeBands = 24;
+    const float radius = 0.5f;
+
+    for (int latNumber = 0; latNumber <= latitudeBands; latNumber++) {
+        float theta = static_cast<float>(latNumber) * 3.14159265f / static_cast<float>(latitudeBands);
+        float sinTheta = std::sin(theta);
+        float cosTheta = std::cos(theta);
+
+        for (int longNumber = 0; longNumber <= longitudeBands; longNumber++) {
+            float phi = static_cast<float>(longNumber) * 2.0f * 3.14159265f / static_cast<float>(longitudeBands);
+            float sinPhi = std::sin(phi);
+            float cosPhi = std::cos(phi);
+
+            Vector3 normal = { cosPhi * sinTheta, cosTheta, sinPhi * sinTheta };
+            Vector2 uv = { 1.0f - (static_cast<float>(longNumber) / static_cast<float>(longitudeBands)), 1.0f - (static_cast<float>(latNumber) / static_cast<float>(latitudeBands)) };
+
+            VertexData vd{};
+            vd.position = { normal.x * radius, normal.y * radius, normal.z * radius, 1.0f };
+            vd.normal = normal;
+            vd.texcoord = uv;
+            mesh.vertices.push_back(vd);
+        }
+    }
+
+    for (int latNumber = 0; latNumber < latitudeBands; latNumber++) {
+        for (int longNumber = 0; longNumber < longitudeBands; longNumber++) {
+            uint32_t first = (latNumber * (longitudeBands + 1)) + longNumber;
+            uint32_t second = first + longitudeBands + 1;
+
+            mesh.indices.push_back(first);
+            mesh.indices.push_back(first + 1);
+            mesh.indices.push_back(second);
+
+            mesh.indices.push_back(second);
+            mesh.indices.push_back(first + 1);
+            mesh.indices.push_back(second + 1);
+        }
+    }
+
+    model->meshes_.push_back(std::move(mesh));
+    model->CreateGPUBuffers();
+
+    Model* rawPtr = model.get();
+    sCache_[cacheKey] = std::move(model);
     return rawPtr;
 }
 
@@ -101,6 +383,23 @@ void Model::LoadAssimpModel(const std::string& filePath) {
     rootNode_ = BuildNodeHierarchy(scene->mRootNode);
     globalInverseTransform_ = Mathematics::Inverse(AiToRizeMatrix(scene->mRootNode->mTransformation));
 
+    // Collect accumulated node transform for each mesh index in the Assimp hierarchy
+    std::vector<Matrix4x4> meshNodeTransforms(scene->mNumMeshes, Mathematics::MakeIdentity4x4());
+    auto collectMeshNodeTransforms = [&](auto& self, const aiNode* node, const Matrix4x4& parentMat) -> void {
+        if (!node) return;
+        Matrix4x4 globalMat = Mathematics::Multiply(AiToRizeMatrix(node->mTransformation), parentMat);
+        for (unsigned int m = 0; m < node->mNumMeshes; ++m) {
+            unsigned int meshIdx = node->mMeshes[m];
+            if (meshIdx < meshNodeTransforms.size()) {
+                meshNodeTransforms[meshIdx] = globalMat;
+            }
+        }
+        for (unsigned int c = 0; c < node->mNumChildren; ++c) {
+            self(self, node->mChildren[c], globalMat);
+        }
+    };
+    collectMeshNodeTransforms(collectMeshNodeTransforms, scene->mRootNode, Mathematics::MakeIdentity4x4());
+
     // 2. Load Meshes & Bones
     std::string directory = actualPath.substr(0, actualPath.find_last_of('/'));
     if (directory == actualPath) directory = actualPath.substr(0, actualPath.find_last_of('\\'));
@@ -113,15 +412,31 @@ void Model::LoadAssimpModel(const std::string& filePath) {
 
         MeshData meshData;
         meshData.vertices.resize(mesh->mNumVertices);
+        const bool hasMeshBones = (mesh->mNumBones > 0);
+        const Matrix4x4& nodeMat = meshNodeTransforms[i];
         
         for (unsigned int v = 0; v < mesh->mNumVertices; v++) {
             VertexData& vertex = meshData.vertices[v];
-            vertex.position = { mesh->mVertices[v].x, mesh->mVertices[v].y, mesh->mVertices[v].z, 1.0f };
-            if (mesh->mNormals) {
-                vertex.normal = { mesh->mNormals[v].x, mesh->mNormals[v].y, mesh->mNormals[v].z };
-            } else {
-                vertex.normal = { 0.0f, 1.0f, 0.0f };
+            Vector3 rawPos = { mesh->mVertices[v].x, mesh->mVertices[v].y, mesh->mVertices[v].z };
+            Vector3 rawNorm = mesh->mNormals ? Vector3{ mesh->mNormals[v].x, mesh->mNormals[v].y, mesh->mNormals[v].z } : Vector3{ 0.0f, 1.0f, 0.0f };
+
+            if (!hasMeshBones) {
+                float tx = rawPos.x * nodeMat.m[0][0] + rawPos.y * nodeMat.m[1][0] + rawPos.z * nodeMat.m[2][0] + nodeMat.m[3][0];
+                float ty = rawPos.x * nodeMat.m[0][1] + rawPos.y * nodeMat.m[1][1] + rawPos.z * nodeMat.m[2][1] + nodeMat.m[3][1];
+                float tz = rawPos.x * nodeMat.m[0][2] + rawPos.y * nodeMat.m[1][2] + rawPos.z * nodeMat.m[2][2] + nodeMat.m[3][2];
+                rawPos = { tx, ty, tz };
+
+                float nx = rawNorm.x * nodeMat.m[0][0] + rawNorm.y * nodeMat.m[1][0] + rawNorm.z * nodeMat.m[2][0];
+                float ny = rawNorm.x * nodeMat.m[0][1] + rawNorm.y * nodeMat.m[1][1] + rawNorm.z * nodeMat.m[2][1];
+                float nz = rawNorm.x * nodeMat.m[0][2] + rawNorm.y * nodeMat.m[1][2] + rawNorm.z * nodeMat.m[2][2];
+                float nLen = std::sqrt(nx * nx + ny * ny + nz * nz);
+                if (nLen > 0.0001f) {
+                    rawNorm = { nx / nLen, ny / nLen, nz / nLen };
+                }
             }
+
+            vertex.position = { rawPos.x, rawPos.y, rawPos.z, 1.0f };
+            vertex.normal = rawNorm;
             if (mesh->mTextureCoords[0]) {
                 vertex.texcoord = { mesh->mTextureCoords[0][v].x, mesh->mTextureCoords[0][v].y };
             } else {
@@ -337,6 +652,9 @@ void Model::LoadOBJ(const std::string& directoryPath, const std::string& filenam
 }
 
 void Model::CreateGPUBuffers() {
+    if (!sDxCommon_ || sDxCommon_->IsDeviceLost()) {
+        return;
+    }
     for (auto& mesh : meshes_) {
         if (mesh.vertices.empty() || mesh.indices.empty()) {
             continue;
@@ -352,8 +670,10 @@ void Model::CreateGPUBuffers() {
         desc.Height = 1; desc.DepthOrArraySize = 1; desc.MipLevels = 1;
         desc.SampleDesc.Count = 1; desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
         HRESULT hr = sDxCommon_->GetDevice()->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&mesh.vertexBuffer));
-        if (FAILED(hr)) {
-            Log::GetInstance()->logOutput("Failed to create vertex buffer\n");
+        if (FAILED(hr) || !mesh.vertexBuffer) {
+            if (!sDxCommon_->CheckDeviceLost(hr, "Model::CreateGPUBuffers(VB)")) {
+                Log::GetInstance()->logOutput("Failed to create vertex buffer\n");
+            }
             continue;
         }
         
@@ -370,8 +690,10 @@ void Model::CreateGPUBuffers() {
         size_t iSizeInBytes = sizeof(uint32_t) * mesh.indices.size();
         desc.Width = iSizeInBytes;
         hr = sDxCommon_->GetDevice()->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&mesh.indexBuffer));
-        if (FAILED(hr)) {
-            Log::GetInstance()->logOutput("Failed to create index buffer\n");
+        if (FAILED(hr) || !mesh.indexBuffer) {
+            if (!sDxCommon_->CheckDeviceLost(hr, "Model::CreateGPUBuffers(IB)")) {
+                Log::GetInstance()->logOutput("Failed to create index buffer\n");
+            }
             continue;
         }
         
@@ -386,17 +708,24 @@ void Model::CreateGPUBuffers() {
     }
 }
 
-void Model::Draw(ID3D12GraphicsCommandList* cmdList) {
+void Model::Draw(ID3D12GraphicsCommandList* cmdList, uint32_t overrideTextureHandle) {
+    if (!cmdList || !sDxCommon_ || sDxCommon_->IsDeviceLost()) {
+        return;
+    }
     for (const auto& mesh : meshes_) {
         if (!mesh.vertexBuffer || !mesh.indexBuffer || mesh.indices.empty()) {
             continue;
         }
 
-        uint32_t texHandle = mesh.textureHandle;
+        uint32_t texHandle = (overrideTextureHandle != 0) ? overrideTextureHandle : mesh.textureHandle;
         if (texHandle == 0) {
             texHandle = TextureManager::GetInstance()->GetDefaultWhiteTexture();
         }
-        cmdList->SetGraphicsRootDescriptorTable(2, TextureManager::GetInstance()->GetGPUHandle(texHandle));
+        D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = TextureManager::GetInstance()->GetGPUHandle(texHandle);
+        if (gpuHandle.ptr == 0) {
+            continue;
+        }
+        cmdList->SetGraphicsRootDescriptorTable(2, gpuHandle);
         cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         cmdList->IASetVertexBuffers(0, 1, &mesh.vbView);
         cmdList->IASetIndexBuffer(&mesh.ibView);
@@ -424,7 +753,7 @@ NodeData Model::BuildNodeHierarchy(void* pAiNode) {
     return data;
 }
 
-void Model::ReadNodeHierarchy(float animTimeTicks, const AnimationClip* pAnim, const NodeData& node, const Matrix4x4& parentTransform, std::vector<Matrix4x4>& outMatrices) {
+void Model::ReadNodeHierarchy(float animTimeTicks, const AnimationClip* pAnim, const NodeData& node, const Matrix4x4& parentTransform, std::vector<Matrix4x4>& outMatrices) const {
     Matrix4x4 nodeTransform = node.transform;
 
     if (pAnim) {
@@ -548,7 +877,7 @@ Vector3 Model::InterpolateScaling(float animTimeTicks, const NodeAnimTrack& trac
     };
 }
 
-void Model::CalculateBoneTransforms(float timeInSeconds, int animIndex, std::vector<Matrix4x4>& outMatrices) {
+void Model::CalculateBoneTransforms(float timeInSeconds, int animIndex, std::vector<Matrix4x4>& outMatrices) const {
     outMatrices.assign(128, Mathematics::MakeIdentity4x4());
 
     if (boneInfoMap_.empty()) {

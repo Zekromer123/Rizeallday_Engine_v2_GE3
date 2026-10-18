@@ -61,11 +61,21 @@ struct NodeData {
 
 class Model {
 public:
+	Model() = default;
+	~Model();
 	static void StaticInitialize(DirectXCommon* dxCommon);
 	static Model* CreateFromFile(const std::string& directoryPath, const std::string& filename);
+	static std::unique_ptr<Model> CreatePreviewFromFile(const std::string& filePath);
+	static Model* CreateCube();
+	static Model* CreateSphere();
+	static Model* CreatePlane();
+	static Model* CreateQuad();
 	
-	void Draw(ID3D12GraphicsCommandList* cmdList);
+	void Draw(ID3D12GraphicsCommandList* cmdList, uint32_t overrideTextureHandle = 0);
 	const std::vector<MeshData>& GetMeshes() const { return meshes_; }
+	uint32_t GetTotalVertexCount() const;
+	uint32_t GetTotalTriangleCount() const;
+	void GetBounds(Vector3& outCenter, float& outMaxExtent) const;
 
 	bool HasBones() const { return !boneInfoMap_.empty(); }
 	size_t GetBoneCount() const { return boneInfoMap_.size(); }
@@ -73,7 +83,7 @@ public:
 	size_t GetAnimationCount() const { return animations_.size(); }
 	float GetAnimationDuration(int animIndex = 0) const;
 
-	void CalculateBoneTransforms(float timeInSeconds, int animIndex, std::vector<Matrix4x4>& outMatrices);
+	void CalculateBoneTransforms(float timeInSeconds, int animIndex, std::vector<Matrix4x4>& outMatrices) const;
 
 	void SetLockRootMotion(bool lock) { lockRootMotion_ = lock; }
 	bool GetLockRootMotion() const { return lockRootMotion_; }
@@ -84,7 +94,7 @@ private:
 	void CreateGPUBuffers();
 
 	NodeData BuildNodeHierarchy(void* pAiNode);
-	void ReadNodeHierarchy(float animTimeTicks, const AnimationClip* pAnim, const NodeData& node, const Matrix4x4& parentTransform, std::vector<Matrix4x4>& outMatrices);
+	void ReadNodeHierarchy(float animTimeTicks, const AnimationClip* pAnim, const NodeData& node, const Matrix4x4& parentTransform, std::vector<Matrix4x4>& outMatrices) const;
 	
 	static Vector3 InterpolatePosition(float animTimeTicks, const NodeAnimTrack& track, const Vector3& defaultPos);
 	static KeyQuat InterpolateRotation(float animTimeTicks, const NodeAnimTrack& track, const KeyQuat& defaultRot);

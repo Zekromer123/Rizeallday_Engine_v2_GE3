@@ -11,6 +11,17 @@ void CollisionManager::RegisterCollider(ICollidable* collidable) {
     }
 }
 
+void CollisionManager::RemoveCollider(ICollidable* collidable) {
+    if (!collidable) return;
+    for (auto it = colliders_.begin(); it != colliders_.end(); ) {
+        if (*it == collidable) {
+            it = colliders_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 void CollisionManager::CheckAllCollisions() {
     // Total Round-Robin (総当たり): check every pair once
     for (size_t i = 0; i < colliders_.size(); ++i) {

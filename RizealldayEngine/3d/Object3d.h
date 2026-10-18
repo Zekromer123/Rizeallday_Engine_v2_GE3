@@ -6,15 +6,21 @@
 #include "3d/Camera.h"
 #include "math/VertexData.h"
 #include "base/BlendMode.h"
+#include "base/GraphicPipeline.h"
 
 class Model;
 class DirectXCommon;
-class GraphicPipeline;
+class LightGroup;
+class ShadowMap;
 
 class Object3d {
 public:
+	Object3d() = default;
+	~Object3d();
 	static void StaticInitialize(DirectXCommon* dxCommon);
 	static void StaticSetPipeline(GraphicPipeline* p);
+	static void StaticSetLightGroup(LightGroup* lights);
+	static void StaticSetShadowMap(ShadowMap* shadowMap);
 
 	void Initialize();
 	void Update(float deltaTime = 1.0f / 60.0f);
@@ -41,6 +47,17 @@ public:
 	void SetBlendMode(BlendMode mode) { blendMode = mode; }
 	BlendMode GetBlendMode() const { return blendMode; }
 
+	bool useGeometryShader = false;
+	void SetUseGeometryShader(bool use) { useGeometryShader = use; }
+	bool GetUseGeometryShader() const { return useGeometryShader; }
+
+	GeometryShaderMode geometryShaderMode = GeometryShaderMode::None;
+	void SetGeometryShaderMode(GeometryShaderMode mode) { geometryShaderMode = mode; }
+	GeometryShaderMode GetGeometryShaderMode() const { return geometryShaderMode; }
+
+	void SetTextureHandle(uint32_t handle) { textureHandle_ = handle; }
+	uint32_t GetTextureHandle() const { return textureHandle_; }
+
 	/// Akses material untuk mengubah warna/alpha
 	Material* GetMaterial() const { return materialData_; }
 
@@ -49,9 +66,12 @@ public:
 private:
 	static DirectXCommon* sDxCommon_;
 	static GraphicPipeline* sPipeline_;
+	static LightGroup* sLightGroup_;
+	static ShadowMap* sShadowMap_;
 
 	Model* model_ = nullptr;
 	Camera* camera_ = nullptr;
+	uint32_t textureHandle_ = 0;
 	Microsoft::WRL::ComPtr<ID3D12Resource> materialResource_;
 	Material* materialData_ = nullptr;
 

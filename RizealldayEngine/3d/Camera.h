@@ -2,15 +2,32 @@
 #include "math/Vector3.h"
 #include "math/Matrix4x4.h"
 #include "math/MathUtil.h"
+#include <d3d12.h>
+#include <wrl.h>
+
+class DirectXCommon;
+
+struct CameraForGPU {
+	Vector3 worldPosition;
+	float pad = 0.0f;
+};
 
 class Camera {
 public:
+	static void StaticInitialize(DirectXCommon* dxCommon);
+	static D3D12_GPU_VIRTUAL_ADDRESS GetDefaultGPUVirtualAddress();
+
+	Camera() = default;
+	~Camera();
+
 	void Initialize();
 	void Update();
 
 	const Matrix4x4& GetViewMatrix() const { return matView_; }
 	const Matrix4x4& GetProjectionMatrix() const { return matProjection_; }
 	const Matrix4x4& GetViewProjectionMatrix() const { return matViewProjection_; }
+
+	D3D12_GPU_VIRTUAL_ADDRESS GetGPUVirtualAddress() const;
 
 	Vector3 translation = {0.0f, 0.0f, -10.0f};
 	Vector3 rotation = {0.0f, 0.0f, 0.0f};
@@ -21,6 +38,15 @@ public:
 	float farClip = 1000.0f;
 
 private:
+	void CreateBufferIfNeeded();
+
+	static DirectXCommon* sDxCommon_;
+	static Microsoft::WRL::ComPtr<ID3D12Resource> sDefaultCameraResource_;
+	static CameraForGPU* sDefaultMappedData_;
+
+	Microsoft::WRL::ComPtr<ID3D12Resource> cameraResource_;
+	CameraForGPU* mappedCameraData_ = nullptr;
+
 	Matrix4x4 matView_ = {};
 	Matrix4x4 matProjection_ = {};
 	Matrix4x4 matViewProjection_ = {};

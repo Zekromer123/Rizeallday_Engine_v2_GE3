@@ -10,6 +10,9 @@
 #include "base/DXCManager.h"
 #include "base/GraphicPipeline.h"
 #include "base/Log.h"
+#include "base/ScriptAPI.h"
+#include "base/ScriptBase.h"
+#include "base/ScriptModule.h"
 
 // 3D
 #include "3d/Model.h"

@@ -4,11 +4,19 @@
 #include "base/DXCManager.h"
 #include "base/BlendMode.h"
 
+enum class GeometryShaderMode {
+    None = 0,
+    PassThrough = 1,
+    Explode = 2
+};
+
 class GraphicPipeline
 {
 public:
     void Initialize(ID3D12Device* pDevice, DXCManager* dxc);
-    void Bind(ID3D12GraphicsCommandList* commandList, BlendMode mode = BlendMode::Opaque);
+    void Bind(ID3D12GraphicsCommandList* commandList, BlendMode mode = BlendMode::Opaque, GeometryShaderMode gsMode = GeometryShaderMode::None);
+    void Bind(ID3D12GraphicsCommandList* commandList, BlendMode mode, bool useGeometryShader);
+    ID3D12RootSignature* GetRootSignature() const { return rootSignature.Get(); }
 
 private:
     void CreateRootSignature();
@@ -18,4 +26,6 @@ private:
     ID3D12Device* device = nullptr;
     Microsoft::WRL::ComPtr<ID3D12RootSignature> rootSignature;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> graphicsPipelineState[static_cast<int>(BlendMode::Count)];
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> graphicsPipelineStateGS[static_cast<int>(BlendMode::Count)];
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> graphicsPipelineStateGS_Explode[static_cast<int>(BlendMode::Count)];
 };

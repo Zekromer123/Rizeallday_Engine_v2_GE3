@@ -15,10 +15,17 @@ struct VertexData {
 };
 
 struct Material {
-	Vector4 color;
-	int32_t enableLighting;
-	int32_t lightingType; // 0=None, 1=Lambert, 2=HalfLambert
-	float padding[2];
+	Vector4 color = { 1.0f, 1.0f, 1.0f, 1.0f };
+	int32_t enableLighting = 1;
+	int32_t lightingType = 4; // 0=Unlit, 1=Lambert, 2=HalfLambert, 3=Phong, 4=BlinnPhong
+	float shininess = 32.0f;
+	int32_t receiveShadows = 1;
+	Vector3 specularColor = { 1.0f, 1.0f, 1.0f };
+	float explodeAmount = 0.0f;
+	Vector2 uvOffset = { 0.0f, 0.0f };
+	Vector2 uvTiling = { 1.0f, 1.0f };
+	float uvRotation = 0.0f;
+	float pad[3] = {};
 };
 
 struct MaterialData {

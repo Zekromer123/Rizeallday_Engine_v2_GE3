@@ -73,7 +73,7 @@
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <TreatWarningAsError>false</TreatWarningAsError>
-      <AdditionalIncludeDirectories>$(ProjectDir)..\RizealldayEngine;$(ProjectDir)..\RizealldayEngine\base;$(ProjectDir)..\externals\imgui\backends;$(ProjectDir)..\externals\imgui;$(ProjectDir)..\externals\assimp\include;$(ProjectDir)..\externals\DirectXTex\DirectXTex;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)..\RizealldayEngine;$(ProjectDir)..\RizealldayEngine\base;$(ProjectDir)..\externals\imgui\backends;$(ProjectDir)..\externals\imgui;$(ProjectDir)..\externals\assimp\include;$(ProjectDir)..\externals\DirectXTex\DirectXTex;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -104,13 +104,13 @@ if exist "$(ProjectDir)Resources" xcopy "$(ProjectDir)Resources" "$(OutDir)Resou
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_WINDOWS;USE_IMGUI;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
-      <AdditionalIncludeDirectories>$(ProjectDir)..\RizealldayEngine;$(ProjectDir)..\RizealldayEngine\base;$(ProjectDir)..\externals\imgui\backends;$(ProjectDir)..\externals\imgui;$(ProjectDir)..\externals\assimp\include;$(ProjectDir)..\externals\DirectXTex\DirectXTex;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)..\RizealldayEngine;$(ProjectDir)..\RizealldayEngine\base;$(ProjectDir)..\externals\imgui\backends;$(ProjectDir)..\externals\imgui;$(ProjectDir)..\externals\assimp\include;$(ProjectDir)..\externals\DirectXTex\DirectXTex;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -146,7 +146,7 @@ if exist "$(ProjectDir)Resources" xcopy "$(ProjectDir)Resources" "$(OutDir)Resou
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
-      <AdditionalIncludeDirectories>$(ProjectDir)..\RizealldayEngine;$(ProjectDir)..\RizealldayEngine\base;$(ProjectDir)..\externals\imgui\backends;$(ProjectDir)..\externals\imgui;$(ProjectDir)..\externals\assimp\include;$(ProjectDir)..\externals\DirectXTex\DirectXTex;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)..\RizealldayEngine;$(ProjectDir)..\RizealldayEngine\base;$(ProjectDir)..\externals\imgui\backends;$(ProjectDir)..\externals\imgui;$(ProjectDir)..\externals\assimp\include;$(ProjectDir)..\externals\DirectXTex\DirectXTex;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <Optimization>Disabled</Optimization>
       <WholeProgramOptimization>false</WholeProgramOptimization>
     </ClCompile>
@@ -175,6 +175,7 @@ if exist "$(ProjectDir)Resources" xcopy "$(ProjectDir)Resources" "$(OutDir)Resou
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="ParticleQuad.cpp" />
+    <ClCompile Include="EditorSuite.cpp" />
     <ClCompile Include="main.cpp">
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
       <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
@@ -190,6 +191,7 @@ if exist "$(ProjectDir)Resources" xcopy "$(ProjectDir)Resources" "$(OutDir)Resou
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ParticleQuad.h" />
+    <ClInclude Include="EditorSuite.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

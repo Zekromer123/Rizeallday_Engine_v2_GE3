@@ -18,5 +18,6 @@ public:
 	static Matrix4x4 MakeTranslateMatrix(const Vector3& translate);
 	static Matrix4x4 MakePerspectiveFovMatrix(float fovY, float aspect, float nearClip, float farClip);
 	static Matrix4x4 Inverse(const Matrix4x4& m);
+	static Matrix4x4 Transpose(const Matrix4x4& m);
 	static Matrix4x4 MakeOrthographicMatrix(float left, float top, float right, float bottom, float nearClip, float farClip);
 };

@@ -48,6 +48,9 @@ public:
     /// Register a collidable for this frame's check.
     void RegisterCollider(ICollidable* collidable);
 
+    /// Remove a collidable immediately if registered
+    void RemoveCollider(ICollidable* collidable);
+
     /// Perform all registered collision checks this frame and clear the list.
     void CheckAllCollisions();
 
