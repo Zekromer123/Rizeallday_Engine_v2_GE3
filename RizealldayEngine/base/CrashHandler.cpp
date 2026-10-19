@@ -1,4 +1,4 @@
-#include "base/CrashHandler.h"
+﻿#include "base/CrashHandler.h"
 #include <dbghelp.h>
 #include <strsafe.h>
 

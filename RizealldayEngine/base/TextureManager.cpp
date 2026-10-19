@@ -1,4 +1,4 @@
-#include "base/TextureManager.h"
+﻿#include "base/TextureManager.h"
 #include "base/DirectXCommon.h"
 #include "base/ConvertString.h"
 #include "base/Log.h"
@@ -37,18 +37,17 @@ void TextureManager::Initialize(DirectXCommon* dxCommon)
 			uint32_t handle = nextIndex_++;
 			defaultWhiteHandle_ = handle;
 
-			ID3D12Resource* resource = CreateTextureResource(whiteImg.GetMetadata());
+			Microsoft::WRL::ComPtr<ID3D12Resource> resource = CreateTextureResource(whiteImg.GetMetadata());
 
 			uploadAllocator_->Reset();
 			uploadCommandList_->Reset(uploadAllocator_.Get(), nullptr);
 
-			ID3D12Resource* intermediateResource = UploadTextureData(resource, whiteImg);
+			Microsoft::WRL::ComPtr<ID3D12Resource> intermediateResource = UploadTextureData(resource.Get(), whiteImg);
 
 			uploadCommandList_->Close();
 			ID3D12CommandList* commandLists[] = { uploadCommandList_.Get() };
 			dxCommon_->GetCommandQueue()->ExecuteCommandLists(1, commandLists);
 			dxCommon_->SignalAndWaitFence();
-			intermediateResource->Release();
 
 			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 			srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -58,9 +57,9 @@ void TextureManager::Initialize(DirectXCommon* dxCommon)
 
 			D3D12_CPU_DESCRIPTOR_HANDLE srvCPUHandle = dxCommon_->GetSrvDescriptorHeap()->GetCPUDescriptorHandleForHeapStart();
 			srvCPUHandle.ptr += dxCommon_->GetSrvDescriptorSize() * handle;
-			dxCommon_->GetDevice()->CreateShaderResourceView(resource, &srvDesc, srvCPUHandle);
+			dxCommon_->GetDevice()->CreateShaderResourceView(resource.Get(), &srvDesc, srvCPUHandle);
 
-			textureResources_[handle].Attach(resource);
+			textureResources_[handle] = resource;
 		}
 
 		CreateDefaultCubemapTexture();
@@ -163,7 +162,7 @@ uint32_t TextureManager::LoadTexture(const std::string& filePath)
 	const DirectX::ScratchImage& finalImg = SUCCEEDED(hr) ? mipImages : image;
 	const DirectX::TexMetadata& metadata = finalImg.GetMetadata();
 
-	ID3D12Resource* resource = CreateTextureResource(metadata);
+	Microsoft::WRL::ComPtr<ID3D12Resource> resource = CreateTextureResource(metadata);
 	if (!resource) {
 		return defaultWhiteHandle_;
 	}
@@ -171,10 +170,9 @@ uint32_t TextureManager::LoadTexture(const std::string& filePath)
 	uploadAllocator_->Reset();
 	uploadCommandList_->Reset(uploadAllocator_.Get(), nullptr);
 
-	ID3D12Resource* intermediateResource = UploadTextureData(resource, finalImg);
+	Microsoft::WRL::ComPtr<ID3D12Resource> intermediateResource = UploadTextureData(resource.Get(), finalImg);
 	if (!intermediateResource) {
 		uploadCommandList_->Close();
-		resource->Release();
 		return defaultWhiteHandle_;
 	}
 
@@ -182,10 +180,8 @@ uint32_t TextureManager::LoadTexture(const std::string& filePath)
 	ID3D12CommandList* commandLists[] = { uploadCommandList_.Get() };
 	dxCommon_->GetCommandQueue()->ExecuteCommandLists(1, commandLists);
 	dxCommon_->SignalAndWaitFence();
-	intermediateResource->Release();
 
 	if (dxCommon_->IsDeviceLost()) {
-		resource->Release();
 		return defaultWhiteHandle_;
 	}
 
@@ -197,9 +193,9 @@ uint32_t TextureManager::LoadTexture(const std::string& filePath)
 	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 	srvDesc.Texture2D.MipLevels = UINT(metadata.mipLevels);
 
-	dxCommon_->GetDevice()->CreateShaderResourceView(resource, &srvDesc, srvCPUHandle);
+	dxCommon_->GetDevice()->CreateShaderResourceView(resource.Get(), &srvDesc, srvCPUHandle);
 
-	textureResources_[handle].Attach(resource);
+	textureResources_[handle] = resource;
 	textureCache_[normKey] = handle;
 
 	return handle;
@@ -272,7 +268,7 @@ uint32_t TextureManager::LoadPreviewTexture(const std::string& filePath)
 	}
 
 	const DirectX::TexMetadata& metadata = image.GetMetadata();
-	ID3D12Resource* resource = CreateTextureResource(metadata);
+	Microsoft::WRL::ComPtr<ID3D12Resource> resource = CreateTextureResource(metadata);
 	if (!resource) {
 		return defaultWhiteHandle_;
 	}
@@ -280,10 +276,9 @@ uint32_t TextureManager::LoadPreviewTexture(const std::string& filePath)
 	uploadAllocator_->Reset();
 	uploadCommandList_->Reset(uploadAllocator_.Get(), nullptr);
 
-	ID3D12Resource* intermediateResource = UploadTextureData(resource, image);
+	Microsoft::WRL::ComPtr<ID3D12Resource> intermediateResource = UploadTextureData(resource.Get(), image);
 	if (!intermediateResource) {
 		uploadCommandList_->Close();
-		resource->Release();
 		return defaultWhiteHandle_;
 	}
 
@@ -291,10 +286,8 @@ uint32_t TextureManager::LoadPreviewTexture(const std::string& filePath)
 	ID3D12CommandList* commandLists[] = { uploadCommandList_.Get() };
 	dxCommon_->GetCommandQueue()->ExecuteCommandLists(1, commandLists);
 	dxCommon_->SignalAndWaitFence();
-	intermediateResource->Release();
 
 	if (dxCommon_->IsDeviceLost()) {
-		resource->Release();
 		return defaultWhiteHandle_;
 	}
 
@@ -304,9 +297,9 @@ uint32_t TextureManager::LoadPreviewTexture(const std::string& filePath)
 	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 	srvDesc.Texture2D.MipLevels = UINT(metadata.mipLevels);
 
-	dxCommon_->GetDevice()->CreateShaderResourceView(resource, &srvDesc, srvCPUHandle);
+	dxCommon_->GetDevice()->CreateShaderResourceView(resource.Get(), &srvDesc, srvCPUHandle);
 
-	previewTextureResource_.Attach(resource);
+	previewTextureResource_ = resource;
 	currentPreviewTexturePath_ = normKey;
 	currentPreviewSrvIndex_ = targetSrvIndex;
 	return currentPreviewSrvIndex_;
@@ -342,7 +335,7 @@ void TextureManager::SetDescriptorHeaps(ID3D12GraphicsCommandList* cmdList)
 	cmdList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
 }
 
-ID3D12Resource* TextureManager::CreateTextureResource(const DirectX::TexMetadata& metadata)
+Microsoft::WRL::ComPtr<ID3D12Resource> TextureManager::CreateTextureResource(const DirectX::TexMetadata& metadata)
 {
 	if (!dxCommon_ || dxCommon_->IsDeviceLost()) {
 		return nullptr;
@@ -360,7 +353,7 @@ ID3D12Resource* TextureManager::CreateTextureResource(const DirectX::TexMetadata
 	D3D12_HEAP_PROPERTIES heapProperties{};
 	heapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
 
-	ID3D12Resource* resource = nullptr;
+	Microsoft::WRL::ComPtr<ID3D12Resource> resource = nullptr;
 	HRESULT hr = dxCommon_->GetDevice()->CreateCommittedResource(
 		&heapProperties,
 		D3D12_HEAP_FLAG_NONE,
@@ -378,7 +371,7 @@ ID3D12Resource* TextureManager::CreateTextureResource(const DirectX::TexMetadata
 	return resource;
 }
 
-ID3D12Resource* TextureManager::UploadTextureData(ID3D12Resource* textureResource, const DirectX::ScratchImage& mipImages)
+Microsoft::WRL::ComPtr<ID3D12Resource> TextureManager::UploadTextureData(ID3D12Resource* textureResource, const DirectX::ScratchImage& mipImages)
 {
 	if (!textureResource || !dxCommon_ || dxCommon_->IsDeviceLost()) {
 		return nullptr;
@@ -392,11 +385,11 @@ ID3D12Resource* TextureManager::UploadTextureData(ID3D12Resource* textureResourc
 		return nullptr;
 	}
 	uint64_t intermediateSize = GetRequiredIntermediateSize(textureResource, 0, UINT(subresources.size()));
-	ID3D12Resource* intermediateResource = dxCommon_->CreateBufferResource(intermediateSize);
+	Microsoft::WRL::ComPtr<ID3D12Resource> intermediateResource = dxCommon_->CreateBufferResource(intermediateSize);
 	if (!intermediateResource) {
 		return nullptr;
 	}
-	UpdateSubresources(commandList, textureResource, intermediateResource, 0, 0, UINT(subresources.size()), subresources.data());
+	UpdateSubresources(commandList, textureResource, intermediateResource.Get(), 0, 0, UINT(subresources.size()), subresources.data());
 	D3D12_RESOURCE_BARRIER barrier{};
 	barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 	barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
@@ -450,18 +443,17 @@ uint32_t TextureManager::CreateDefaultCubemapTexture()
 	uint32_t handle = nextIndex_++;
 	defaultCubemapHandle_ = handle;
 
-	ID3D12Resource* resource = CreateTextureResource(cubeImg.GetMetadata());
+	Microsoft::WRL::ComPtr<ID3D12Resource> resource = CreateTextureResource(cubeImg.GetMetadata());
 
 	uploadAllocator_->Reset();
 	uploadCommandList_->Reset(uploadAllocator_.Get(), nullptr);
 
-	ID3D12Resource* intermediateResource = UploadTextureData(resource, cubeImg);
+	Microsoft::WRL::ComPtr<ID3D12Resource> intermediateResource = UploadTextureData(resource.Get(), cubeImg);
 
 	uploadCommandList_->Close();
 	ID3D12CommandList* commandLists[] = { uploadCommandList_.Get() };
 	dxCommon_->GetCommandQueue()->ExecuteCommandLists(1, commandLists);
 	dxCommon_->SignalAndWaitFence();
-	intermediateResource->Release();
 
 	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 	srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -471,9 +463,9 @@ uint32_t TextureManager::CreateDefaultCubemapTexture()
 
 	D3D12_CPU_DESCRIPTOR_HANDLE srvCPUHandle = dxCommon_->GetSrvDescriptorHeap()->GetCPUDescriptorHandleForHeapStart();
 	srvCPUHandle.ptr += dxCommon_->GetSrvDescriptorSize() * handle;
-	dxCommon_->GetDevice()->CreateShaderResourceView(resource, &srvDesc, srvCPUHandle);
+	dxCommon_->GetDevice()->CreateShaderResourceView(resource.Get(), &srvDesc, srvCPUHandle);
 
-	textureResources_[handle].Attach(resource);
+	textureResources_[handle] = resource;
 	return handle;
 }
 
@@ -530,18 +522,17 @@ uint32_t TextureManager::LoadCubemapTexture(const std::string& filePath)
 	}
 
 	uint32_t handle = nextIndex_++;
-	ID3D12Resource* resource = CreateTextureResource(metadata);
+	Microsoft::WRL::ComPtr<ID3D12Resource> resource = CreateTextureResource(metadata);
 
 	uploadAllocator_->Reset();
 	uploadCommandList_->Reset(uploadAllocator_.Get(), nullptr);
 
-	ID3D12Resource* intermediateResource = UploadTextureData(resource, image);
+	Microsoft::WRL::ComPtr<ID3D12Resource> intermediateResource = UploadTextureData(resource.Get(), image);
 
 	uploadCommandList_->Close();
 	ID3D12CommandList* commandLists[] = { uploadCommandList_.Get() };
 	dxCommon_->GetCommandQueue()->ExecuteCommandLists(1, commandLists);
 	dxCommon_->SignalAndWaitFence();
-	intermediateResource->Release();
 
 	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 	srvDesc.Format = metadata.format;
@@ -553,9 +544,9 @@ uint32_t TextureManager::LoadCubemapTexture(const std::string& filePath)
 
 	D3D12_CPU_DESCRIPTOR_HANDLE srvCPUHandle = dxCommon_->GetSrvDescriptorHeap()->GetCPUDescriptorHandleForHeapStart();
 	srvCPUHandle.ptr += dxCommon_->GetSrvDescriptorSize() * handle;
-	dxCommon_->GetDevice()->CreateShaderResourceView(resource, &srvDesc, srvCPUHandle);
+	dxCommon_->GetDevice()->CreateShaderResourceView(resource.Get(), &srvDesc, srvCPUHandle);
 
-	textureResources_[handle].Attach(resource);
+	textureResources_[handle] = resource;
 	textureCache_[filePath] = handle;
 	return handle;
 }

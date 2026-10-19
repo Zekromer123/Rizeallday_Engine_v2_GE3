@@ -1,11 +1,16 @@
-#pragma once
-#include <RizeEngine.h>
+﻿#pragma once
+#include <d3d12.h>
 #include "ParticleQuad.h"
 #include "base/RenderTexture.h"
-#include "3d/Object3d.h"
-#include "3d/Model.h"
+#include "3d/Camera.h"
 #include "3d/ShadowMap.h"
 #include "3d/Skybox.h"
+#include "3d/WorldTransform.h"
+#include "base/DXCManager.h"
+#include "math/Vector2.h"
+#include "math/Vector3.h"
+#include "math/Vector4.h"
+#include "math/Matrix4x4.h"
 #include "math/Quaternion.h"
 #include "base/ScriptAPI.h"
 #include "base/ScriptBase.h"
@@ -20,8 +25,13 @@
 #include <mutex>
 #include <atomic>
 #include <thread>
-#include <windows.h>
-#include <shobjidl.h>
+#include <functional>
+
+class DirectXCommon;
+class Input;
+class LightGroup;
+class Object3d;
+class Model;
 
 enum class EditorSceneState {
 	Edit,
@@ -65,246 +75,12 @@ enum class GameObjectType {
 };
 
 struct GameObject {
-	GameObject() = default;
-	GameObject(const GameObject& other) {
-		id = other.id;
-		name = other.name;
-		isActive = other.isActive;
-		isStatic = other.isStatic;
-		tag = other.tag;
-		layer = other.layer;
-		collisionMask = other.collisionMask;
-		type = other.type;
-		parentIndex = other.parentIndex;
-		parentId = other.parentId;
-		childrenIds = other.childrenIds;
-		translation = other.translation;
-		rotation = other.rotation;
-		scale = other.scale;
-		rotationQuat = other.rotationQuat;
-		hasMesh = other.hasMesh;
-		meshEnabled = other.meshEnabled;
-		meshType = other.meshType;
-		materialColor = other.materialColor;
-		textureHandle = other.textureHandle;
-		isLit = other.isLit;
-		lightingType = other.lightingType;
-		shininess = other.shininess;
-		specularColor = other.specularColor;
-		useGeometryShader = other.useGeometryShader;
-		geometryShaderEffect = other.geometryShaderEffect;
-		explodeAmount = other.explodeAmount;
-		castShadow = other.castShadow;
-		receiveShadow = other.receiveShadow;
-		texturePath = other.texturePath;
-		modelPath = other.modelPath;
-		uvOffset = other.uvOffset;
-		uvTiling = other.uvTiling;
-		uvRotation = other.uvRotation;
-		hasBoxCollider = other.hasBoxCollider;
-		boxColliderEnabled = other.boxColliderEnabled;
-		isTrigger = other.isTrigger;
-		providesContacts = other.providesContacts;
-		boxCenter = other.boxCenter;
-		boxSize = other.boxSize;
-		isColliding = other.isColliding;
-		hasSphereCollider = other.hasSphereCollider;
-		sphereColliderEnabled = other.sphereColliderEnabled;
-		sphereIsTrigger = other.sphereIsTrigger;
-		sphereCenter = other.sphereCenter;
-		sphereRadius = other.sphereRadius;
-		hasCamera = other.hasCamera;
-		cameraEnabled = other.cameraEnabled;
-		fov = other.fov;
-		nearClip = other.nearClip;
-		farClip = other.farClip;
-		isOrthographic = other.isOrthographic;
-		hasLight = other.hasLight;
-		lightEnabled = other.lightEnabled;
-		lightType = other.lightType;
-		lightColor = other.lightColor;
-		lightIntensity = other.lightIntensity;
-		lightDirection = other.lightDirection;
-		lightRange = other.lightRange;
-		lightDecay = other.lightDecay;
-		lightSpotAngle = other.lightSpotAngle;
-		lightSpotFalloffStart = other.lightSpotFalloffStart;
-		lightCastShadow = other.lightCastShadow;
-		lightShadowBias = other.lightShadowBias;
-		lightShadowStrength = other.lightShadowStrength;
-		lightShadowNormalBias = other.lightShadowNormalBias;
-		hasParticleSystem = other.hasParticleSystem;
-		attachToIndex = other.attachToIndex;
-		attachedParentId = other.attachedParentId;
-		localOffset = other.localOffset;
-		particlePreset = other.particlePreset;
-		particleShape = other.particleShape;
-		particleSpawnRadius = other.particleSpawnRadius;
-		particleBoxExtents = other.particleBoxExtents;
-		particleConeAngle = other.particleConeAngle;
-		particleSpawnRate = other.particleSpawnRate;
-		particleMaxParticles = other.particleMaxParticles;
-		particleBurstCount = other.particleBurstCount;
-		particleDirection = other.particleDirection;
-		particleSpreadAngle = other.particleSpreadAngle;
-		particleSpeedMin = other.particleSpeedMin;
-		particleSpeedMax = other.particleSpeedMax;
-		particleGravity = other.particleGravity;
-		particleDrag = other.particleDrag;
-		particleWindEnabled = other.particleWindEnabled;
-		particleWindAcceleration = other.particleWindAcceleration;
-		particleLifetimeMin = other.particleLifetimeMin;
-		particleLifetimeMax = other.particleLifetimeMax;
-		particleStartScale = other.particleStartScale;
-		particleEndScale = other.particleEndScale;
-		particleStartColor = other.particleStartColor;
-		particleEndColor = other.particleEndColor;
-		particleBlendMode = other.particleBlendMode;
-		particleBillboardMode = other.particleBillboardMode;
-		particleQuad = nullptr;
-		hasMapchip = other.hasMapchip;
-		hasAudioSource = other.hasAudioSource;
-		audioClipName = other.audioClipName;
-		audioVolume = other.audioVolume;
-		audioPlayOnAwake = other.audioPlayOnAwake;
-		audioLoop = other.audioLoop;
-		hasScript = other.hasScript;
-		scriptClassName = other.scriptClassName;
-		scripts = other.scripts;
-		hasRigidbody = other.hasRigidbody;
-		rbEnabled = other.rbEnabled;
-		mass = other.mass;
-		drag = other.drag;
-		gravityScale = other.gravityScale;
-		useGravity = other.useGravity;
-		isKinematic = other.isKinematic;
-		bounciness = other.bounciness;
-		velocity = other.velocity;
-		isGrounded = other.isGrounded;
-	}
-	GameObject(GameObject&&) noexcept = default;
-	GameObject& operator=(const GameObject& other) {
-		if (this != &other) {
-			id = other.id;
-			name = other.name;
-			isActive = other.isActive;
-			isStatic = other.isStatic;
-			tag = other.tag;
-			layer = other.layer;
-			collisionMask = other.collisionMask;
-			type = other.type;
-			parentIndex = other.parentIndex;
-			parentId = other.parentId;
-			childrenIds = other.childrenIds;
-			translation = other.translation;
-			rotation = other.rotation;
-			scale = other.scale;
-			rotationQuat = other.rotationQuat;
-			hasMesh = other.hasMesh;
-			meshEnabled = other.meshEnabled;
-			meshType = other.meshType;
-			materialColor = other.materialColor;
-			textureHandle = other.textureHandle;
-			isLit = other.isLit;
-			lightingType = other.lightingType;
-			shininess = other.shininess;
-			specularColor = other.specularColor;
-			useGeometryShader = other.useGeometryShader;
-			geometryShaderEffect = other.geometryShaderEffect;
-			explodeAmount = other.explodeAmount;
-			castShadow = other.castShadow;
-			receiveShadow = other.receiveShadow;
-			texturePath = other.texturePath;
-			modelPath = other.modelPath;
-			uvOffset = other.uvOffset;
-			uvTiling = other.uvTiling;
-			uvRotation = other.uvRotation;
-			hasBoxCollider = other.hasBoxCollider;
-			boxColliderEnabled = other.boxColliderEnabled;
-			isTrigger = other.isTrigger;
-			providesContacts = other.providesContacts;
-			boxCenter = other.boxCenter;
-			boxSize = other.boxSize;
-			isColliding = other.isColliding;
-			hasSphereCollider = other.hasSphereCollider;
-			sphereColliderEnabled = other.sphereColliderEnabled;
-			sphereIsTrigger = other.sphereIsTrigger;
-			sphereCenter = other.sphereCenter;
-			sphereRadius = other.sphereRadius;
-			hasCamera = other.hasCamera;
-			cameraEnabled = other.cameraEnabled;
-			fov = other.fov;
-			nearClip = other.nearClip;
-			farClip = other.farClip;
-			isOrthographic = other.isOrthographic;
-			hasLight = other.hasLight;
-			lightEnabled = other.lightEnabled;
-			lightType = other.lightType;
-			lightColor = other.lightColor;
-			lightIntensity = other.lightIntensity;
-			lightDirection = other.lightDirection;
-			lightRange = other.lightRange;
-			lightDecay = other.lightDecay;
-			lightSpotAngle = other.lightSpotAngle;
-			lightSpotFalloffStart = other.lightSpotFalloffStart;
-			lightCastShadow = other.lightCastShadow;
-			lightShadowBias = other.lightShadowBias;
-			lightShadowStrength = other.lightShadowStrength;
-			lightShadowNormalBias = other.lightShadowNormalBias;
-			hasParticleSystem = other.hasParticleSystem;
-			attachToIndex = other.attachToIndex;
-			attachedParentId = other.attachedParentId;
-			localOffset = other.localOffset;
-			particlePreset = other.particlePreset;
-			particleShape = other.particleShape;
-			particleSpawnRadius = other.particleSpawnRadius;
-			particleBoxExtents = other.particleBoxExtents;
-			particleConeAngle = other.particleConeAngle;
-			particleSpawnRate = other.particleSpawnRate;
-			particleMaxParticles = other.particleMaxParticles;
-			particleBurstCount = other.particleBurstCount;
-			particleDirection = other.particleDirection;
-			particleSpreadAngle = other.particleSpreadAngle;
-			particleSpeedMin = other.particleSpeedMin;
-			particleSpeedMax = other.particleSpeedMax;
-			particleGravity = other.particleGravity;
-			particleDrag = other.particleDrag;
-			particleWindEnabled = other.particleWindEnabled;
-			particleWindAcceleration = other.particleWindAcceleration;
-			particleLifetimeMin = other.particleLifetimeMin;
-			particleLifetimeMax = other.particleLifetimeMax;
-			particleStartScale = other.particleStartScale;
-			particleEndScale = other.particleEndScale;
-			particleStartColor = other.particleStartColor;
-			particleEndColor = other.particleEndColor;
-			particleBlendMode = other.particleBlendMode;
-			particleBillboardMode = other.particleBillboardMode;
-			particleQuad = nullptr;
-			hasMapchip = other.hasMapchip;
-			hasAudioSource = other.hasAudioSource;
-			audioClipName = other.audioClipName;
-			audioVolume = other.audioVolume;
-			audioPlayOnAwake = other.audioPlayOnAwake;
-			audioLoop = other.audioLoop;
-			hasScript = other.hasScript;
-			scriptClassName = other.scriptClassName;
-			scripts = other.scripts;
-			hasRigidbody = other.hasRigidbody;
-			rbEnabled = other.rbEnabled;
-			mass = other.mass;
-			drag = other.drag;
-			gravityScale = other.gravityScale;
-			useGravity = other.useGravity;
-			isKinematic = other.isKinematic;
-			bounciness = other.bounciness;
-			velocity = other.velocity;
-			isGrounded = other.isGrounded;
-			editObject3d.reset();
-			gameObject3d.reset();
-		}
-		return *this;
-	}
-	GameObject& operator=(GameObject&&) noexcept = default;
+	GameObject();
+	~GameObject();
+	GameObject(const GameObject& other);
+	GameObject(GameObject&& other) noexcept;
+	GameObject& operator=(const GameObject& other);
+	GameObject& operator=(GameObject&& other) noexcept;
 
 	uint32_t id = 0;
 	std::string name = "GameObject";
@@ -499,7 +275,7 @@ struct GameObject {
 class EditorSuite : public IScriptHost
 {
 public:
-	EditorSuite() = default;
+	EditorSuite();
 	~EditorSuite() override;
 
 	void Initialize(
@@ -579,6 +355,7 @@ public:
 	void DiscardUnsavedChanges();
 	const std::string& GetCurrentSceneName() const { return currentSceneName_; }
 	bool IsSceneDirty() const { return isSceneDirty_; }
+	void SetOnRequestTitleScene(std::function<void()> callback) { onRequestTitleScene_ = std::move(callback); }
 
 	// Project Management & Native Folder Picker
 	static std::string OpenNativeFolderDialog();
@@ -721,6 +498,7 @@ private:
 	char saveSceneAsPathBuf_[256] = "Assets/Scenes/SampleScene.scene.json";
 	bool showOpenSceneModal_ = false;
 	char openScenePathBuf_[256] = "Assets/Scenes/SampleScene.scene.json";
+	std::function<void()> onRequestTitleScene_;
 
 	// Undo / Redo System (32-state ring buffer storing JSON scene string)
 	std::vector<std::string> undoStack_;

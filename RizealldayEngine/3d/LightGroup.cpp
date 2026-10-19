@@ -1,4 +1,4 @@
-#include "3d/LightGroup.h"
+﻿#include "3d/LightGroup.h"
 #include "base/DirectXCommon.h"
 #include <cassert>
 
@@ -8,8 +8,8 @@ void LightGroup::StaticInitialize(DirectXCommon* dxCommon) {
     sDxCommon_ = dxCommon;
 }
 
-LightGroup* LightGroup::Create() {
-    LightGroup* instance = new LightGroup();
+std::unique_ptr<LightGroup> LightGroup::Create() {
+    auto instance = std::make_unique<LightGroup>(PrivateTag{});
     instance->Initialize();
     return instance;
 }

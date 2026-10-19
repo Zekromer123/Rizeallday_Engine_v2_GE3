@@ -1,4 +1,4 @@
-#include "base/DXCManager.h"
+﻿#include "base/DXCManager.h"
 #include "base/Log.h"
 #include "base/ConvertString.h"
 #include <filesystem>
@@ -17,7 +17,7 @@ void DXCManager::Initialize()
 	assert(SUCCEEDED(hr));
 }
 
-IDxcBlob* DXCManager::CompileShader(const std::wstring& filePath, const wchar_t* profile, IDxcUtils* dxcUtils, IDxcCompiler3* dxcCompiler, IDxcIncludeHandler* includeHandler)
+Microsoft::WRL::ComPtr<IDxcBlob> DXCManager::CompileShader(const std::wstring& filePath, const wchar_t* profile, IDxcUtils* dxcUtils, IDxcCompiler3* dxcCompiler, IDxcIncludeHandler* includeHandler)
 {
 	ConvertStrings converter;
 	Log* logger = Log::GetInstance();
@@ -26,7 +26,7 @@ IDxcBlob* DXCManager::CompileShader(const std::wstring& filePath, const wchar_t*
 
 	// Resolve path: try several locations
 	std::wstring resolvedPath = filePath;
-	IDxcBlobEncoding* shaderSource = nullptr;
+	Microsoft::WRL::ComPtr<IDxcBlobEncoding> shaderSource = nullptr;
 	HRESULT hr = dxcUtils->LoadFile(resolvedPath.c_str(), nullptr, &shaderSource);
 
 	if (FAILED(hr))
@@ -100,7 +100,7 @@ IDxcBlob* DXCManager::CompileShader(const std::wstring& filePath, const wchar_t*
 	arguments.push_back(L"-Od");
 	arguments.push_back(L"-Zpr");
 
-	IDxcResult* shaderResult = nullptr;
+	Microsoft::WRL::ComPtr<IDxcResult> shaderResult = nullptr;
 	hr = dxcCompiler->Compile(
 		&shaderSourceBuffer,
 		arguments.data(),
@@ -110,7 +110,7 @@ IDxcBlob* DXCManager::CompileShader(const std::wstring& filePath, const wchar_t*
 	assert(SUCCEEDED(hr));
 
 	// Check Errors
-	IDxcBlobUtf8* errorMessages = nullptr;
+	Microsoft::WRL::ComPtr<IDxcBlobUtf8> errorMessages = nullptr;
 	shaderResult->GetOutput(DXC_OUT_ERRORS, IID_PPV_ARGS(&errorMessages), nullptr);
 	if (errorMessages != nullptr && errorMessages->GetStringLength() != 0)
 	{
@@ -119,12 +119,10 @@ IDxcBlob* DXCManager::CompileShader(const std::wstring& filePath, const wchar_t*
 	}
 
 	// Get Compiled Shader
-	IDxcBlob* compiledShader = nullptr;
+	Microsoft::WRL::ComPtr<IDxcBlob> compiledShader = nullptr;
 	hr = shaderResult->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(&compiledShader), nullptr);
 	assert(SUCCEEDED(hr));
 	logger->logOutput(std::format("Shader Compile Succeeded, Path: {}, profile: {}\n", converter.ConvertString(resolvedPath), converter.ConvertString(profile)));
 
-	shaderSource->Release();
-	shaderResult->Release();
 	return compiledShader;
 }

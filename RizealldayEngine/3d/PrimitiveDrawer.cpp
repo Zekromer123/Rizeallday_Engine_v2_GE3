@@ -1,4 +1,5 @@
-#include "3d/PrimitiveDrawer.h"
+﻿#include "3d/PrimitiveDrawer.h"
+#include "3d/Camera.h"
 #include "base/DirectXCommon.h"
 #include <cassert>
 #include <algorithm>
@@ -14,7 +15,7 @@ void PrimitiveDrawer::Initialize(DirectXCommon* dxCommon)
 	dxCommon_ = dxCommon;
 
 	size_t sizeInBytes = sizeof(LineVertex) * kMaxVertices;
-	vertexResource_.Attach(dxCommon_->CreateBufferResource(sizeInBytes));
+	vertexResource_ = dxCommon_->CreateBufferResource(sizeInBytes);
 	vertexResource_->Map(0, nullptr, reinterpret_cast<void**>(&mappedVertices_));
 
 	vbView_.BufferLocation = vertexResource_->GetGPUVirtualAddress();

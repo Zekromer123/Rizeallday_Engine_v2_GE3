@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "base/ScriptAPI.h"
 #include <windows.h>
 #include <string>
@@ -58,7 +58,14 @@ public:
 	const std::filesystem::path& GetDllSourcePath() const { return dllSourcePath_; }
 	const std::filesystem::path& GetActiveShadowPath() const { return activeShadowPath_; }
 
-	/// Resolve the canonical path to bin/Scripts/GameScripts.dll in the current workspace.
+	static constexpr const char* kScriptsDllSubpath = "bin/Scripts/GameScripts.dll";
+	static constexpr const char* kGameScriptsDirName = "GameScripts";
+	static constexpr const char* kGameScriptsVcxprojSubpath = "GameScripts/GameScripts.vcxproj";
+
+	/// Resolve the workspace/solution root directory containing GameScripts/GameScripts.vcxproj, or fallback to current/exe directory.
+	static std::filesystem::path ResolveWorkspaceRoot();
+
+	/// Resolve the canonical path to bin/Scripts/GameScripts.dll using the shared path definition.
 	static std::filesystem::path ResolveDllPath();
 
 private:

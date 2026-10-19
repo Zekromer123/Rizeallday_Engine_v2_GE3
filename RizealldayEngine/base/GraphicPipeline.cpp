@@ -1,4 +1,5 @@
-#include "base/GraphicPipeline.h"
+﻿#include "base/GraphicPipeline.h"
+#include "base/DXCManager.h"
 #include "base/Log.h"
 #include <algorithm>
 
@@ -77,8 +78,8 @@ D3D12_BLEND_DESC GraphicPipeline::MakeBlendDesc(BlendMode mode)
 void GraphicPipeline::CreateRootSignature()
 {
 	D3D12_ROOT_SIGNATURE_DESC descriptionRootSignature{};
-	ID3DBlob* signatureBlob = nullptr;
-	ID3DBlob* errorBlob = nullptr;
+	Microsoft::WRL::ComPtr<ID3DBlob> signatureBlob = nullptr;
+	Microsoft::WRL::ComPtr<ID3DBlob> errorBlob = nullptr;
 	Log* logger = Log::GetInstance();
 	HRESULT hr;
 	D3D12_DESCRIPTOR_RANGE descriptorRange[1] = {};
@@ -157,19 +158,12 @@ void GraphicPipeline::CreateRootSignature()
 	{
 		if (errorBlob) {
 			logger->logOutput(reinterpret_cast<char*>(errorBlob->GetBufferPointer()));
-			errorBlob->Release();
-		}
-		if (signatureBlob) {
-			signatureBlob->Release();
 		}
 		assert(false);
 		return;
 	}
 	hr = device->CreateRootSignature(0, signatureBlob->GetBufferPointer(), signatureBlob->GetBufferSize(), IID_PPV_ARGS(&rootSignature));
 	assert(SUCCEEDED(hr));
-
-	if (signatureBlob) signatureBlob->Release();
-	if (errorBlob) errorBlob->Release();
 }
 
 void GraphicPipeline::CreatePso(DXCManager* dxc, BlendMode mode)
@@ -180,8 +174,8 @@ void GraphicPipeline::CreatePso(DXCManager* dxc, BlendMode mode)
 	D3D12_DEPTH_STENCIL_DESC depthStencilDesc{};
 	depthStencilDesc.DepthEnable = true;
 	depthStencilDesc.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
-	// Objek transparan (AlphaBlend / Add) tidak menulis ke depth buffer
-	// agar tidak memblokir objek di belakangnya
+	// Transparent objects (AlphaBlend / Add) do not write to the depth buffer
+	// so they do not occlude objects behind them
 	if (mode == BlendMode::AlphaBlend || mode == BlendMode::Add) {
 		depthStencilDesc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
 	}
@@ -222,11 +216,11 @@ void GraphicPipeline::CreatePso(DXCManager* dxc, BlendMode mode)
 	rasterizerDesc.FillMode = D3D12_FILL_MODE_SOLID;
 
 	// Compile Shaders
-	IDxcBlob* vertexShaderBlob = dxc->CompileShader(L"shaders/Object3d.VS.hlsl", L"vs_6_0", dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
+	Microsoft::WRL::ComPtr<IDxcBlob> vertexShaderBlob = dxc->CompileShader(L"shaders/Object3d.VS.hlsl", L"vs_6_0", dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
 	assert(vertexShaderBlob != nullptr);
-	IDxcBlob* pixelShaderBlob = dxc->CompileShader(L"shaders/Object3d.PS.hlsl", L"ps_6_0", dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
+	Microsoft::WRL::ComPtr<IDxcBlob> pixelShaderBlob = dxc->CompileShader(L"shaders/Object3d.PS.hlsl", L"ps_6_0", dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
 	assert(pixelShaderBlob != nullptr);
-	IDxcBlob* geometryShaderBlob = dxc->CompileShader(L"shaders/Object3d.GS.hlsl", L"gs_6_0", dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
+	Microsoft::WRL::ComPtr<IDxcBlob> geometryShaderBlob = dxc->CompileShader(L"shaders/Object3d.GS.hlsl", L"gs_6_0", dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
 
 	// Build Standard PSO (No GS)
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC graphicsPipelineStateDesc{};
@@ -256,20 +250,15 @@ void GraphicPipeline::CreatePso(DXCManager* dxc, BlendMode mode)
 		gsDesc.GS = { geometryShaderBlob->GetBufferPointer(), geometryShaderBlob->GetBufferSize() };
 		hr = device->CreateGraphicsPipelineState(&gsDesc, IID_PPV_ARGS(&graphicsPipelineStateGS[static_cast<int>(mode)]));
 		assert(SUCCEEDED(hr));
-		geometryShaderBlob->Release();
 	}
 
 	// Build Geometry Shader PSO (Explode Faces Along Normals)
-	IDxcBlob* explodeShaderBlob = dxc->CompileShader(L"shaders/Object3d.Explode.GS.hlsl", L"gs_6_0", dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
+	Microsoft::WRL::ComPtr<IDxcBlob> explodeShaderBlob = dxc->CompileShader(L"shaders/Object3d.Explode.GS.hlsl", L"gs_6_0", dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
 	if (explodeShaderBlob) {
 		D3D12_GRAPHICS_PIPELINE_STATE_DESC gsExplodeDesc = graphicsPipelineStateDesc;
 		gsExplodeDesc.GS = { explodeShaderBlob->GetBufferPointer(), explodeShaderBlob->GetBufferSize() };
 		gsExplodeDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE; // Allow seeing both sides of exploded faces
 		hr = device->CreateGraphicsPipelineState(&gsExplodeDesc, IID_PPV_ARGS(&graphicsPipelineStateGS_Explode[static_cast<int>(mode)]));
 		assert(SUCCEEDED(hr));
-		explodeShaderBlob->Release();
 	}
-
-	vertexShaderBlob->Release();
-	pixelShaderBlob->Release();
 }

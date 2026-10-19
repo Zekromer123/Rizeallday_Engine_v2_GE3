@@ -1,28 +1,25 @@
-#pragma once
+﻿#pragma once
 #include <Windows.h>
 #include <cstdint>
 #include <string>
-#ifdef USE_IMGUI
-#include <imgui.h>
-#include <imgui_impl_dx12.h>
-#include <imgui_impl_win32.h>
-extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
-#endif // USE_IMGUI
 
 class WinApp
 {
 public:
+	static constexpr int32_t kClientWidth = 1280;
+	static constexpr int32_t kClientHeight = 720;
+
 	static WinApp* GetInstance();
 
 	static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 
-	/// ゲームウィンドウの作成
-	void CreateGameWindow(const char* title = "Rizeallday Engine", int width = 1280, int height = 720);
+	/// Create game window
+	void CreateGameWindow(const char* title = "Rizeallday Engine", int width = kClientWidth, int height = kClientHeight);
 
-	/// ゲームウィンドウの破棄
+	/// Terminate game window
 	void TerminateGameWindow();
 
-	/// メッセージ処理 (true = WM_QUIT received)
+	/// Process Windows messages (returns true when WM_QUIT received)
 	bool ProcessMessage();
 
 	HWND GetHWND() const { return hwnd_; }

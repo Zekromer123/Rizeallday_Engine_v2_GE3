@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // === Rizeallday Engine v2 ===
 // Include this single header to access the entire engine.
@@ -46,30 +46,42 @@
 #include "math/MathUtil.h"
 #include "math/VertexData.h"
 
+// Framework
+#include "framework/Framework.h"
+
+// Scene (Application States)
+#include "scene/BaseScene.h"
+#include "scene/SceneManager.h"
+
 #ifdef USE_IMGUI
 #include <imgui.h>
 #endif
 
 namespace RizeEngine {
 
-/// エンジン初期化
+/// Engine initialization
 void Initialize(const char* title = "Rizeallday Engine", int width = 1280, int height = 720);
 
-/// ウィンドウメッセージ処理 (falseでループ終了)
+/// Window message processing (returns false when exiting loop)
 bool ProcessMessage();
 
-/// フレーム開始処理 (PreDraw + ImGui NewFrame)
+/// Returns true if the D3D12 device is currently in a lost state
+bool IsDeviceLost();
+
+/// Begin frame (PreDraw + ImGui NewFrame)
 void BeginFrame();
 
-/// フレーム終了処理 (ImGui Render + PostDraw + Present)
+/// End frame (ImGui Render + PostDraw + Present)
 void EndFrame();
 
-/// エンジン終了処理
+/// Engine finalization
 void Finalize();
 
-/// サブシステムアクセス
+/// Subsystem accessors
 DirectXCommon* GetDirectXCommon();
+DXCManager* GetDXCManager();
 Input* GetInput();
 Audio* GetAudio();
 
 } // namespace RizeEngine
+

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <d3d12.h>
 #include <wrl.h>
 #include <string>
@@ -31,6 +31,9 @@ class Camera;
 
 class Skybox {
 public:
+	Skybox() = default;
+	~Skybox();
+
 	void Initialize(DirectXCommon* dxCommon, DXCManager* dxc);
 	bool LoadCubemap(const std::string& filePath);
 	void Draw(ID3D12GraphicsCommandList* cmdList, const Camera& camera);

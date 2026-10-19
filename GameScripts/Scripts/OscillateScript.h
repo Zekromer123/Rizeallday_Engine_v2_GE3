@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "ScriptAPI.h"
 
 /// Sinusoidally oscillates the owner GameObject along the Y axis.

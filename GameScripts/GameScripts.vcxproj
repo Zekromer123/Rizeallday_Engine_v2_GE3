@@ -47,27 +47,30 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+    <Import Project="$(ProjectDir)..\BuildPaths.props" />
   </ImportGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+    <Import Project="$(ProjectDir)..\BuildPaths.props" />
   </ImportGroup>
   <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Development|x64'" Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+    <Import Project="$(ProjectDir)..\BuildPaths.props" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <OutDir>$(SolutionDir)bin\Scripts\</OutDir>
-    <IntDir>$(SolutionDir)bin\Intermediate\GameScripts\$(Configuration)\</IntDir>
+    <OutDir>$(RizeBuildRoot)Scripts\</OutDir>
+    <IntDir>$(RizeBuildRoot)Intermediate\GameScripts\$(Configuration)\</IntDir>
     <TargetName>GameScripts</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <OutDir>$(SolutionDir)bin\Scripts\</OutDir>
-    <IntDir>$(SolutionDir)bin\Intermediate\GameScripts\$(Configuration)\</IntDir>
+    <OutDir>$(RizeBuildRoot)Scripts\</OutDir>
+    <IntDir>$(RizeBuildRoot)Intermediate\GameScripts\$(Configuration)\</IntDir>
     <TargetName>GameScripts</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Development|x64'">
-    <OutDir>$(SolutionDir)bin\Scripts\</OutDir>
-    <IntDir>$(SolutionDir)bin\Intermediate\GameScripts\$(Configuration)\</IntDir>
+    <OutDir>$(RizeBuildRoot)Scripts\</OutDir>
+    <IntDir>$(RizeBuildRoot)Intermediate\GameScripts\$(Configuration)\</IntDir>
     <TargetName>GameScripts</TargetName>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -89,12 +92,6 @@
       <ProgramDatabaseFile>$(OutDir)GameScripts_$(BuildTimestamp).pdb</ProgramDatabaseFile>
       <ImportLibrary>$(IntDir)GameScripts.lib</ImportLibrary>
     </Link>
-    <PostBuildEvent>
-      <Command>
-if not exist "$(ProjectDir)..\RizealldaySandbox\bin\Scripts" mkdir "$(ProjectDir)..\RizealldaySandbox\bin\Scripts"
-copy "$(TargetPath)" "$(ProjectDir)..\RizealldaySandbox\bin\Scripts\GameScripts.dll" /Y
-      </Command>
-    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
@@ -117,12 +114,6 @@ copy "$(TargetPath)" "$(ProjectDir)..\RizealldaySandbox\bin\Scripts\GameScripts.
       <ProgramDatabaseFile>$(OutDir)GameScripts_$(BuildTimestamp).pdb</ProgramDatabaseFile>
       <ImportLibrary>$(IntDir)GameScripts.lib</ImportLibrary>
     </Link>
-    <PostBuildEvent>
-      <Command>
-if not exist "$(ProjectDir)..\RizealldaySandbox\bin\Scripts" mkdir "$(ProjectDir)..\RizealldaySandbox\bin\Scripts"
-copy "$(TargetPath)" "$(ProjectDir)..\RizealldaySandbox\bin\Scripts\GameScripts.dll" /Y
-      </Command>
-    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Development|x64'">
     <ClCompile>
@@ -147,18 +138,15 @@ copy "$(TargetPath)" "$(ProjectDir)..\RizealldaySandbox\bin\Scripts\GameScripts.
       <ProgramDatabaseFile>$(OutDir)GameScripts_$(BuildTimestamp).pdb</ProgramDatabaseFile>
       <ImportLibrary>$(IntDir)GameScripts.lib</ImportLibrary>
     </Link>
-    <PostBuildEvent>
-      <Command>
-if not exist "$(ProjectDir)..\RizealldaySandbox\bin\Scripts" mkdir "$(ProjectDir)..\RizealldaySandbox\bin\Scripts"
-copy "$(TargetPath)" "$(ProjectDir)..\RizealldaySandbox\bin\Scripts\GameScripts.dll" /Y
-      </Command>
-    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="Scripts\*.cpp" />
+    <ClCompile Include="Scripts\dllmain.cpp" />
+    <ClCompile Include="Scripts\OscillateScript.cpp" />
+    <ClCompile Include="Scripts\RotateScript.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Scripts\*.h" />
+    <ClInclude Include="Scripts\OscillateScript.h" />
+    <ClInclude Include="Scripts\RotateScript.h" />
     <ClInclude Include="..\RizealldayEngine\base\ScriptAPI.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

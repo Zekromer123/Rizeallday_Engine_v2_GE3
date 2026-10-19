@@ -1,4 +1,5 @@
-#include "3d/DebugCamera.h"
+﻿#include "3d/DebugCamera.h"
+#include "input/Input.h"
 
 void DebugCamera::Initialize()
 {

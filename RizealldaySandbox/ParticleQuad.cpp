@@ -1,4 +1,9 @@
-#include "ParticleQuad.h"
+﻿#include "ParticleQuad.h"
+#include "base/DirectXCommon.h"
+#include "base/DXCManager.h"
+#include "base/TextureManager.h"
+#include "3d/Camera.h"
+#include "3d/Collider.h"
 #include <cassert>
 #include <algorithm>
 #include <cmath>
@@ -309,9 +314,9 @@ void ParticleQuad::CreatePipeline(DXCManager* dxc) {
 	D3D12SerializeRootSignature(&rsDesc, D3D_ROOT_SIGNATURE_VERSION_1, &rsBlob, &errBlob);
 	device->CreateRootSignature(0, rsBlob->GetBufferPointer(), rsBlob->GetBufferSize(), IID_PPV_ARGS(&s_rootSignature));
 
-	IDxcBlob* vsBlob = dxc->CompileShader(L"shaders/Particle.VS.hlsl", L"vs_6_0", dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
+	Microsoft::WRL::ComPtr<IDxcBlob> vsBlob = dxc->CompileShader(L"shaders/Particle.VS.hlsl", L"vs_6_0", dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
 	assert(vsBlob != nullptr);
-	IDxcBlob* psBlob = dxc->CompileShader(L"shaders/Particle.PS.hlsl", L"ps_6_0", dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
+	Microsoft::WRL::ComPtr<IDxcBlob> psBlob = dxc->CompileShader(L"shaders/Particle.PS.hlsl", L"ps_6_0", dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
 	assert(psBlob != nullptr);
 
 	D3D12_INPUT_ELEMENT_DESC inputDescs[5] = {
@@ -366,9 +371,6 @@ void ParticleQuad::CreatePipeline(DXCManager* dxc) {
 	rtAdd.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
 	psoDesc.BlendState = blendAdd;
 	device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&s_psoAdd));
-
-	vsBlob->Release();
-	psBlob->Release();
 }
 
 void ParticleQuad::SetMaxParticles(uint32_t maxCount) {

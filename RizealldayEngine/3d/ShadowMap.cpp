@@ -1,8 +1,20 @@
-#include "3d/ShadowMap.h"
+﻿#include "3d/ShadowMap.h"
 #include "base/DirectXCommon.h"
 #include "base/DXCManager.h"
 #include "base/Log.h"
 #include <cassert>
+
+ShadowMap::~ShadowMap()
+{
+	if (dxCommon_) {
+		if (textureResource_) dxCommon_->DeferRelease(textureResource_);
+		if (pipelineState_) dxCommon_->DeferRelease(pipelineState_);
+		if (rootSignature_) dxCommon_->DeferRelease(rootSignature_);
+	}
+	textureResource_.Reset();
+	pipelineState_.Reset();
+	rootSignature_.Reset();
+}
 
 void ShadowMap::Initialize(
 	DirectXCommon* dxCommon,
@@ -224,7 +236,7 @@ void ShadowMap::CreatePipeline(DXCManager* dxc, ID3D12RootSignature* rootSignatu
 	depthStencilDesc.StencilEnable = FALSE;
 
 	// Compile Shadow.VS.hlsl
-	IDxcBlob* vsBlob = dxc->CompileShader(
+	Microsoft::WRL::ComPtr<IDxcBlob> vsBlob = dxc->CompileShader(
 		L"shaders/Shadow.VS.hlsl",
 		L"vs_6_0",
 		dxc->GetDxcUtils(),
@@ -248,8 +260,6 @@ void ShadowMap::CreatePipeline(DXCManager* dxc, ID3D12RootSignature* rootSignatu
 
 	HRESULT hr = device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pipelineState_));
 	assert(SUCCEEDED(hr));
-
-	vsBlob->Release();
 }
 
 void ShadowMap::BeginShadowPass(ID3D12GraphicsCommandList* cmdList)

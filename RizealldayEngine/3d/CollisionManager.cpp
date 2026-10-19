@@ -1,4 +1,4 @@
-#include "3d/CollisionManager.h"
+﻿#include "3d/CollisionManager.h"
 
 CollisionManager* CollisionManager::GetInstance() {
     static CollisionManager instance;
@@ -23,7 +23,7 @@ void CollisionManager::RemoveCollider(ICollidable* collidable) {
 }
 
 void CollisionManager::CheckAllCollisions() {
-    // Total Round-Robin (総当たり): check every pair once
+    // Total Round-Robin: check every pair once
     for (size_t i = 0; i < colliders_.size(); ++i) {
         for (size_t j = i + 1; j < colliders_.size(); ++j) {
             CheckCollisionPair(colliders_[i], colliders_[j]);

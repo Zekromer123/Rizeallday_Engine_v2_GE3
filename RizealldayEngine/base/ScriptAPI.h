@@ -1,6 +1,7 @@
-#pragma once
+﻿#pragma once
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <type_traits>
 #include "math/Vector2.h"
 #include "math/Vector3.h"
@@ -375,12 +376,12 @@ struct ScriptFieldRegistrar {
 
 #ifdef GAMESCRIPTS_EXPORTS
 /// Internal DLL registration entry point implemented in GameScripts/Scripts/dllmain.cpp
-void GameScripts_RegisterClass(const char* className, ScriptBase* (*factory)());
+void GameScripts_RegisterClass(const char* className, std::unique_ptr<ScriptBase> (*factory)());
 
 #define REGISTER_SCRIPT(ClassName) \
 	namespace { \
-		ScriptBase* Create_##ClassName##_Instance() { \
-			return new ClassName(); \
+		std::unique_ptr<ScriptBase> Create_##ClassName##_Instance() { \
+			return std::make_unique<ClassName>(); \
 		} \
 		struct ClassName##_DllRegistrar { \
 			ClassName##_DllRegistrar() { \

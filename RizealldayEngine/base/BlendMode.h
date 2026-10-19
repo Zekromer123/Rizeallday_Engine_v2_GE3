@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 /// Mode blending untuk rendering Object3D
 enum class BlendMode : int {

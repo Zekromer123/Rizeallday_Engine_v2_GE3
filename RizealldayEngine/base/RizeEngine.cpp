@@ -1,4 +1,4 @@
-#include "base/RizeEngine.h"
+﻿#include "base/RizeEngine.h"
 #include "base/DirectXCommon.h"
 #include "base/WinApp.h"
 #include "base/DXCManager.h"
@@ -15,12 +15,13 @@
 #include "3d/LightGroup.h"
 #include "3d/PrimitiveDrawer.h"
 #include "3d/CircleShadow.h"
+#include <memory>
 
 namespace {
 	WinApp* sWinApp = nullptr;
 	DirectXCommon* sDxCommon = nullptr;
-	DXCManager* sDxcManager = nullptr;
-	GraphicPipeline* sGraphicPipeline = nullptr;
+	std::unique_ptr<DXCManager> sDxcManager;
+	std::unique_ptr<GraphicPipeline> sGraphicPipeline;
 	Input* sInput = nullptr;
 	Audio* sAudio = nullptr;
 }
@@ -46,12 +47,12 @@ void Initialize(const char* title, int width, int height) {
 	sDxCommon->Initialize(sWinApp->GetHWND(), clientW, clientH);
 
 	// DXC Shader Compiler
-	sDxcManager = new DXCManager();
+	sDxcManager = std::make_unique<DXCManager>();
 	sDxcManager->Initialize();
 
 	// Graphics Pipeline
-	sGraphicPipeline = new GraphicPipeline();
-	sGraphicPipeline->Initialize(sDxCommon->GetDevice(), sDxcManager);
+	sGraphicPipeline = std::make_unique<GraphicPipeline>();
+	sGraphicPipeline->Initialize(sDxCommon->GetDevice(), sDxcManager.get());
 
 	// Texture Manager
 	TextureManager::GetInstance()->Initialize(sDxCommon);
@@ -72,17 +73,21 @@ void Initialize(const char* title, int width, int height) {
 	LightGroup::StaticInitialize(sDxCommon);
 	PrimitiveDrawer::GetInstance()->Initialize(sDxCommon);
 
-	// Daftarkan pipeline ke Object3d agar Draw() bisa bind blend mode
-	Object3d::StaticSetPipeline(sGraphicPipeline);
+	// Register pipeline with Object3d so Draw() can bind blend modes
+	Object3d::StaticSetPipeline(sGraphicPipeline.get());
 
-	// Inisialisasi Circle Shadow system
-	CircleShadow::StaticInitialize(sDxCommon, sDxcManager);
+	// Initialize Circle Shadow system
+	CircleShadow::StaticInitialize(sDxCommon, sDxcManager.get());
 
 	Log::GetInstance()->logOutput("Rizeallday Engine v2 initialized.\n");
 }
 
 bool ProcessMessage() {
 	return !sWinApp->ProcessMessage();
+}
+
+bool IsDeviceLost() {
+	return sDxCommon && sDxCommon->IsDeviceLost();
 }
 
 static bool sFrameActive = false;
@@ -126,10 +131,8 @@ void Finalize() {
 	// Cleanup
 	sAudio->Finalize();
 
-	delete sGraphicPipeline;
-	sGraphicPipeline = nullptr;
-	delete sDxcManager;
-	sDxcManager = nullptr;
+	sGraphicPipeline.reset();
+	sDxcManager.reset();
 
 	sDxCommon->Finalize(sWinApp->GetHWND());
 	sWinApp->TerminateGameWindow();
@@ -141,6 +144,10 @@ DirectXCommon* GetDirectXCommon() {
 	return sDxCommon;
 }
 
+DXCManager* GetDXCManager() {
+	return sDxcManager.get();
+}
+
 Input* GetInput() {
 	return sInput;
 }
@@ -150,3 +157,4 @@ Audio* GetAudio() {
 }
 
 } // namespace RizeEngine
+

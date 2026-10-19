@@ -1,4 +1,5 @@
-#include "3d/Object3d.h"
+﻿#include "3d/Object3d.h"
+#include "3d/Camera.h"
 #include "3d/LightGroup.h"
 #include "3d/ShadowMap.h"
 #include "base/DirectXCommon.h"

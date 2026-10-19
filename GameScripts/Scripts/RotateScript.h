@@ -7,7 +7,7 @@
 class RotateScript : public ScriptBase {
 public:
 	EXPOSE_FIELD(float, rotationSpeed, 1.5f);
-	EXPOSE_FIELD(Vector3, rotationAxis, Vector3{ 0.0f, 2.0f, 0.0f });
+	EXPOSE_FIELD(Vector3, rotationAxis, Vector3{ 1.0f, 2.0f, 1.0f });
 	EXPOSE_FIELD(bool, activeRotation, true);
 
 	void Initialize() override;

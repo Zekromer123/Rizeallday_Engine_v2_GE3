@@ -1,38 +1,40 @@
-#include "2d/Sprite.h"
+﻿#include "2d/Sprite.h"
+#include "base/DirectXCommon.h"
+#include "3d/DirectionalLight.h"
 
 void Sprite::Initialize(DirectXCommon* dxCommon)
 {
-	vertexResourceSprite.Attach(dxCommon->CreateBufferResource(sizeof(VertexData) * 6));
+	vertexResourceSprite = dxCommon->CreateBufferResource(sizeof(VertexData) * 6);
 	this->srvDescriptorHeap = dxCommon->GetSrvDescriptorHeap();
 	vertexBufferViewSprite.BufferLocation = vertexResourceSprite->GetGPUVirtualAddress();
 	vertexBufferViewSprite.SizeInBytes = sizeof(VertexData) * 6;
 	vertexBufferViewSprite.StrideInBytes = sizeof(VertexData);
 
-	indexResourceSprite.Attach(dxCommon->CreateBufferResource(sizeof(uint32_t) * 6));
+	indexResourceSprite = dxCommon->CreateBufferResource(sizeof(uint32_t) * 6);
 	indexBufferViewSprite.BufferLocation = indexResourceSprite->GetGPUVirtualAddress();
 	indexBufferViewSprite.SizeInBytes = sizeof(uint32_t) * 6;
 	indexBufferViewSprite.Format = DXGI_FORMAT_R32_UINT;
 	VertexData* vertexDataSprite = nullptr;
 	vertexResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&vertexDataSprite));
 	std::memset(vertexDataSprite, 0, sizeof(VertexData) * 6);
-	// 1枚目の三角形
-	vertexDataSprite[0].position = { 0.0f, 360.0f, 0.0f, 1.0f }; // 左下
+	// First triangle
+	vertexDataSprite[0].position = { 0.0f, 360.0f, 0.0f, 1.0f }; // Bottom-left
 	vertexDataSprite[0].texcoord = { 0.0f, 1.0f };
 	vertexDataSprite[0].normal = { 0.0f, 0.0f, -1.0f };
-	vertexDataSprite[1].position = { 0.0f, 0.0f, 0.0f, 1.0f }; // 左上
+	vertexDataSprite[1].position = { 0.0f, 0.0f, 0.0f, 1.0f }; // Top-left
 	vertexDataSprite[1].texcoord = { 0.0f, 0.0f };
 	vertexDataSprite[1].normal = { 0.0f, 0.0f, -1.0f };
-	vertexDataSprite[2].position = { 640.0f, 360.0f, 0.0f, 1.0f }; // 右下
+	vertexDataSprite[2].position = { 640.0f, 360.0f, 0.0f, 1.0f }; // Bottom-right
 	vertexDataSprite[2].texcoord = { 1.0f, 1.0f };
 	vertexDataSprite[2].normal = { 0.0f, 0.0f, -1.0f };
-	// 2枚目の三角形
-	vertexDataSprite[3].position = { 0.0f, 0.0f, 0.0f, 1.0f }; // 左上
+	// Second triangle
+	vertexDataSprite[3].position = { 0.0f, 0.0f, 0.0f, 1.0f }; // Top-left
 	vertexDataSprite[3].texcoord = { 0.0f, 0.0f };
 	vertexDataSprite[3].normal = { 0.0f, 0.0f, -1.0f };
-	vertexDataSprite[4].position = { 640.0f, 0.0f, 0.0f, 1.0f }; // 右上
+	vertexDataSprite[4].position = { 640.0f, 0.0f, 0.0f, 1.0f }; // Top-right
 	vertexDataSprite[4].texcoord = { 1.0f, 0.0f };
 	vertexDataSprite[4].normal = { 0.0f, 0.0f, -1.0f };
-	vertexDataSprite[5].position = { 640.0f, 360.0f, 0.0f, 1.0f }; // 右下
+	vertexDataSprite[5].position = { 640.0f, 360.0f, 0.0f, 1.0f }; // Bottom-right
 	vertexDataSprite[5].texcoord = { 1.0f, 1.0f };
 	vertexDataSprite[5].normal = { 0.0f, 0.0f, -1.0f };
 
@@ -46,13 +48,13 @@ void Sprite::Initialize(DirectXCommon* dxCommon)
 	indexDataSprite[5] = 2;
 
 	// Lighting
-	materialResourceSprite.Attach(dxCommon->CreateBufferResource(sizeof(Material)));
+	materialResourceSprite = dxCommon->CreateBufferResource(sizeof(Material));
 	materialResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&materialDataSprite));
 	materialDataSprite->color = { 1.0f, 1.0f, 1.0f, 1.0f };
 	materialDataSprite->enableLighting = 0;
 	materialDataSprite->lightingType = 0;
 
-	directionalLightResource.Attach(dxCommon->CreateBufferResource(sizeof(DirectionalLightData)));
+	directionalLightResource = dxCommon->CreateBufferResource(sizeof(DirectionalLightData));
 	directionalLightResource->Map(0, nullptr, reinterpret_cast<void**>(&directionalLightData));
 
 	directionalLightData->color = { 1.0f, 1.0f, 1.0f, 1.0f };
@@ -60,7 +62,7 @@ void Sprite::Initialize(DirectXCommon* dxCommon)
 	directionalLightData->intensity = 1.0f;
 	directionalLightData->active = 1;
 
-	transformationMatrixResourceSprite.Attach(dxCommon->CreateBufferResource((sizeof(TransformationMatrix) + 255) & ~255));
+	transformationMatrixResourceSprite = dxCommon->CreateBufferResource((sizeof(TransformationMatrix) + 255) & ~255);
 	transformationMatrixResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&transformationMatrixDataSprite));
 	transformationMatrixDataSprite->WVP = Mathematics::MakeIdentity4x4();
 	transformationMatrixDataSprite->World = Mathematics::MakeIdentity4x4();

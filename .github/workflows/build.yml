@@ -1,0 +1,80 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Verify required build dependencies
+        shell: pwsh
+        run: |
+          $requiredFiles = @(
+            "externals/assimp/include/assimp/Importer.hpp",
+            "externals/assimp/lib/assimp-vc143-mt.lib",
+            "externals/assimp/bin/assimp-vc143-mt.dll",
+            "externals/DirectXTex/DirectXTex/DirectXTex_Desktop_2022_Win10.vcxproj",
+            "externals/DirectXTex/DirectXTex/DirectXTex.h",
+            "RizealldaySandbox/dxcompiler.dll",
+            "RizealldaySandbox/dxil.dll",
+            "GameScripts/GameScripts.vcxproj",
+            "BuildPaths.props"
+          )
+          $missing = @()
+          foreach ($f in $requiredFiles) {
+            if (-not (Test-Path $f)) {
+              Write-Error "::error::Missing required build file '$f'. Ensure it is tracked in git (not ignored by .gitignore) and committed."
+              $missing += $f
+            }
+          }
+          $dxcHeaders = Get-ChildItem -Path "${env:ProgramFiles(x86)}\Windows Kits\10\Include\*\um\dxcapi.h" -ErrorAction SilentlyContinue
+          if (-not $dxcHeaders) {
+            Write-Error "::error::Missing Windows SDK header 'dxcapi.h' on runner."
+            $missing += "Windows SDK dxcapi.h"
+          }
+          if ($missing.Count -gt 0) {
+            throw "Build halted: $($missing.Count) required dependency file(s) missing: $($missing -join ', ')"
+          }
+
+      - name: Build Solution (Development|x64)
+        shell: pwsh
+        run: |
+          $msbuildVerOutput = & msbuild -version -nologo
+          $ver = [version]($msbuildVerOutput | Select-Object -Last 1).Trim()
+          Write-Host "Detected MSBuild version: $ver"
+
+          # Determine if v145 toolset is installed on the runner; fallback to v143 on VS 2022 runners
+          $v145Props = Get-ChildItem -Path "${env:ProgramFiles}\Microsoft Visual Studio\*\*\MSBuild\Microsoft\VC\v*\Platforms\x64\PlatformToolsets\v145\Toolset.props" -ErrorAction SilentlyContinue
+          $toolsetArg = @()
+          if (-not $v145Props) {
+            Write-Host "PlatformToolset v145 not found on runner; overriding with PlatformToolset=v143"
+            $toolsetArg = @("/p:PlatformToolset=v143")
+          }
+
+          # MSBuild 17.13+ supports .slnx natively; older MSBuild builds .vcxproj in dependency order
+          if ($ver -ge [version]"17.13.0.0") {
+            & msbuild Rizeallday_Engine_v2_GE3.slnx /p:Configuration=Development /p:Platform=x64 /m @toolsetArg
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } else {
+            $projects = @(
+              "externals/DirectXTex/DirectXTex/DirectXTex_Desktop_2022_Win10.vcxproj",
+              "RizealldayEngine/RizealldayEngine.vcxproj",
+              "GameScripts/GameScripts.vcxproj",
+              "RizealldaySandbox/RizealldaySandbox.vcxproj"
+            )
+            foreach ($proj in $projects) {
+              & msbuild $proj /p:Configuration=Development /p:Platform=x64 /m @toolsetArg
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            }
+          }

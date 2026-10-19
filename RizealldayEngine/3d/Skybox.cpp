@@ -1,4 +1,4 @@
-#include "3d/Skybox.h"
+﻿#include "3d/Skybox.h"
 #include "base/DirectXCommon.h"
 #include "base/DXCManager.h"
 #include "base/TextureManager.h"
@@ -6,6 +6,22 @@
 #include "3d/Camera.h"
 #include "math/MathUtil.h"
 #include <cassert>
+
+Skybox::~Skybox()
+{
+	if (constantBuffer_ && mappedData_) {
+		constantBuffer_->Unmap(0, nullptr);
+		mappedData_ = nullptr;
+	}
+	if (dxCommon_) {
+		if (constantBuffer_) dxCommon_->DeferRelease(constantBuffer_);
+		if (pso_) dxCommon_->DeferRelease(pso_);
+		if (rootSignature_) dxCommon_->DeferRelease(rootSignature_);
+	}
+	constantBuffer_.Reset();
+	pso_.Reset();
+	rootSignature_.Reset();
+}
 
 void Skybox::Initialize(DirectXCommon* dxCommon, DXCManager* dxc)
 {
@@ -79,9 +95,9 @@ void Skybox::CreatePSO(DXCManager* dxc)
 {
 	ID3D12Device* device = dxCommon_->GetDevice();
 
-	IDxcBlob* vsBlob = dxc->CompileShader(L"shaders/Skybox.VS.hlsl", L"vs_6_0", dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
+	Microsoft::WRL::ComPtr<IDxcBlob> vsBlob = dxc->CompileShader(L"shaders/Skybox.VS.hlsl", L"vs_6_0", dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
 	assert(vsBlob != nullptr);
-	IDxcBlob* psBlob = dxc->CompileShader(L"shaders/Skybox.PS.hlsl", L"ps_6_0", dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
+	Microsoft::WRL::ComPtr<IDxcBlob> psBlob = dxc->CompileShader(L"shaders/Skybox.PS.hlsl", L"ps_6_0", dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
 	assert(psBlob != nullptr);
 
 	D3D12_RASTERIZER_DESC rasterDesc{};
@@ -114,9 +130,6 @@ void Skybox::CreatePSO(DXCManager* dxc)
 
 	HRESULT hr = device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pso_));
 	assert(SUCCEEDED(hr));
-
-	vsBlob->Release();
-	psBlob->Release();
 }
 
 void Skybox::CreateConstantBuffer()

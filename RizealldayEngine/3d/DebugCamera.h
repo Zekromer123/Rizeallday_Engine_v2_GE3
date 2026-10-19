@@ -1,8 +1,10 @@
-#pragma once
+﻿#pragma once
 #include "math/Vector3.h"
 #include "math/MathUtil.h"
-#include "input/Input.h" 
 #include <cstdint>
+
+class Input;
+
 class DebugCamera
 {
 public:

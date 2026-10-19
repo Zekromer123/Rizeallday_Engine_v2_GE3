@@ -1,4 +1,4 @@
-#include "base/RenderTexture.h"
+﻿#include "base/RenderTexture.h"
 #include "base/DirectXCommon.h"
 #include "base/Log.h"
 #include <cassert>

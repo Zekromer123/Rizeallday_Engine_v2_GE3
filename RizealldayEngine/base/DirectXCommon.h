@@ -1,16 +1,10 @@
-#pragma once
+﻿#pragma once
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <cassert>
 #include <cstdint>
 #include <vector>
 #include <wrl.h>
-
-#ifdef USE_IMGUI
-#include <imgui.h>
-#include <imgui_impl_dx12.h>
-#include <imgui_impl_win32.h>
-#endif
 
 class DirectXCommon
 {
@@ -38,7 +32,7 @@ public:
 	ID3D12DescriptorHeap* GetSrvDescriptorHeap() const { return srvDescriptorHeap.Get(); }
 	ID3D12CommandAllocator* GetCommandAllocator() const { return commandAllocator.Get(); }
 	uint32_t GetSrvDescriptorSize() const { return device ? device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV) : 0; }
-	ID3D12Resource* CreateBufferResource(size_t sizeInBytes);
+	Microsoft::WRL::ComPtr<ID3D12Resource> CreateBufferResource(size_t sizeInBytes);
 	void SignalAndWaitFence();
 
 	// Deferred GPU Resource Release Queue (freed only after the fence of the last frame that used it has completed, >= 2 frames later)
@@ -77,8 +71,8 @@ private:
 	void CreateSwapChain(HWND hwnd);
 	void DescriptorHeap();
 	void CreateFence();
-	ID3D12DescriptorHeap* CreateDescriptorHeap(ID3D12Device* device, D3D12_DESCRIPTOR_HEAP_TYPE heapType, UINT numDescriptors, bool shaderVisible);
-	ID3D12Resource* CreateDepthStencilTextureResource(ID3D12Device* device, int32_t width, int32_t height);
+	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> CreateDescriptorHeap(ID3D12Device* device, D3D12_DESCRIPTOR_HEAP_TYPE heapType, UINT numDescriptors, bool shaderVisible);
+	Microsoft::WRL::ComPtr<ID3D12Resource> CreateDepthStencilTextureResource(ID3D12Device* device, int32_t width, int32_t height);
 
 private:
 	Microsoft::WRL::ComPtr<ID3D12Device> device = nullptr;

@@ -1,17 +1,16 @@
-#pragma once
+﻿#pragma once
 #include <d3d12.h>
 #include <wrl.h>
 #include <vector>
 #include <random>
 #include <cstdint>
 #include <algorithm>
-#include "base/DirectXCommon.h"
-#include "base/DXCManager.h"
-#include "base/TextureManager.h"
 #include "math/MathUtil.h"
 #include "math/VertexData.h"
-#include "3d/Camera.h"
-#include "3d/Collider.h"
+
+class DirectXCommon;
+class DXCManager;
+class Camera;
 
 class ParticleQuad {
 public:
@@ -66,9 +65,14 @@ public:
 		float spawnRate = 20.0f; // particles per second
 	};
 
+	struct AccelerationArea {
+		Vector3 min = { -30.0f, -10.0f, -30.0f };
+		Vector3 max = { 30.0f, 30.0f, 30.0f };
+	};
+
 	struct AccelerationField {
 		Vector3 acceleration = { 15.0f, 0.0f, 0.0f };
-		AABBCollider area = { { -30.0f, -10.0f, -30.0f }, { 30.0f, 30.0f, 30.0f } };
+		AccelerationArea area;
 		bool enabled = false;
 	};
 

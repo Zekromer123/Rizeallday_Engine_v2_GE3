@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <d3d12.h>
 #include <wrl.h>
 #include <string>
@@ -14,17 +14,17 @@ public:
 
 	void Initialize(DirectXCommon* dxCommon);
 
-	/// テクスチャ読み込み (キャッシュ付き)
-	/// @return テクスチャハンドルID
+	/// Load texture (cached)
+	/// @return Texture handle ID
 	uint32_t LoadTexture(const std::string& filePath);
 
-	/// GPU descriptor handle取得
+	/// Get GPU descriptor handle
 	D3D12_GPU_DESCRIPTOR_HANDLE GetGPUHandle(uint32_t textureHandle);
 
-	/// SRV Descriptor Heapをコマンドリストに設定
+	/// Bind SRV Descriptor Heap to command list
 	void SetDescriptorHeaps(ID3D12GraphicsCommandList* cmdList);
 
-	/// デフォルト白テクスチャのハンドル
+	/// Default white texture handle
 	uint32_t GetDefaultWhiteTexture() const { return defaultWhiteHandle_; }
 
 	/// Load cubemap texture (cached)
@@ -51,8 +51,8 @@ private:
 
 	static std::string NormalizePath(const std::string& filePath);
 	uint32_t CreateDefaultCubemapTexture();
-	ID3D12Resource* CreateTextureResource(const DirectX::TexMetadata& metadata);
-	[[nodiscard]] ID3D12Resource* UploadTextureData(ID3D12Resource* texture, const DirectX::ScratchImage& mipImages);
+	Microsoft::WRL::ComPtr<ID3D12Resource> CreateTextureResource(const DirectX::TexMetadata& metadata);
+	[[nodiscard]] Microsoft::WRL::ComPtr<ID3D12Resource> UploadTextureData(ID3D12Resource* texture, const DirectX::ScratchImage& mipImages);
 
 	static const uint32_t kMaxTextures = 128;
 	static const uint32_t kPreviewSrvBaseIndex = 133;

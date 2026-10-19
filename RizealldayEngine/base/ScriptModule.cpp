@@ -1,4 +1,4 @@
-#include "base/ScriptModule.h"
+﻿#include "base/ScriptModule.h"
 #include "base/ScriptBase.h"
 #include <fstream>
 #include <format>
@@ -8,47 +8,45 @@ ScriptModule::~ScriptModule() {
 	Unload();
 }
 
-std::filesystem::path ScriptModule::ResolveDllPath() {
+std::filesystem::path ScriptModule::ResolveWorkspaceRoot() {
 	std::error_code ec;
-	std::vector<std::filesystem::path> candidates = {
-		std::filesystem::current_path(ec) / "bin" / "Scripts" / "GameScripts.dll",
-		std::filesystem::current_path(ec).parent_path() / "bin" / "Scripts" / "GameScripts.dll"
-	};
+	std::vector<std::filesystem::path> roots;
 
 	char exeBuf[MAX_PATH] = {};
 	if (GetModuleFileNameA(nullptr, exeBuf, MAX_PATH) > 0) {
 		std::filesystem::path exeDir = std::filesystem::path(exeBuf).parent_path();
-		candidates.push_back(exeDir / "bin" / "Scripts" / "GameScripts.dll");
-		candidates.push_back(exeDir.parent_path() / "bin" / "Scripts" / "GameScripts.dll");
-		candidates.push_back(exeDir.parent_path().parent_path() / "bin" / "Scripts" / "GameScripts.dll");
+		// When running from $(SolutionDir)bin\$(Configuration)\RizealldaySandbox.exe, parent.parent is $(SolutionDir)
+		roots.push_back(exeDir.parent_path().parent_path());
+		roots.push_back(exeDir.parent_path());
+		roots.push_back(exeDir);
 	}
 
-	// Pick the candidate with the most recent write time if multiple exist
-	std::filesystem::path bestPath;
-	std::filesystem::file_time_type bestTime{};
-	bool foundAny = false;
+	std::filesystem::path cwd = std::filesystem::current_path(ec);
+	if (!cwd.empty()) {
+		roots.push_back(cwd);
+		roots.push_back(cwd.parent_path());
+	}
 
-	for (const auto& c : candidates) {
-		if (std::filesystem::exists(c, ec) && std::filesystem::is_regular_file(c, ec)) {
-			auto wt = std::filesystem::last_write_time(c, ec);
-			if (!ec && (!foundAny || wt > bestTime)) {
-				bestTime = wt;
-				bestPath = std::filesystem::weakly_canonical(c, ec);
-				foundAny = true;
-			}
+	for (const auto& root : roots) {
+		if (!root.empty() && std::filesystem::exists(root / kGameScriptsVcxprojSubpath, ec)) {
+			return std::filesystem::weakly_canonical(root, ec);
 		}
 	}
 
-	if (foundAny) {
-		return bestPath;
+	// Standalone build fallback: prefer directory containing kScriptsDllSubpath
+	for (const auto& root : roots) {
+		if (!root.empty() && std::filesystem::exists(root / kScriptsDllSubpath, ec)) {
+			return std::filesystem::weakly_canonical(root, ec);
+		}
 	}
 
-	// Default to workspace root bin/Scripts/GameScripts.dll if parent has GameScripts directory, else local bin/Scripts/GameScripts.dll
-	std::filesystem::path cwd = std::filesystem::current_path(ec);
-	if (std::filesystem::exists(cwd.parent_path() / "GameScripts", ec)) {
-		return std::filesystem::weakly_canonical(cwd.parent_path() / "bin" / "Scripts" / "GameScripts.dll", ec);
-	}
-	return cwd / "bin" / "Scripts" / "GameScripts.dll";
+	return !cwd.empty() ? cwd : std::filesystem::path(".");
+}
+
+std::filesystem::path ScriptModule::ResolveDllPath() {
+	std::error_code ec;
+	std::filesystem::path root = ResolveWorkspaceRoot();
+	return std::filesystem::weakly_canonical(root / kScriptsDllSubpath, ec);
 }
 
 void ScriptModule::CleanupOldShadowCopies(const std::filesystem::path& shadowDir) {

@@ -1,13 +1,14 @@
-#pragma once
+﻿#pragma once
 #include <d3d12.h>
 #include <wrl.h>
 #include <vector>
 #include "3d/WorldTransform.h"
-#include "3d/Camera.h"
 #include "math/VertexData.h"
 #include "base/BlendMode.h"
-#include "base/GraphicPipeline.h"
+#include "base/GeometryShaderMode.h"
 
+class Camera;
+class GraphicPipeline;
 class Model;
 class DirectXCommon;
 class LightGroup;
@@ -40,7 +41,7 @@ public:
 	void SetAnimationLoop(bool loop) { isAnimationLoop_ = loop; }
 	bool IsAnimationLoop() const { return isAnimationLoop_; }
 
-	/// Blend mode untuk rendering (default: Opaque)
+	/// Blend mode for rendering (default: Opaque)
 	BlendMode blendMode = BlendMode::Opaque;
 
 	/// Setter / Getter blend mode
@@ -58,7 +59,7 @@ public:
 	void SetTextureHandle(uint32_t handle) { textureHandle_ = handle; }
 	uint32_t GetTextureHandle() const { return textureHandle_; }
 
-	/// Akses material untuk mengubah warna/alpha
+	/// Access material to modify color/alpha
 	Material* GetMaterial() const { return materialData_; }
 
 	WorldTransform worldTransform;

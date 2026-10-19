@@ -1,4 +1,5 @@
-#include "3d/CircleShadow.h"
+﻿#include "3d/CircleShadow.h"
+#include "3d/Camera.h"
 #include "base/DirectXCommon.h"
 #include "base/DXCManager.h"
 #include "math/MathUtil.h"
@@ -68,24 +69,22 @@ void CircleShadow::CreateRootSignature()
     desc.NumStaticSamplers = 1;
     desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
-    ID3DBlob* blob = nullptr;
-    ID3DBlob* err  = nullptr;
+    Microsoft::WRL::ComPtr<ID3DBlob> blob = nullptr;
+    Microsoft::WRL::ComPtr<ID3DBlob> err  = nullptr;
     HRESULT hr = D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err);
     assert(SUCCEEDED(hr));
     hr = sDxCommon_->GetDevice()->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&sRootSignature_));
     assert(SUCCEEDED(hr));
-    if (blob) blob->Release();
-    if (err)  err->Release();
 }
 
 // ============================================================
 // CreatePipelineState
-// Menggunakan CircleShadow.VS.hlsl dan CircleShadow.PS.hlsl
-// Input layout: POSITION4 + TEXCOORD2 + NORMAL3 (3 elemen, tanpa bone)
+// Uses CircleShadow.VS.hlsl and CircleShadow.PS.hlsl
+// Input layout: POSITION4 + TEXCOORD2 + NORMAL3 (3 elements, no bone skinning)
 // ============================================================
 void CircleShadow::CreatePipelineState(DXCManager* dxc)
 {
-    // Input layout sederhana: tidak ada bone skinning
+    // Simple input layout: no bone skinning
     D3D12_INPUT_ELEMENT_DESC inputElems[3] = {};
     inputElems[0].SemanticName = "POSITION";
     inputElems[0].SemanticIndex = 0;
@@ -100,14 +99,14 @@ void CircleShadow::CreatePipelineState(DXCManager* dxc)
     inputElems[2].Format = DXGI_FORMAT_R32G32B32_FLOAT;
     inputElems[2].AlignedByteOffset = D3D12_APPEND_ALIGNED_ELEMENT;
 
-    // Compile VS dan PS khusus CircleShadow
-    IDxcBlob* vs = dxc->CompileShader(L"shaders/CircleShadow.VS.hlsl", L"vs_6_0",
+    // Compile dedicated VS and PS for CircleShadow
+    Microsoft::WRL::ComPtr<IDxcBlob> vs = dxc->CompileShader(L"shaders/CircleShadow.VS.hlsl", L"vs_6_0",
         dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
-    IDxcBlob* ps = dxc->CompileShader(L"shaders/CircleShadow.PS.hlsl", L"ps_6_0",
+    Microsoft::WRL::ComPtr<IDxcBlob> ps = dxc->CompileShader(L"shaders/CircleShadow.PS.hlsl", L"ps_6_0",
         dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
     assert(vs && ps);
 
-    // Alpha blending untuk bayangan transparan
+    // Alpha blending for transparent shadow
     D3D12_BLEND_DESC blendDesc{};
     auto& rt = blendDesc.RenderTarget[0];
     rt.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
@@ -119,12 +118,12 @@ void CircleShadow::CreatePipelineState(DXCManager* dxc)
     rt.DestBlendAlpha = D3D12_BLEND_ZERO;
     rt.BlendOpAlpha   = D3D12_BLEND_OP_ADD;
 
-    // Rasterizer: render dari kedua sisi (bayangan kadang dilihat dari bawah)
+    // Rasterizer: render from both sides
     D3D12_RASTERIZER_DESC rastDesc{};
     rastDesc.FillMode = D3D12_FILL_MODE_SOLID;
     rastDesc.CullMode = D3D12_CULL_MODE_NONE;
 
-    // Depth: baca tapi jangan tulis (agar bayangan tidak memblokir depth)
+    // Depth: read but do not write (so shadow does not block depth)
     D3D12_DEPTH_STENCIL_DESC dsDesc{};
     dsDesc.DepthEnable    = TRUE;
     dsDesc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
@@ -147,9 +146,6 @@ void CircleShadow::CreatePipelineState(DXCManager* dxc)
 
     HRESULT hr = sDxCommon_->GetDevice()->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&sPipelineState_));
     assert(SUCCEEDED(hr));
-
-    vs->Release();
-    ps->Release();
 }
 
 // ============================================================

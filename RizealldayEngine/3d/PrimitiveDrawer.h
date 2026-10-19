@@ -1,13 +1,13 @@
-#pragma once
+﻿#pragma once
 #include <d3d12.h>
 #include <wrl.h>
 #include <vector>
 #include "math/Vector3.h"
 #include "math/Vector4.h"
 #include "math/Matrix4x4.h"
-#include "3d/Camera.h"
 
 class DirectXCommon;
+class Camera;
 
 class PrimitiveDrawer
 {
@@ -22,16 +22,16 @@ public:
 	void Initialize(DirectXCommon* dxCommon);
 	void SetCamera(Camera* camera) { camera_ = camera; }
 
-	/// 線分描画 (登録)
+	/// Draw 3D line (queue for rendering)
 	void DrawLine3d(const Vector3& p1, const Vector3& p2, const Vector4& color);
 
-	/// グリッド描画 (登録)
+	/// Draw grid (queue for rendering)
 	void DrawGrid(float size = 10.0f, float subdivisions = 10.0f, const Vector4& color = { 0.5f, 0.5f, 0.5f, 1.0f });
 
-	/// 登録されたプリミティブを描画してクリア
+	/// Render queued primitives and clear buffer
 	void Render(ID3D12GraphicsCommandList* cmdList);
 
-	/// フレームリセット
+	/// Reset per-frame primitive buffer
 	void Reset();
 
 private:

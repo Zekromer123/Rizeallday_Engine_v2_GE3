@@ -1,4 +1,4 @@
-#include "base/Log.h"
+﻿#include "base/Log.h"
 
 void Log::logOutput(const std::string& message)
 {

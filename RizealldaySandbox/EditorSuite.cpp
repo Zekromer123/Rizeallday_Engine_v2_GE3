@@ -1,4 +1,9 @@
-#include "EditorSuite.h"
+﻿#include "EditorSuite.h"
+#include <windows.h>
+#include <shobjidl.h>
+#include <RizeEngine.h>
+#include "3d/Object3d.h"
+#include "3d/Model.h"
 #include "3d/LightGroup.h"
 #include "3d/CollisionManager.h"
 #include <fstream>
@@ -37,6 +42,254 @@ static const Vector4 kTetrominoColors[7] = {
 	{ 0.95f, 0.55f, 0.15f, 1.0f }  // L: Orange
 };
 
+GameObject::GameObject() = default;
+GameObject::~GameObject() = default;
+
+GameObject::GameObject(const GameObject& other) {
+	id = other.id;
+	name = other.name;
+	isActive = other.isActive;
+	isStatic = other.isStatic;
+	tag = other.tag;
+	layer = other.layer;
+	collisionMask = other.collisionMask;
+	type = other.type;
+	parentIndex = other.parentIndex;
+	parentId = other.parentId;
+	childrenIds = other.childrenIds;
+	translation = other.translation;
+	rotation = other.rotation;
+	scale = other.scale;
+	rotationQuat = other.rotationQuat;
+	hasMesh = other.hasMesh;
+	meshEnabled = other.meshEnabled;
+	meshType = other.meshType;
+	materialColor = other.materialColor;
+	textureHandle = other.textureHandle;
+	isLit = other.isLit;
+	lightingType = other.lightingType;
+	shininess = other.shininess;
+	specularColor = other.specularColor;
+	useGeometryShader = other.useGeometryShader;
+	geometryShaderEffect = other.geometryShaderEffect;
+	explodeAmount = other.explodeAmount;
+	castShadow = other.castShadow;
+	receiveShadow = other.receiveShadow;
+	texturePath = other.texturePath;
+	modelPath = other.modelPath;
+	uvOffset = other.uvOffset;
+	uvTiling = other.uvTiling;
+	uvRotation = other.uvRotation;
+	hasBoxCollider = other.hasBoxCollider;
+	boxColliderEnabled = other.boxColliderEnabled;
+	isTrigger = other.isTrigger;
+	providesContacts = other.providesContacts;
+	boxCenter = other.boxCenter;
+	boxSize = other.boxSize;
+	isColliding = other.isColliding;
+	hasSphereCollider = other.hasSphereCollider;
+	sphereColliderEnabled = other.sphereColliderEnabled;
+	sphereIsTrigger = other.sphereIsTrigger;
+	sphereCenter = other.sphereCenter;
+	sphereRadius = other.sphereRadius;
+	hasCamera = other.hasCamera;
+	cameraEnabled = other.cameraEnabled;
+	fov = other.fov;
+	nearClip = other.nearClip;
+	farClip = other.farClip;
+	isOrthographic = other.isOrthographic;
+	hasLight = other.hasLight;
+	lightEnabled = other.lightEnabled;
+	lightType = other.lightType;
+	lightColor = other.lightColor;
+	lightIntensity = other.lightIntensity;
+	lightDirection = other.lightDirection;
+	lightRange = other.lightRange;
+	lightDecay = other.lightDecay;
+	lightSpotAngle = other.lightSpotAngle;
+	lightSpotFalloffStart = other.lightSpotFalloffStart;
+	lightCastShadow = other.lightCastShadow;
+	lightShadowBias = other.lightShadowBias;
+	lightShadowStrength = other.lightShadowStrength;
+	lightShadowNormalBias = other.lightShadowNormalBias;
+	hasParticleSystem = other.hasParticleSystem;
+	attachToIndex = other.attachToIndex;
+	attachedParentId = other.attachedParentId;
+	localOffset = other.localOffset;
+	particlePreset = other.particlePreset;
+	particleShape = other.particleShape;
+	particleSpawnRadius = other.particleSpawnRadius;
+	particleBoxExtents = other.particleBoxExtents;
+	particleConeAngle = other.particleConeAngle;
+	particleSpawnRate = other.particleSpawnRate;
+	particleMaxParticles = other.particleMaxParticles;
+	particleBurstCount = other.particleBurstCount;
+	particleDirection = other.particleDirection;
+	particleSpreadAngle = other.particleSpreadAngle;
+	particleSpeedMin = other.particleSpeedMin;
+	particleSpeedMax = other.particleSpeedMax;
+	particleGravity = other.particleGravity;
+	particleDrag = other.particleDrag;
+	particleWindEnabled = other.particleWindEnabled;
+	particleWindAcceleration = other.particleWindAcceleration;
+	particleLifetimeMin = other.particleLifetimeMin;
+	particleLifetimeMax = other.particleLifetimeMax;
+	particleStartScale = other.particleStartScale;
+	particleEndScale = other.particleEndScale;
+	particleStartColor = other.particleStartColor;
+	particleEndColor = other.particleEndColor;
+	particleBlendMode = other.particleBlendMode;
+	particleBillboardMode = other.particleBillboardMode;
+	particleQuad = nullptr;
+	hasMapchip = other.hasMapchip;
+	hasAudioSource = other.hasAudioSource;
+	audioClipName = other.audioClipName;
+	audioVolume = other.audioVolume;
+	audioPlayOnAwake = other.audioPlayOnAwake;
+	audioLoop = other.audioLoop;
+	hasScript = other.hasScript;
+	scriptClassName = other.scriptClassName;
+	scripts = other.scripts;
+	hasRigidbody = other.hasRigidbody;
+	rbEnabled = other.rbEnabled;
+	mass = other.mass;
+	drag = other.drag;
+	gravityScale = other.gravityScale;
+	useGravity = other.useGravity;
+	isKinematic = other.isKinematic;
+	bounciness = other.bounciness;
+	velocity = other.velocity;
+	isGrounded = other.isGrounded;
+}
+
+GameObject::GameObject(GameObject&& other) noexcept = default;
+
+GameObject& GameObject::operator=(const GameObject& other) {
+	if (this != &other) {
+		id = other.id;
+		name = other.name;
+		isActive = other.isActive;
+		isStatic = other.isStatic;
+		tag = other.tag;
+		layer = other.layer;
+		collisionMask = other.collisionMask;
+		type = other.type;
+		parentIndex = other.parentIndex;
+		parentId = other.parentId;
+		childrenIds = other.childrenIds;
+		translation = other.translation;
+		rotation = other.rotation;
+		scale = other.scale;
+		rotationQuat = other.rotationQuat;
+		hasMesh = other.hasMesh;
+		meshEnabled = other.meshEnabled;
+		meshType = other.meshType;
+		materialColor = other.materialColor;
+		textureHandle = other.textureHandle;
+		isLit = other.isLit;
+		lightingType = other.lightingType;
+		shininess = other.shininess;
+		specularColor = other.specularColor;
+		useGeometryShader = other.useGeometryShader;
+		geometryShaderEffect = other.geometryShaderEffect;
+		explodeAmount = other.explodeAmount;
+		castShadow = other.castShadow;
+		receiveShadow = other.receiveShadow;
+		texturePath = other.texturePath;
+		modelPath = other.modelPath;
+		uvOffset = other.uvOffset;
+		uvTiling = other.uvTiling;
+		uvRotation = other.uvRotation;
+		hasBoxCollider = other.hasBoxCollider;
+		boxColliderEnabled = other.boxColliderEnabled;
+		isTrigger = other.isTrigger;
+		providesContacts = other.providesContacts;
+		boxCenter = other.boxCenter;
+		boxSize = other.boxSize;
+		isColliding = other.isColliding;
+		hasSphereCollider = other.hasSphereCollider;
+		sphereColliderEnabled = other.sphereColliderEnabled;
+		sphereIsTrigger = other.sphereIsTrigger;
+		sphereCenter = other.sphereCenter;
+		sphereRadius = other.sphereRadius;
+		hasCamera = other.hasCamera;
+		cameraEnabled = other.cameraEnabled;
+		fov = other.fov;
+		nearClip = other.nearClip;
+		farClip = other.farClip;
+		isOrthographic = other.isOrthographic;
+		hasLight = other.hasLight;
+		lightEnabled = other.lightEnabled;
+		lightType = other.lightType;
+		lightColor = other.lightColor;
+		lightIntensity = other.lightIntensity;
+		lightDirection = other.lightDirection;
+		lightRange = other.lightRange;
+		lightDecay = other.lightDecay;
+		lightSpotAngle = other.lightSpotAngle;
+		lightSpotFalloffStart = other.lightSpotFalloffStart;
+		lightCastShadow = other.lightCastShadow;
+		lightShadowBias = other.lightShadowBias;
+		lightShadowStrength = other.lightShadowStrength;
+		lightShadowNormalBias = other.lightShadowNormalBias;
+		hasParticleSystem = other.hasParticleSystem;
+		attachToIndex = other.attachToIndex;
+		attachedParentId = other.attachedParentId;
+		localOffset = other.localOffset;
+		particlePreset = other.particlePreset;
+		particleShape = other.particleShape;
+		particleSpawnRadius = other.particleSpawnRadius;
+		particleBoxExtents = other.particleBoxExtents;
+		particleConeAngle = other.particleConeAngle;
+		particleSpawnRate = other.particleSpawnRate;
+		particleMaxParticles = other.particleMaxParticles;
+		particleBurstCount = other.particleBurstCount;
+		particleDirection = other.particleDirection;
+		particleSpreadAngle = other.particleSpreadAngle;
+		particleSpeedMin = other.particleSpeedMin;
+		particleSpeedMax = other.particleSpeedMax;
+		particleGravity = other.particleGravity;
+		particleDrag = other.particleDrag;
+		particleWindEnabled = other.particleWindEnabled;
+		particleWindAcceleration = other.particleWindAcceleration;
+		particleLifetimeMin = other.particleLifetimeMin;
+		particleLifetimeMax = other.particleLifetimeMax;
+		particleStartScale = other.particleStartScale;
+		particleEndScale = other.particleEndScale;
+		particleStartColor = other.particleStartColor;
+		particleEndColor = other.particleEndColor;
+		particleBlendMode = other.particleBlendMode;
+		particleBillboardMode = other.particleBillboardMode;
+		particleQuad = nullptr;
+		hasMapchip = other.hasMapchip;
+		hasAudioSource = other.hasAudioSource;
+		audioClipName = other.audioClipName;
+		audioVolume = other.audioVolume;
+		audioPlayOnAwake = other.audioPlayOnAwake;
+		audioLoop = other.audioLoop;
+		hasScript = other.hasScript;
+		scriptClassName = other.scriptClassName;
+		scripts = other.scripts;
+		hasRigidbody = other.hasRigidbody;
+		rbEnabled = other.rbEnabled;
+		mass = other.mass;
+		drag = other.drag;
+		gravityScale = other.gravityScale;
+		useGravity = other.useGravity;
+		isKinematic = other.isKinematic;
+		bounciness = other.bounciness;
+		velocity = other.velocity;
+		isGrounded = other.isGrounded;
+		editObject3d.reset();
+		gameObject3d.reset();
+	}
+	return *this;
+}
+
+GameObject& GameObject::operator=(GameObject&& other) noexcept = default;
+
+EditorSuite::EditorSuite() = default;
+
 EditorSuite::~EditorSuite()
 {
 	if (scriptBuildThread_.joinable()) {
@@ -44,6 +297,8 @@ EditorSuite::~EditorSuite()
 	}
 	DestroyAllScriptInstances();
 	scriptModule_.Unload();
+	Object3d::StaticSetShadowMap(nullptr);
+	Object3d::StaticSetLightGroup(nullptr);
 }
 
 void EditorSuite::Initialize(
@@ -129,7 +384,7 @@ void EditorSuite::Initialize(
 	previewCamera_.rotation = { 0.0f, 0.0f, 0.0f };
 	previewCamera_.Update();
 
-	previewLights_.reset(LightGroup::Create());
+	previewLights_ = LightGroup::Create();
 	previewLights_->SetDefaultLighting();
 	previewLights_->SetAmbientColor({ 0.42f, 0.42f, 0.46f });
 	previewLights_->SetAmbientIntensity(0.80f);
@@ -1567,29 +1822,29 @@ std::string EditorSuite::OpenNativeFolderDialog()
 	std::string folderPath = "";
 	HRESULT hrInit = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
 	bool shouldUninit = SUCCEEDED(hrInit);
-	IFileOpenDialog* pFileOpen = nullptr;
-	HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, IID_IFileOpenDialog, reinterpret_cast<void**>(&pFileOpen));
-	if (SUCCEEDED(hr) && pFileOpen) {
-		DWORD dwOptions;
-		if (SUCCEEDED(pFileOpen->GetOptions(&dwOptions))) {
-			pFileOpen->SetOptions(dwOptions | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
-		}
-		if (SUCCEEDED(pFileOpen->Show(NULL))) {
-			IShellItem* pItem = nullptr;
-			if (SUCCEEDED(pFileOpen->GetResult(&pItem)) && pItem) {
-				PWSTR pszFilePath = nullptr;
-				if (SUCCEEDED(pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath)) && pszFilePath) {
-					int len = WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, NULL, 0, NULL, NULL);
-					if (len > 1) {
-						folderPath.resize(len - 1);
-						WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, folderPath.data(), len, NULL, NULL);
+	{
+		Microsoft::WRL::ComPtr<IFileOpenDialog> pFileOpen = nullptr;
+		HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, IID_PPV_ARGS(&pFileOpen));
+		if (SUCCEEDED(hr) && pFileOpen) {
+			DWORD dwOptions;
+			if (SUCCEEDED(pFileOpen->GetOptions(&dwOptions))) {
+				pFileOpen->SetOptions(dwOptions | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+			}
+			if (SUCCEEDED(pFileOpen->Show(NULL))) {
+				Microsoft::WRL::ComPtr<IShellItem> pItem = nullptr;
+				if (SUCCEEDED(pFileOpen->GetResult(&pItem)) && pItem) {
+					PWSTR pszFilePath = nullptr;
+					if (SUCCEEDED(pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath)) && pszFilePath) {
+						int len = WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, NULL, 0, NULL, NULL);
+						if (len > 1) {
+							folderPath.resize(len - 1);
+							WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, folderPath.data(), len, NULL, NULL);
+						}
+						CoTaskMemFree(pszFilePath);
 					}
-					CoTaskMemFree(pszFilePath);
 				}
-				pItem->Release();
 			}
 		}
-		pFileOpen->Release();
 	}
 	if (shouldUninit) {
 		CoUninitialize();
@@ -1759,8 +2014,9 @@ bool EditorSuite::ExportStandaloneGame()
 			std::filesystem::path srcScriptsDll = scriptModule_.ResolveDllPath();
 			if (std::filesystem::exists(srcScriptsDll)) {
 				std::error_code ec;
-				std::filesystem::create_directories(outDir / "bin" / "Scripts", ec);
-				std::filesystem::copy_file(srcScriptsDll, outDir / "bin" / "Scripts" / "GameScripts.dll", std::filesystem::copy_options::overwrite_existing, ec);
+				std::filesystem::path dstScriptsDll = outDir / ScriptModule::kScriptsDllSubpath;
+				std::filesystem::create_directories(dstScriptsDll.parent_path(), ec);
+				std::filesystem::copy_file(srcScriptsDll, dstScriptsDll, std::filesystem::copy_options::overwrite_existing, ec);
 			}
 		}
 
@@ -2840,6 +3096,15 @@ void EditorSuite::DrawMainMenuBar()
 			if (ImGui::MenuItem("Preview Standalone Game Mode", "F11")) { ToggleStandalonePreview(); }
 			if (ImGui::MenuItem("Lighting / Environment", nullptr, showLightingSettings_)) {
 				showLightingSettings_ = !showLightingSettings_;
+			}
+			if (ImGui::BeginMenu("Application Scene")) {
+				bool canSwitch = (sceneState_ == EditorSceneState::Edit);
+				if (ImGui::MenuItem("Title Scene (Demo)", nullptr, false, canSwitch)) {
+					if (onRequestTitleScene_) {
+						onRequestTitleScene_();
+					}
+				}
+				ImGui::EndMenu();
 			}
 			ImGui::EndMenu();
 		}
@@ -5600,6 +5865,52 @@ bool EditorSuite::GenerateCppScriptFiles(const std::string& className, const std
 		cpp.close();
 	}
 
+	// Register the new script files in GameScripts.vcxproj and GameScripts.vcxproj.filters under the Scripts filter
+	{
+		std::filesystem::path vcxprojPath = ResolveGameScriptsVcxproj();
+		std::filesystem::path filtersPath = vcxprojPath.string() + ".filters";
+		std::string relCpp = "Scripts\\" + className + ".cpp";
+		std::string relH = "Scripts\\" + className + ".h";
+
+		auto insertBeforeToken = [](const std::filesystem::path& file, const std::string& checkSubstr, const std::string& anchor, const std::string& insertion) {
+			std::ifstream in(file);
+			if (!in.is_open()) return;
+			std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+			in.close();
+			if (content.find(checkSubstr) != std::string::npos) return;
+			size_t pos = content.find(anchor);
+			if (pos != std::string::npos) {
+				content.insert(pos, insertion);
+				std::ofstream out(file, std::ios::trunc);
+				if (out.is_open()) {
+					out << content;
+				}
+			}
+		};
+
+		insertBeforeToken(
+			vcxprojPath,
+			relCpp,
+			"    <ClCompile Include=\"Scripts\\dllmain.cpp\" />",
+			"    <ClCompile Include=\"" + relCpp + "\" />\n");
+		insertBeforeToken(
+			vcxprojPath,
+			relH,
+			"    <ClInclude Include=\"..\\RizealldayEngine\\base\\ScriptAPI.h\" />",
+			"    <ClInclude Include=\"" + relH + "\" />\n");
+
+		insertBeforeToken(
+			filtersPath,
+			relCpp,
+			"    <ClCompile Include=\"Scripts\\dllmain.cpp\">",
+			"    <ClCompile Include=\"" + relCpp + "\">\n      <Filter>Scripts</Filter>\n    </ClCompile>\n");
+		insertBeforeToken(
+			filtersPath,
+			relH,
+			"    <ClInclude Include=\"..\\RizealldayEngine\\base\\ScriptAPI.h\">",
+			"    <ClInclude Include=\"" + relH + "\">\n      <Filter>Scripts</Filter>\n    </ClInclude>\n");
+	}
+
 	LogMessage(std::format("[Scripts] Created {}.h and {}.cpp in {}", className, className, targetDir.string()), 0);
 
 	// 1. Attach <ClassName> to the target GameObject in a "Pending / Compiling..." state
@@ -6385,35 +6696,19 @@ void EditorSuite::HotReloadScripts()
 std::filesystem::path EditorSuite::ResolveGameScriptsDir() const
 {
 	std::error_code ec;
-	std::vector<std::filesystem::path> candidates = {
-		std::filesystem::current_path() / "GameScripts",
-		std::filesystem::current_path().parent_path() / "GameScripts"
-	};
-
-	char exePathBuf[MAX_PATH] = {};
-	if (GetModuleFileNameA(NULL, exePathBuf, MAX_PATH) > 0) {
-		std::filesystem::path exeDir = std::filesystem::path(exePathBuf).parent_path();
-		candidates.push_back(exeDir / "GameScripts");
-		candidates.push_back(exeDir.parent_path() / "GameScripts");
-		candidates.push_back(exeDir.parent_path().parent_path() / "GameScripts");
-		candidates.push_back(exeDir.parent_path().parent_path().parent_path() / "GameScripts");
+	std::filesystem::path dir = ScriptModule::ResolveWorkspaceRoot() / ScriptModule::kGameScriptsDirName;
+	if (std::filesystem::exists(dir, ec)) {
+		return std::filesystem::weakly_canonical(dir, ec);
 	}
-
-	for (const auto& c : candidates) {
-		if (std::filesystem::exists(c, ec) && std::filesystem::is_directory(c, ec)) {
-			return std::filesystem::canonical(c, ec);
-		}
-	}
-	return std::filesystem::current_path() / "GameScripts";
+	return dir;
 }
 
 std::filesystem::path EditorSuite::ResolveGameScriptsVcxproj() const
 {
 	std::error_code ec;
-	std::filesystem::path gameScriptsDir = ResolveGameScriptsDir();
-	std::filesystem::path vcxproj = gameScriptsDir / "GameScripts.vcxproj";
+	std::filesystem::path vcxproj = ScriptModule::ResolveWorkspaceRoot() / ScriptModule::kGameScriptsVcxprojSubpath;
 	if (std::filesystem::exists(vcxproj, ec)) {
-		return std::filesystem::canonical(vcxproj, ec);
+		return std::filesystem::weakly_canonical(vcxproj, ec);
 	}
 	return vcxproj;
 }
@@ -6749,91 +7044,87 @@ void EditorSuite::OpenFileInVisualStudio(const std::filesystem::path& filePath)
 		bool openedViaDte = false;
 
 		if (comInitialized) {
-			IRunningObjectTable* pRot = nullptr;
-			if (SUCCEEDED(GetRunningObjectTable(0, &pRot)) && pRot) {
-				IEnumMoniker* pEnum = nullptr;
-				if (SUCCEEDED(pRot->EnumRunning(&pEnum)) && pEnum) {
-					IMoniker* pMoniker = nullptr;
-					ULONG fetched = 0;
-					while (!openedViaDte && pEnum->Next(1, &pMoniker, &fetched) == S_OK) {
-						IBindCtx* pBindCtx = nullptr;
-						if (SUCCEEDED(CreateBindCtx(0, &pBindCtx)) && pBindCtx) {
-							LPOLESTR displayName = nullptr;
-							if (SUCCEEDED(pMoniker->GetDisplayName(pBindCtx, nullptr, &displayName)) && displayName) {
-								std::wstring disp(displayName);
-								CoTaskMemFree(displayName);
-								if (disp.find(L"!VisualStudio.DTE") == 0) {
-									IUnknown* pUnk = nullptr;
-									if (SUCCEEDED(pRot->GetObject(pMoniker, &pUnk)) && pUnk) {
-										IDispatch* pDte = nullptr;
-										if (SUCCEEDED(pUnk->QueryInterface(IID_IDispatch, reinterpret_cast<void**>(&pDte))) && pDte) {
-											// Get ItemOperations property on DTE
-											OLECHAR itemOpsName[] = L"ItemOperations";
-											LPOLESTR names[1] = { itemOpsName };
-											DISPID dispidItemOps = DISPID_UNKNOWN;
-											if (SUCCEEDED(pDte->GetIDsOfNames(IID_NULL, names, 1, LOCALE_USER_DEFAULT, &dispidItemOps))) {
-												DISPPARAMS noArgs = { nullptr, nullptr, 0, 0 };
-												VARIANT vItemOps;
-												VariantInit(&vItemOps);
-												if (SUCCEEDED(pDte->Invoke(dispidItemOps, IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_PROPERTYGET, &noArgs, &vItemOps, nullptr, nullptr))
-													&& vItemOps.vt == VT_DISPATCH && vItemOps.pdispVal) {
-													IDispatch* pItemOps = vItemOps.pdispVal;
-													OLECHAR openFileName[] = L"OpenFile";
-													LPOLESTR openNames[1] = { openFileName };
-													DISPID dispidOpenFile = DISPID_UNKNOWN;
-													if (SUCCEEDED(pItemOps->GetIDsOfNames(IID_NULL, openNames, 1, LOCALE_USER_DEFAULT, &dispidOpenFile))) {
-														BSTR bstrFile = SysAllocString(absFile.wstring().c_str());
-														VARIANT vArg;
-														VariantInit(&vArg);
-														vArg.vt = VT_BSTR;
-														vArg.bstrVal = bstrFile;
-														DISPPARAMS openParams = { &vArg, nullptr, 1, 0 };
-														VARIANT vRes;
-														VariantInit(&vRes);
-														if (SUCCEEDED(pItemOps->Invoke(dispidOpenFile, IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_METHOD, &openParams, &vRes, nullptr, nullptr))) {
-															openedViaDte = true;
-														}
-														VariantClear(&vRes);
-														SysFreeString(bstrFile);
-													}
-
-													// Also activate MainWindow if available
-													OLECHAR mainWinName[] = L"MainWindow";
-													LPOLESTR mwNames[1] = { mainWinName };
-													DISPID dispidMw = DISPID_UNKNOWN;
-													if (SUCCEEDED(pDte->GetIDsOfNames(IID_NULL, mwNames, 1, LOCALE_USER_DEFAULT, &dispidMw))) {
-														VARIANT vMw;
-														VariantInit(&vMw);
-														if (SUCCEEDED(pDte->Invoke(dispidMw, IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_PROPERTYGET, &noArgs, &vMw, nullptr, nullptr))
-															&& vMw.vt == VT_DISPATCH && vMw.pdispVal) {
-															OLECHAR actName[] = L"Activate";
-															LPOLESTR actNames[1] = { actName };
-															DISPID dispidAct = DISPID_UNKNOWN;
-															if (SUCCEEDED(vMw.pdispVal->GetIDsOfNames(IID_NULL, actNames, 1, LOCALE_USER_DEFAULT, &dispidAct))) {
-																VARIANT vDummy;
-																VariantInit(&vDummy);
-																vMw.pdispVal->Invoke(dispidAct, IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_METHOD, &noArgs, &vDummy, nullptr, nullptr);
-																VariantClear(&vDummy);
+			{
+				Microsoft::WRL::ComPtr<IRunningObjectTable> pRot = nullptr;
+				if (SUCCEEDED(GetRunningObjectTable(0, &pRot)) && pRot) {
+					Microsoft::WRL::ComPtr<IEnumMoniker> pEnum = nullptr;
+					if (SUCCEEDED(pRot->EnumRunning(&pEnum)) && pEnum) {
+						Microsoft::WRL::ComPtr<IMoniker> pMoniker = nullptr;
+						ULONG fetched = 0;
+						while (!openedViaDte && pEnum->Next(1, &pMoniker, &fetched) == S_OK) {
+							Microsoft::WRL::ComPtr<IBindCtx> pBindCtx = nullptr;
+							if (SUCCEEDED(CreateBindCtx(0, &pBindCtx)) && pBindCtx) {
+								LPOLESTR displayName = nullptr;
+								if (SUCCEEDED(pMoniker->GetDisplayName(pBindCtx.Get(), nullptr, &displayName)) && displayName) {
+									std::wstring disp(displayName);
+									CoTaskMemFree(displayName);
+									if (disp.find(L"!VisualStudio.DTE") == 0) {
+										Microsoft::WRL::ComPtr<IUnknown> pUnk = nullptr;
+										if (SUCCEEDED(pRot->GetObject(pMoniker.Get(), &pUnk)) && pUnk) {
+											Microsoft::WRL::ComPtr<IDispatch> pDte = nullptr;
+											if (SUCCEEDED(pUnk.As(&pDte)) && pDte) {
+												// Get ItemOperations property on DTE
+												OLECHAR itemOpsName[] = L"ItemOperations";
+												LPOLESTR names[1] = { itemOpsName };
+												DISPID dispidItemOps = DISPID_UNKNOWN;
+												if (SUCCEEDED(pDte->GetIDsOfNames(IID_NULL, names, 1, LOCALE_USER_DEFAULT, &dispidItemOps))) {
+													DISPPARAMS noArgs = { nullptr, nullptr, 0, 0 };
+													VARIANT vItemOps;
+													VariantInit(&vItemOps);
+													if (SUCCEEDED(pDte->Invoke(dispidItemOps, IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_PROPERTYGET, &noArgs, &vItemOps, nullptr, nullptr))
+														&& vItemOps.vt == VT_DISPATCH && vItemOps.pdispVal) {
+														IDispatch* pItemOps = vItemOps.pdispVal;
+														OLECHAR openFileName[] = L"OpenFile";
+														LPOLESTR openNames[1] = { openFileName };
+														DISPID dispidOpenFile = DISPID_UNKNOWN;
+														if (SUCCEEDED(pItemOps->GetIDsOfNames(IID_NULL, openNames, 1, LOCALE_USER_DEFAULT, &dispidOpenFile))) {
+															BSTR bstrFile = SysAllocString(absFile.wstring().c_str());
+															VARIANT vArg;
+															VariantInit(&vArg);
+															vArg.vt = VT_BSTR;
+															vArg.bstrVal = bstrFile;
+															DISPPARAMS openParams = { &vArg, nullptr, 1, 0 };
+															VARIANT vRes;
+															VariantInit(&vRes);
+															if (SUCCEEDED(pItemOps->Invoke(dispidOpenFile, IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_METHOD, &openParams, &vRes, nullptr, nullptr))) {
+																openedViaDte = true;
 															}
+															VariantClear(&vRes);
+															SysFreeString(bstrFile);
 														}
-														VariantClear(&vMw);
+
+														// Also activate MainWindow if available
+														OLECHAR mainWinName[] = L"MainWindow";
+														LPOLESTR mwNames[1] = { mainWinName };
+														DISPID dispidMw = DISPID_UNKNOWN;
+														if (SUCCEEDED(pDte->GetIDsOfNames(IID_NULL, mwNames, 1, LOCALE_USER_DEFAULT, &dispidMw))) {
+															VARIANT vMw;
+															VariantInit(&vMw);
+															if (SUCCEEDED(pDte->Invoke(dispidMw, IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_PROPERTYGET, &noArgs, &vMw, nullptr, nullptr))
+																&& vMw.vt == VT_DISPATCH && vMw.pdispVal) {
+																OLECHAR actName[] = L"Activate";
+																LPOLESTR actNames[1] = { actName };
+																DISPID dispidAct = DISPID_UNKNOWN;
+																if (SUCCEEDED(vMw.pdispVal->GetIDsOfNames(IID_NULL, actNames, 1, LOCALE_USER_DEFAULT, &dispidAct))) {
+																	VARIANT vDummy;
+																	VariantInit(&vDummy);
+																	vMw.pdispVal->Invoke(dispidAct, IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_METHOD, &noArgs, &vDummy, nullptr, nullptr);
+																	VariantClear(&vDummy);
+																}
+															}
+															VariantClear(&vMw);
+														}
 													}
+													VariantClear(&vItemOps);
 												}
-												VariantClear(&vItemOps);
 											}
-											pDte->Release();
 										}
-										pUnk->Release();
 									}
 								}
 							}
-							pBindCtx->Release();
 						}
-						pMoniker->Release();
 					}
-					pEnum->Release();
 				}
-				pRot->Release();
 			}
 			CoUninitialize();
 		}

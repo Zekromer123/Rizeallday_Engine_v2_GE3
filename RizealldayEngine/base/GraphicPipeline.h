@@ -1,14 +1,10 @@
-#pragma once
+﻿#pragma once
 #include <d3d12.h>
 #include <wrl.h>
-#include "base/DXCManager.h"
 #include "base/BlendMode.h"
+#include "base/GeometryShaderMode.h"
 
-enum class GeometryShaderMode {
-    None = 0,
-    PassThrough = 1,
-    Explode = 2
-};
+class DXCManager;
 
 class GraphicPipeline
 {

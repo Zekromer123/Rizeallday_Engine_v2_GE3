@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "3d/DirectionalLight.h"
 #include "3d/PointLight.h"
 #include "3d/SpotLight.h"
@@ -8,6 +8,7 @@
 #include <d3d12.h>
 #include <wrl.h>
 #include <cstdint>
+#include <memory>
 
 class DirectXCommon;
 
@@ -25,14 +26,17 @@ struct LightGroupGPU {
 };
 
 class LightGroup {
+private:
+    struct PrivateTag {};
+
 public:
     static const int32_t MaxPointLights = 3;
     static const int32_t MaxSpotLights = 3;
 
     static void StaticInitialize(DirectXCommon* dxCommon);
-    static LightGroup* Create();
+    static std::unique_ptr<LightGroup> Create();
 
-    LightGroup() = default;
+    explicit LightGroup(PrivateTag) {}
     ~LightGroup();
 
     void Initialize();
@@ -56,6 +60,7 @@ public:
     SpotLightData& GetSpotLight(int32_t index) { return spotLights_[index]; }
 
 private:
+    LightGroup() = default;
     static DirectXCommon* sDxCommon_;
 
     Microsoft::WRL::ComPtr<ID3D12Resource> constBuffer_;

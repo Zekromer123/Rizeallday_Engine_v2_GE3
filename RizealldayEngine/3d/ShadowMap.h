@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <d3d12.h>
 #include <wrl.h>
 #include <cstdint>
@@ -13,6 +13,9 @@ class ShadowMap
 public:
 	static const uint32_t kShadowMapWidth = 2048;
 	static const uint32_t kShadowMapHeight = 2048;
+
+	ShadowMap() = default;
+	~ShadowMap();
 
 	void Initialize(
 		DirectXCommon* dxCommon,

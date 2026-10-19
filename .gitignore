@@ -360,14 +360,33 @@ DirectXGame/imgui.ini
 # DirectXTex Compiled Shaders
 **/DirectXTex/Shaders/Compiled/
 
+# Engine & Build Artifacts
+bin/
+x64/
+.vs/
+*.user
+*.ipch
+*.obj
+*.pdb
+*.ilk
+*.idb
+*.tlog
+*.exp
 *.log
 /logs
-
+logs/
 *.dmp
 Dumps/
+Build/
+externals/assimp_build/
 
-#ImGUI
+# ImGui
 imgui.ini
 
-#Resources
-!resources/**/*.obj
+# Preserve 3D model .obj files in Resources and required third-party binaries in externals/assimp
+!**/[Rr]esources/**/*.obj
+!externals/assimp/bin/
+!externals/assimp/bin/**
+!externals/assimp/lib/
+!externals/assimp/lib/**
+

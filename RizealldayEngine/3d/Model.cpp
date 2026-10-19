@@ -1,4 +1,4 @@
-#include "3d/Model.h"
+﻿#include "3d/Model.h"
 #include "base/DirectXCommon.h"
 #include "base/TextureManager.h"
 #include "base/Log.h"
@@ -43,7 +43,7 @@ Model* Model::CreateFromFile(const std::string& directoryPath, const std::string
         return it->second.get();
     }
     
-    std::unique_ptr<Model> model = std::make_unique<Model>();
+    std::unique_ptr<Model> model = std::make_unique<Model>(PrivateTag{});
     
     size_t extPos = filename.find_last_of('.');
     std::string ext;
@@ -68,7 +68,7 @@ Model* Model::CreateFromFile(const std::string& directoryPath, const std::string
 }
 
 std::unique_ptr<Model> Model::CreatePreviewFromFile(const std::string& filePath) {
-    std::unique_ptr<Model> model = std::make_unique<Model>();
+    std::unique_ptr<Model> model = std::make_unique<Model>(PrivateTag{});
     std::filesystem::path p(filePath);
     std::string ext = p.extension().string();
     for (auto& c : ext) {
@@ -170,7 +170,7 @@ Model* Model::CreateCube() {
         return it->second.get();
     }
 
-    auto model = std::unique_ptr<Model>(new Model());
+    auto model = std::make_unique<Model>(PrivateTag{});
     MeshData mesh;
     mesh.textureHandle = TextureManager::GetInstance()->GetDefaultWhiteTexture();
 
@@ -227,7 +227,7 @@ Model* Model::CreatePlane() {
         return it->second.get();
     }
 
-    auto model = std::unique_ptr<Model>(new Model());
+    auto model = std::make_unique<Model>(PrivateTag{});
     MeshData mesh;
     mesh.textureHandle = TextureManager::GetInstance()->GetDefaultWhiteTexture();
 
@@ -255,7 +255,7 @@ Model* Model::CreateQuad() {
         return it->second.get();
     }
 
-    auto model = std::unique_ptr<Model>(new Model());
+    auto model = std::make_unique<Model>(PrivateTag{});
     MeshData mesh;
     mesh.textureHandle = TextureManager::GetInstance()->GetDefaultWhiteTexture();
 
@@ -282,7 +282,7 @@ Model* Model::CreateSphere() {
         return it->second.get();
     }
 
-    auto model = std::unique_ptr<Model>(new Model());
+    auto model = std::make_unique<Model>(PrivateTag{});
     MeshData mesh;
     mesh.textureHandle = TextureManager::GetInstance()->GetDefaultWhiteTexture();
 

@@ -1,11 +1,12 @@
-#pragma once
+﻿#pragma once
 #include <d3d12.h>
 #include <wrl.h>
 #include <cassert>
-#include "base/DirectXCommon.h"
 #include "math/MathUtil.h"
 #include "math/VertexData.h"
-#include "3d/DirectionalLight.h"
+
+class DirectXCommon;
+struct DirectionalLightData;
 
 class Sprite
 {

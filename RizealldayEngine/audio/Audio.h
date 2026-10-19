@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <xaudio2.h>
 #include <wrl.h>
 #include <string>
@@ -13,19 +13,19 @@ public:
 	static Audio* GetInstance();
 
 	struct SoundData {
-		WAVEFORMATEX wfex;
-		BYTE* pBuffer;
-		unsigned int bufferSize;
+		WAVEFORMATEX wfex{};
+		std::vector<BYTE> buffer;
+		unsigned int bufferSize = 0;
 	};
 
 	void Initialize();
 	void Finalize();
 
-	/// WAV音声読み込み
+	/// Load WAV audio file
 	SoundData SoundLoadWave(const std::string& filename);
-	/// 音声再生
+	/// Play audio
 	void SoundPlayWave(const SoundData& soundData);
-	/// 音声データ解放
+	/// Release audio data
 	void SoundUnload(SoundData* soundData);
 
 private:

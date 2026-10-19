@@ -1,6 +1,12 @@
-#include "base/WinApp.h"
+﻿#include "base/WinApp.h"
 #include "base/ConvertString.h"
 #include "base/DirectXCommon.h"
+
+#ifdef USE_IMGUI
+#include <imgui.h>
+#include <imgui_impl_win32.h>
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+#endif
 
 WinApp* WinApp::GetInstance()
 {
@@ -102,18 +108,18 @@ bool WinApp::ProcessMessage()
 
 int WinApp::GetClientWidth() const
 {
-	if (!hwnd_) return 1280;
+	if (!hwnd_) return kClientWidth;
 	RECT rc{};
 	GetClientRect(hwnd_, &rc);
 	int w = rc.right - rc.left;
-	return w > 0 ? w : 1280;
+	return w > 0 ? w : kClientWidth;
 }
 
 int WinApp::GetClientHeight() const
 {
-	if (!hwnd_) return 720;
+	if (!hwnd_) return kClientHeight;
 	RECT rc{};
 	GetClientRect(hwnd_, &rc);
 	int h = rc.bottom - rc.top;
-	return h > 0 ? h : 720;
+	return h > 0 ? h : kClientHeight;
 }

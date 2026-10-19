@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <d3d12.h>
 #include <wrl.h>
 #include <string>
@@ -60,8 +60,11 @@ struct NodeData {
 };
 
 class Model {
+private:
+	struct PrivateTag {};
+
 public:
-	Model() = default;
+	explicit Model(PrivateTag) {}
 	~Model();
 	static void StaticInitialize(DirectXCommon* dxCommon);
 	static Model* CreateFromFile(const std::string& directoryPath, const std::string& filename);
@@ -89,6 +92,7 @@ public:
 	bool GetLockRootMotion() const { return lockRootMotion_; }
 
 private:
+	Model() = default;
 	void LoadAssimpModel(const std::string& filePath);
 	void LoadOBJ(const std::string& directoryPath, const std::string& filename);
 	void CreateGPUBuffers();

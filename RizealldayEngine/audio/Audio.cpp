@@ -1,4 +1,4 @@
-#include "audio/Audio.h"
+﻿#include "audio/Audio.h"
 #include <cassert>
 #include <fstream>
 #include <cstring>
@@ -73,14 +73,15 @@ Audio::SoundData Audio::SoundLoadWave(const std::string& filename)
 		}
 	}
 
-	char* pBuffer = new char[data.size];
-	file.read(pBuffer, data.size);
-	file.close();
-
-	SoundData soundData = {};
+	SoundData soundData{};
 	soundData.wfex = format.fmt;
-	soundData.pBuffer = reinterpret_cast<BYTE*>(pBuffer);
-	soundData.bufferSize = data.size;
+	if (data.size > 0)
+	{
+		soundData.buffer.resize(static_cast<size_t>(data.size));
+		file.read(reinterpret_cast<char*>(soundData.buffer.data()), data.size);
+	}
+	file.close();
+	soundData.bufferSize = static_cast<unsigned int>(soundData.buffer.size());
 	return soundData;
 }
 
@@ -92,7 +93,7 @@ void Audio::SoundPlayWave(const SoundData& soundData)
 	assert(SUCCEEDED(result));
 
 	XAUDIO2_BUFFER buf{};
-	buf.pAudioData = soundData.pBuffer;
+	buf.pAudioData = soundData.buffer.data();
 	buf.AudioBytes = soundData.bufferSize;
 	buf.Flags = XAUDIO2_END_OF_STREAM;
 
@@ -105,8 +106,9 @@ void Audio::SoundPlayWave(const SoundData& soundData)
 
 void Audio::SoundUnload(SoundData* soundData)
 {
-	delete[] soundData->pBuffer;
-	soundData->pBuffer = nullptr;
+	if (!soundData) return;
+	soundData->buffer.clear();
+	soundData->buffer.shrink_to_fit();
 	soundData->bufferSize = 0;
 	soundData->wfex = {};
 }

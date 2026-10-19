@@ -1,44 +1,44 @@
-#pragma once
+﻿#pragma once
 #include <d3d12.h>
 #include <wrl.h>
 #include "math/Vector3.h"
 #include "math/Vector4.h"
 #include "math/Matrix4x4.h"
 #include "math/MathUtil.h"
-#include "3d/Camera.h"
 
 class DirectXCommon;
 class DXCManager;
+class Camera;
 
-/// Circle Shadow (Blob Shadow) Material untuk GPU
+/// Circle Shadow (Blob Shadow) Material for GPU
 struct CircleShadowMaterialGPU {
-    Vector4 color   = { 0.0f, 0.0f, 0.0f, 0.5f }; // Warna bayangan (hitam, 50% transparan)
-    float   centerX = 0.5f;                          // Pusat UV X
-    float   centerY = 0.5f;                          // Pusat UV Y
-    float   radius  = 0.45f;                         // Radius bayangan dalam UV space
-    float   softness = 0.4f;                         // Kelembutan tepi bayangan
+    Vector4 color   = { 0.0f, 0.0f, 0.0f, 0.5f }; // Shadow color (black, 50% transparent)
+    float   centerX = 0.5f;                          // UV center X
+    float   centerY = 0.5f;                          // UV center Y
+    float   radius  = 0.45f;                         // Shadow radius in UV space
+    float   softness = 0.4f;                         // Shadow edge softness
 };
 
-/// CircleShadow - Bayangan lingkaran 3D di bawah karakter
-/// Dirender sebagai quad datar dengan alpha blending
+/// CircleShadow - 3D blob shadow under characters/objects
+/// Rendered as a flat quad with alpha blending
 class CircleShadow
 {
 public:
-    /// Inisialisasi pipeline dan resource statis untuk circle shadow.
+    /// Initialize pipeline and static resources for circle shadow
     static void StaticInitialize(DirectXCommon* dxCommon, DXCManager* dxcManager);
 
     void Initialize();
 
-    /// Update posisi bayangan berdasarkan posisi karakter.
-    /// @param characterPos  Posisi karakter di dunia
-    /// @param floorY        Ketinggian lantai (Y dimana bayangan ditempatkan)
-    /// @param radius        Radius bayangan dalam satuan dunia
-    /// @param opacity       Transparansi (0=tembus, 1=gelap penuh)
+    /// Update shadow position based on character position
+    /// @param characterPos  Character world position
+    /// @param floorY        Floor Y position where shadow is cast
+    /// @param radius        World-space shadow radius
+    /// @param opacity       Opacity (0=transparent, 1=fully dark)
     void Update(const Vector3& characterPos, float floorY, float radius, float opacity);
 
     void Draw(ID3D12GraphicsCommandList* cmdList, Camera* camera);
 
-    /// Kustomisasi warna bayangan
+    /// Customize shadow color
     void SetColor(const Vector4& color);
     void SetSoftness(float softness) { if (materialData_) materialData_->softness = softness; }
 

@@ -1,4 +1,4 @@
-#include "OscillateScript.h"
+﻿#include "OscillateScript.h"
 #include <cmath>
 #include <cstdio>
 
