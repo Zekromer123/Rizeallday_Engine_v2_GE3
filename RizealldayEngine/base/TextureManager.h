@@ -4,6 +4,7 @@
 #include <string>
 #include <unordered_map>
 #include <DirectXTex.h>
+#include "math/Vector2.h"
 
 class DirectXCommon;
 
@@ -20,6 +21,18 @@ public:
 
 	/// Get GPU descriptor handle
 	D3D12_GPU_DESCRIPTOR_HANDLE GetGPUHandle(uint32_t textureHandle);
+
+	/// Get texture metadata (width, height, format, mipLevels, etc.) by texture handle
+	const DirectX::TexMetadata& GetMetaData(uint32_t textureHandle) const;
+
+	/// Get texture metadata by file path (loads texture if not yet cached)
+	const DirectX::TexMetadata& GetMetaData(const std::string& filePath);
+
+	/// Get original texture size (width, height) in pixels
+	Vector2 GetTextureSize(uint32_t textureHandle) const;
+
+	/// Resolve texture handle ID from a GPU descriptor handle (returns 0 if unknown)
+	uint32_t GetTextureHandleFromGPUDescriptor(D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle) const;
 
 	/// Bind SRV Descriptor Heap to command list
 	void SetDescriptorHeaps(ID3D12GraphicsCommandList* cmdList);
@@ -65,7 +78,10 @@ private:
 	uint32_t currentPreviewSrvIndex_ = kPreviewSrvBaseIndex;
 	std::unordered_map<std::string, uint32_t> textureCache_;
 	Microsoft::WRL::ComPtr<ID3D12Resource> textureResources_[kMaxTextures];
+	DirectX::TexMetadata textureMetadatas_[kMaxTextures]{};
 	Microsoft::WRL::ComPtr<ID3D12Resource> previewTextureResource_;
+	DirectX::TexMetadata previewTextureMetadata_{};
+	DirectX::TexMetadata fallbackMetadata_{};
 	std::string currentPreviewTexturePath_;
 	Microsoft::WRL::ComPtr<ID3D12CommandAllocator> uploadAllocator_;
 	Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> uploadCommandList_;

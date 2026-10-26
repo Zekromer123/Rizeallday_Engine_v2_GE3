@@ -33,13 +33,19 @@ public:
 
 	// Animation controls
 	void PlayAnimation(int animIndex, bool loop = true, float speed = 1.0f);
+	void SetCurrentAnimationIndex(int animIndex);
+	int GetCurrentAnimationIndex() const { return currentAnimationIndex_; }
 	void SetAnimationTime(float time);
+	void ResetAnimationTime() { animationTime_ = 0.0f; }
 	float GetAnimationTime() const { return animationTime_; }
 	float GetAnimationDuration() const;
 	void SetAnimationSpeed(float speed) { animationSpeed_ = speed; }
 	float GetAnimationSpeed() const { return animationSpeed_; }
 	void SetAnimationLoop(bool loop) { isAnimationLoop_ = loop; }
+	void SetLoopAnimation(bool loop) { isAnimationLoop_ = loop; }
 	bool IsAnimationLoop() const { return isAnimationLoop_; }
+	void CopyBonePaletteFrom(const Object3d& other);
+	D3D12_GPU_VIRTUAL_ADDRESS GetBonePaletteGPUAddress() const { return bonePaletteResource_ ? bonePaletteResource_->GetGPUVirtualAddress() : 0; }
 
 	/// Blend mode for rendering (default: Opaque)
 	BlendMode blendMode = BlendMode::Opaque;

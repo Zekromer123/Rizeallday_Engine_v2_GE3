@@ -80,6 +80,10 @@ GameObject::GameObject(const GameObject& other) {
 	uvOffset = other.uvOffset;
 	uvTiling = other.uvTiling;
 	uvRotation = other.uvRotation;
+	animationIndex = other.animationIndex;
+	animationSpeed = other.animationSpeed;
+	animationLoop = other.animationLoop;
+	animationPlaying = other.animationPlaying;
 	hasBoxCollider = other.hasBoxCollider;
 	boxColliderEnabled = other.boxColliderEnabled;
 	isTrigger = other.isTrigger;
@@ -200,6 +204,10 @@ GameObject& GameObject::operator=(const GameObject& other) {
 		uvOffset = other.uvOffset;
 		uvTiling = other.uvTiling;
 		uvRotation = other.uvRotation;
+		animationIndex = other.animationIndex;
+		animationSpeed = other.animationSpeed;
+		animationLoop = other.animationLoop;
+		animationPlaying = other.animationPlaying;
 		hasBoxCollider = other.hasBoxCollider;
 		boxColliderEnabled = other.boxColliderEnabled;
 		isTrigger = other.isTrigger;
@@ -282,6 +290,9 @@ GameObject& GameObject::operator=(const GameObject& other) {
 		isGrounded = other.isGrounded;
 		editObject3d.reset();
 		gameObject3d.reset();
+		shadowTransform.reset();
+		runtimeSoundHandle = 0;
+		runtimeVoiceHandle = 0;
 	}
 	return *this;
 }
@@ -575,6 +586,8 @@ GameObject& EditorSuite::CreatePlane(const std::string& name, const Vector3& pos
 	obj.shininess = 16.0f;
 	obj.specularColor = { 0.5f, 0.5f, 0.5f };
 	obj.materialColor = { 0.30f, 0.32f, 0.35f, 1.0f };
+	obj.castShadow = false;
+	obj.receiveShadow = true;
 
 	// Automatically attach active Box Collider for floor bounds
 	obj.hasBoxCollider = true;
@@ -763,6 +776,13 @@ void EditorSuite::ProcessPendingDeletes()
 		}
 		if (obj.gameObject3d) {
 			obj.gameObject3d.reset();
+		}
+		if (obj.shadowTransform) {
+			obj.shadowTransform.reset();
+		}
+		if (obj.runtimeVoiceHandle != 0) {
+			Audio::GetInstance()->StopAudio(obj.runtimeVoiceHandle);
+			obj.runtimeVoiceHandle = 0;
 		}
 		if (obj.particleQuad) {
 			obj.particleQuad.reset();
@@ -1048,9 +1068,17 @@ std::string EditorSuite::SerializeSceneToString() const
 		ss << "      \"particleBlendMode\": " << obj.particleBlendMode << ",\n";
 		ss << "      \"particleBillboardMode\": " << obj.particleBillboardMode << ",\n";
 
-		// Mapchip, Audio & Scripts
+		// Mapchip, Audio, Animation & Scripts
 		ss << "      \"hasMapchip\": " << (obj.hasMapchip ? "true" : "false") << ",\n";
 		ss << "      \"hasAudioSource\": " << (obj.hasAudioSource ? "true" : "false") << ",\n";
+		ss << "      \"audioClipName\": \"" << obj.audioClipName << "\",\n";
+		ss << "      \"audioVolume\": " << obj.audioVolume << ",\n";
+		ss << "      \"audioPlayOnAwake\": " << (obj.audioPlayOnAwake ? "true" : "false") << ",\n";
+		ss << "      \"audioLoop\": " << (obj.audioLoop ? "true" : "false") << ",\n";
+		ss << "      \"animationIndex\": " << obj.animationIndex << ",\n";
+		ss << "      \"animationSpeed\": " << obj.animationSpeed << ",\n";
+		ss << "      \"animationLoop\": " << (obj.animationLoop ? "true" : "false") << ",\n";
+		ss << "      \"animationPlaying\": " << (obj.animationPlaying ? "true" : "false") << ",\n";
 		ss << "      \"hasScript\": " << ((!obj.scripts.empty() || obj.hasScript) ? "true" : "false") << ",\n";
 		ss << "      \"scriptClassName\": \"" << (!obj.scripts.empty() ? obj.scripts.front().className : obj.scriptClassName) << "\",\n";
 		ss << "      \"scripts\": [";
@@ -1396,6 +1424,19 @@ bool EditorSuite::DeserializeSceneFromString(const std::string& content)
 		GetFloatField(block, "lightShadowBias", obj.lightShadowBias);
 		GetFloatField(block, "lightShadowStrength", obj.lightShadowStrength);
 		GetFloatField(block, "lightShadowNormalBias", obj.lightShadowNormalBias);
+		if (obj.hasLight && (obj.lightType == GameObject::LightType::Directional || obj.lightType == GameObject::LightType::Spot)) {
+			if (std::abs(obj.rotation.x) < 0.0001f && std::abs(obj.rotation.y) < 0.0001f && std::abs(obj.rotation.z) < 0.0001f) {
+				Vector3 d = obj.lightDirection;
+				float dLen = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+				if (dLen > 0.0001f) {
+					d = { d.x / dLen, d.y / dLen, d.z / dLen };
+					obj.rotation.x = std::asin(std::clamp(-d.y, -1.0f, 1.0f));
+					obj.rotation.y = std::atan2(d.x, d.z);
+					obj.rotation.z = 0.0f;
+					obj.rotationQuat = Quaternion::FromEuler(obj.rotation);
+				}
+			}
+		}
 
 		// Particle System
 		GetBoolField(block, "hasParticleSystem", obj.hasParticleSystem);
@@ -1426,9 +1467,17 @@ bool EditorSuite::DeserializeSceneFromString(const std::string& content)
 		GetIntField(block, "particleBlendMode", obj.particleBlendMode);
 		GetIntField(block, "particleBillboardMode", obj.particleBillboardMode);
 
-		// Mapchip, Audio & Scripts
+		// Mapchip, Audio, Animation & Scripts
 		GetBoolField(block, "hasMapchip", obj.hasMapchip);
 		GetBoolField(block, "hasAudioSource", obj.hasAudioSource);
+		GetStringField(block, "audioClipName", obj.audioClipName);
+		GetFloatField(block, "audioVolume", obj.audioVolume);
+		GetBoolField(block, "audioPlayOnAwake", obj.audioPlayOnAwake);
+		GetBoolField(block, "audioLoop", obj.audioLoop);
+		GetIntField(block, "animationIndex", obj.animationIndex);
+		GetFloatField(block, "animationSpeed", obj.animationSpeed);
+		GetBoolField(block, "animationLoop", obj.animationLoop);
+		GetBoolField(block, "animationPlaying", obj.animationPlaying);
 		GetBoolField(block, "hasScript", obj.hasScript);
 		GetStringField(block, "scriptClassName", obj.scriptClassName);
 
@@ -1729,6 +1778,13 @@ void EditorSuite::NewScene()
 		light.hasLight = true;
 		light.lightType = GameObject::LightType::Directional;
 		light.lightDirection = { 0.5f, -1.0f, 0.5f };
+		{
+			Vector3 d = light.lightDirection;
+			float dLen = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+			if (dLen > 0.0001f) { d.x /= dLen; d.y /= dLen; d.z /= dLen; }
+			light.rotation = { std::asin(std::clamp(-d.y, -1.0f, 1.0f)), std::atan2(d.x, d.z), 0.0f };
+			light.rotationQuat = Quaternion::FromEuler(light.rotation);
+		}
 		light.lightColor = { 1.0f, 0.95f, 0.9f };
 		light.lightIntensity = 1.0f;
 		light.lightCastShadow = true;
@@ -1743,7 +1799,7 @@ void EditorSuite::NewScene()
 		plane.scale = { 20.0f, 1.0f, 20.0f };
 		plane.isStatic = true;
 		plane.materialColor = { 0.25f, 0.27f, 0.30f, 1.0f };
-		plane.castShadow = true;
+		plane.castShadow = false;
 		plane.receiveShadow = true;
 	}
 
@@ -2113,6 +2169,13 @@ void EditorSuite::LoadTetrisTemplate()
 		sun.hasLight = true;
 		sun.lightType = GameObject::LightType::Directional;
 		sun.lightDirection = { 0.3f, -1.0f, 0.4f };
+		{
+			Vector3 d = sun.lightDirection;
+			float dLen = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+			if (dLen > 0.0001f) { d.x /= dLen; d.y /= dLen; d.z /= dLen; }
+			sun.rotation = { std::asin(std::clamp(-d.y, -1.0f, 1.0f)), std::atan2(d.x, d.z), 0.0f };
+			sun.rotationQuat = Quaternion::FromEuler(sun.rotation);
+		}
 		sun.lightColor = { 1.0f, 0.95f, 0.9f };
 		sun.lightIntensity = 1.2f;
 	}
@@ -2480,6 +2543,7 @@ void EditorSuite::Update(float deltaTime, Input* input)
 			}
 		}
 	}
+#endif
 
 	// Slowly rotate 3D model preview if active
 	if (previewModel_) {
@@ -2549,9 +2613,14 @@ void EditorSuite::Update(float deltaTime, Input* input)
 			if (!obj.isActive || !obj.hasLight) continue;
 
 			if (obj.lightType == GameObject::LightType::Directional) {
-				Vector3 dir = obj.lightDirection;
+				// Sync direction with Transform rotation (local forward is +Z) so rotating Directional Light in Scene/Inspector rotates illumination
+				Matrix4x4 rotMat = Mathematics::Multiply(Mathematics::MakeRotateXMatrix(obj.rotation.x),
+				                   Mathematics::Multiply(Mathematics::MakeRotateYMatrix(obj.rotation.y),
+				                                         Mathematics::MakeRotateZMatrix(obj.rotation.z)));
+				Vector3 dir = Mathematics::Transform({ 0.0f, 0.0f, 1.0f }, rotMat);
 				float len = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
 				if (len > 0.0001f) { dir.x /= len; dir.y /= len; dir.z /= len; }
+				const_cast<GameObject&>(obj).lightDirection = dir;
 				lights_->GetDirectionalLight().direction = dir;
 				lights_->GetDirectionalLight().color = { obj.lightColor.x, obj.lightColor.y, obj.lightColor.z, 1.0f };
 				lights_->GetDirectionalLight().intensity = obj.lightIntensity;
@@ -2617,7 +2686,6 @@ void EditorSuite::Update(float deltaTime, Input* input)
 	if (!pendingDeletes_.empty()) {
 		ProcessPendingDeletes();
 	}
-#endif
 }
 
 void EditorSuite::CalculateLightViewProjection()
@@ -2759,6 +2827,8 @@ void EditorSuite::RenderShadowPass(ID3D12GraphicsCommandList* cmdList)
 
 	shadowMap_.BeginShadowPass(cmdList);
 
+	Frustum shadowFrustum = Frustum::ExtractFromViewProjection(lightViewProjectionMatrix_);
+
 	for (auto& obj : gameObjects_) {
 		if (!obj.isActive || !obj.hasMesh || !obj.meshEnabled || !obj.castShadow) {
 			continue;
@@ -2780,13 +2850,29 @@ void EditorSuite::RenderShadowPass(ID3D12GraphicsCommandList* cmdList)
 
 		if (!model) continue;
 
-		shadowWorldTransform_.translation = obj.translation;
-		shadowWorldTransform_.rotation = obj.rotation;
-		shadowWorldTransform_.scale = obj.scale;
-		shadowWorldTransform_.rotationQuat = obj.rotationQuat;
-		shadowWorldTransform_.UpdateMatrix(lightViewProjectionMatrix_);
+		if (!obj.shadowTransform) {
+			obj.shadowTransform = std::make_unique<WorldTransform>();
+			obj.shadowTransform->Initialize();
+		}
+		obj.shadowTransform->translation = obj.translation;
+		obj.shadowTransform->rotation = obj.rotation;
+		obj.shadowTransform->scale = obj.scale;
+		obj.shadowTransform->rotationQuat = obj.rotationQuat;
+		obj.shadowTransform->UpdateMatrix(lightViewProjectionMatrix_);
 
-		cmdList->SetGraphicsRootConstantBufferView(1, shadowWorldTransform_.GetGPUAddress());
+		if (enableFrustumCulling_) {
+			AABB worldBox = Frustum::TransformAABB(model->GetLocalAABB(), obj.shadowTransform->matWorld);
+			if (!shadowFrustum.IsAABBVisible(worldBox)) {
+				continue;
+			}
+		}
+
+		cmdList->SetGraphicsRootConstantBufferView(1, obj.shadowTransform->GetGPUAddress());
+		if (obj.editObject3d && obj.editObject3d->GetBonePaletteGPUAddress() != 0) {
+			cmdList->SetGraphicsRootConstantBufferView(4, obj.editObject3d->GetBonePaletteGPUAddress());
+		} else if (obj.gameObject3d && obj.gameObject3d->GetBonePaletteGPUAddress() != 0) {
+			cmdList->SetGraphicsRootConstantBufferView(4, obj.gameObject3d->GetBonePaletteGPUAddress());
+		}
 		model->Draw(cmdList);
 	}
 
@@ -2799,6 +2885,10 @@ void EditorSuite::RenderScene3D(ID3D12GraphicsCommandList* cmdList, Camera& came
 	if (lights_) {
 		lights_->SetCameraPosition(camera.translation);
 	}
+
+	Frustum camFrustum = Frustum::ExtractFromViewProjection(camera.GetViewProjectionMatrix());
+	int visibleCount = 0;
+	int culledCount = 0;
 
 	for (auto& obj : gameObjects_) {
 		if (!obj.isActive || !obj.hasMesh || !obj.meshEnabled) {
@@ -2856,8 +2946,43 @@ void EditorSuite::RenderScene3D(ID3D12GraphicsCommandList* cmdList, Camera& came
 		obj3d->worldTransform.scale = obj.scale;
 		obj3d->worldTransform.rotationQuat = obj.rotationQuat;
 		obj3d->SetCamera(&camera);
-		obj3d->Update(0.0f);
+
+		obj3d->SetCurrentAnimationIndex(static_cast<uint32_t>((std::max)(0, obj.animationIndex)));
+		obj3d->SetAnimationSpeed(obj.animationSpeed);
+		obj3d->SetLoopAnimation(obj.animationLoop);
+
+		if (isEditView) {
+			float animDt = obj.animationPlaying ? currentDeltaTime_ : 0.0f;
+			obj3d->Update(animDt);
+		} else {
+			obj3d->Update(0.0f);
+			if (obj.editObject3d) {
+				obj3d->CopyBonePaletteFrom(*obj.editObject3d);
+			}
+		}
+
+		if (enableFrustumCulling_ && model) {
+			AABB localBox = model->GetLocalAABB();
+			if (model->GetAnimationCount() > 0) {
+				// Expand bounding box slightly for animated meshes so bone motion does not clip prematurely
+				Vector3 halfExt = (localBox.max - localBox.min) * 0.5f;
+				localBox.min = localBox.min - halfExt;
+				localBox.max = localBox.max + halfExt;
+			}
+			AABB worldBox = Frustum::TransformAABB(localBox, obj3d->worldTransform.matWorld);
+			if (!camFrustum.IsAABBVisible(worldBox)) {
+				culledCount++;
+				continue;
+			}
+		}
+
+		visibleCount++;
 		obj3d->Draw(cmdList);
+	}
+
+	if (isEditView) {
+		lastVisibleObjects_ = visibleCount;
+		lastCulledObjects_ = culledCount;
 	}
 }
 
@@ -2872,6 +2997,7 @@ void EditorSuite::RenderViewports(ID3D12GraphicsCommandList* cmdList, bool showP
 	// 0. Directional Light Shadow Pass (Render active casters into shadow map)
 	RenderShadowPass(cmdList);
 
+#ifdef USE_IMGUI
 	// 1. Render to EDIT VIEW (Scene Camera)
 	editViewRT_.BeginRender();
 	editorCamera_.Update();
@@ -2932,7 +3058,7 @@ void EditorSuite::RenderViewports(ID3D12GraphicsCommandList* cmdList, bool showP
 		previewObject3d_->worldTransform.translation = { -rx, -ry, -rz };
 
 		previewObject3d_->SetCamera(&previewCamera_);
-		previewObject3d_->Update(0.0f);
+		previewObject3d_->Update(currentDeltaTime_);
 		previewObject3d_->Draw(cmdList);
 
 		if (lights_) {
@@ -2943,6 +3069,23 @@ void EditorSuite::RenderViewports(ID3D12GraphicsCommandList* cmdList, bool showP
 
 	// 4. Restore to swapchain backbuffer for ImGui UI drawing
 	dxCommon_->BindMainRenderTarget();
+#else
+	// Standalone Release build without ImGui: render Game View directly to the main swapchain backbuffer
+	dxCommon_->BindMainRenderTarget();
+	if (gameCamera_) {
+		gameCamera_->Update();
+		skybox_.Draw(cmdList, *gameCamera_);
+		RenderScene3D(cmdList, *gameCamera_, true);
+		if (activeParticles) {
+			for (auto& obj : gameObjects_) {
+				if (obj.isActive && obj.hasParticleSystem && obj.particleQuad) {
+					obj.particleQuad->PrepareForCamera(*gameCamera_, ParticleQuad::kPassGame);
+					obj.particleQuad->Draw(cmdList, ParticleQuad::kPassGame);
+				}
+			}
+		}
+	}
+#endif
 }
 
 void EditorSuite::DrawEditorUI(float deltaTime, bool& showParticles)
@@ -3326,6 +3469,7 @@ void EditorSuite::DrawHierarchyPanel()
 					else if (obj.type == GameObjectType::SpotLight) icon = "[SpLt]";
 					else if (obj.type == GameObjectType::ParticleSystem) icon = "[Prt]";
 					else if (obj.type == GameObjectType::MapchipGrid) icon = "[Map]";
+					else if (obj.type == GameObjectType::AudioSource || obj.hasAudioSource) icon = "[Aud]";
 
 					std::string label = std::format("{} {}", icon, obj.name);
 					ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_SpanAvailWidth;
@@ -3434,6 +3578,12 @@ void EditorSuite::DrawHierarchyCreationMenu()
 			auto& light = CreateGameObject("Directional Light", GameObjectType::DirectionalLight);
 			light.hasLight = true;
 			light.lightType = GameObject::LightType::Directional;
+			light.lightDirection = { 0.5f, -1.0f, 0.5f };
+			Vector3 d = light.lightDirection;
+			float dLen = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+			if (dLen > 0.0001f) { d.x /= dLen; d.y /= dLen; d.z /= dLen; }
+			light.rotation = { std::asin(std::clamp(-d.y, -1.0f, 1.0f)), std::atan2(d.x, d.z), 0.0f };
+			light.rotationQuat = Quaternion::FromEuler(light.rotation);
 		}
 		if (ImGui::MenuItem("Point Light")) {
 			auto& light = CreateGameObject("Point Light", GameObjectType::PointLight);
@@ -3730,7 +3880,7 @@ void EditorSuite::DrawFloatingBottomBar(const ImVec2& vpPos, const ImVec2& vpSiz
 #ifdef USE_IMGUI
 	ImDrawList* drawList = ImGui::GetWindowDrawList();
 	ImVec2 barPos = ImVec2(vpPos.x + 12.0f, vpPos.y + vpSize.y - 32.0f);
-	drawList->AddRectFilled(barPos, ImVec2(barPos.x + 260.0f, barPos.y + 24.0f), IM_COL32(28, 28, 30, 220), 4.0f);
+	drawList->AddRectFilled(barPos, ImVec2(barPos.x + 415.0f, barPos.y + 24.0f), IM_COL32(28, 28, 30, 220), 4.0f);
 
 	ImGui::SetCursorScreenPos(ImVec2(barPos.x + 8.0f, barPos.y + 2.0f));
 	ImGui::Checkbox("Grid", &showGrid_);
@@ -3744,6 +3894,11 @@ void EditorSuite::DrawFloatingBottomBar(const ImVec2& vpPos, const ImVec2& vpSiz
 	ImGui::SameLine();
 	ImGui::Checkbox("Light", &enableLighting_);
 	ImGui::SetItemTooltip("Toggle viewport scene lighting");
+	ImGui::SameLine();
+	ImGui::Checkbox("Cull", &enableFrustumCulling_);
+	ImGui::SetItemTooltip("Toggle view frustum AABB culling");
+	ImGui::SameLine();
+	ImGui::TextDisabled("| Vis:%d Cul:%d", lastVisibleObjects_, lastCulledObjects_);
 #endif
 }
 
@@ -4312,6 +4467,61 @@ void EditorSuite::DrawInspectorAndDetailsPanel(bool& showParticles)
 						if (ImGui::IsItemDeactivatedAfterEdit()) PushUndoSnapshot();
 						ImGui::SetItemTooltip("UV coordinate rotation angle in radians");
 					}
+
+					// ANIMATOR / SKELETAL ANIMATION SECTION
+					Model* activeModel = obj.editObject3d ? obj.editObject3d->GetModel() : (obj.gameObject3d ? obj.gameObject3d->GetModel() : nullptr);
+					if (activeModel && activeModel->GetAnimationCount() > 0) {
+						if (ImGui::CollapsingHeader("Animator (FBX / glTF Animation)", ImGuiTreeNodeFlags_DefaultOpen)) {
+							uint32_t animCount = static_cast<uint32_t>(activeModel->GetAnimationCount());
+							std::vector<std::string> clipNames;
+							std::vector<const char*> clipNamePtrs;
+							for (uint32_t a = 0; a < animCount; ++a) {
+								clipNames.push_back(std::format("[{}] {}", a, activeModel->GetAnimationName(static_cast<int>(a))));
+							}
+							for (const auto& cn : clipNames) {
+								clipNamePtrs.push_back(cn.c_str());
+							}
+
+							int curClip = std::clamp(obj.animationIndex, 0, static_cast<int>(animCount) - 1);
+							if (ImGui::Combo("Animation Clip", &curClip, clipNamePtrs.data(), static_cast<int>(clipNamePtrs.size()))) {
+								obj.animationIndex = curClip;
+								if (obj.editObject3d) {
+									obj.editObject3d->SetCurrentAnimationIndex(static_cast<uint32_t>(curClip));
+									obj.editObject3d->ResetAnimationTime();
+								}
+								if (obj.gameObject3d) {
+									obj.gameObject3d->SetCurrentAnimationIndex(static_cast<uint32_t>(curClip));
+									obj.gameObject3d->ResetAnimationTime();
+								}
+								isSceneDirty_ = true;
+								PushUndoSnapshot();
+							}
+
+							if (ImGui::Checkbox("Play Animation", &obj.animationPlaying)) {
+								isSceneDirty_ = true;
+								PushUndoSnapshot();
+							}
+							ImGui::SameLine();
+							if (ImGui::Checkbox("Loop##Anim", &obj.animationLoop)) {
+								isSceneDirty_ = true;
+								PushUndoSnapshot();
+							}
+							ImGui::SameLine();
+							if (ImGui::Button("Restart Clip")) {
+								if (obj.editObject3d) obj.editObject3d->ResetAnimationTime();
+								if (obj.gameObject3d) obj.gameObject3d->ResetAnimationTime();
+							}
+
+							if (ImGui::SliderFloat("Playback Speed", &obj.animationSpeed, 0.0f, 3.0f, "%.2fx")) {
+								isSceneDirty_ = true;
+							}
+							if (ImGui::IsItemDeactivatedAfterEdit()) PushUndoSnapshot();
+
+							if (obj.editObject3d) {
+								ImGui::TextDisabled("Current Time: %.2f s  |  Clips: %u", obj.editObject3d->GetAnimationTime(), animCount);
+							}
+						}
+					}
 				}
 
 				// 3. BOX COLLIDER COMPONENT
@@ -4418,8 +4628,18 @@ void EditorSuite::DrawInspectorAndDetailsPanel(bool& showParticles)
 						ImGui::SetItemTooltip("Light brightness multiplier");
 
 						if (obj.lightType == GameObject::LightType::Directional) {
-							DrawVec3Control("Direction", obj.lightDirection, 0.0f);
-							ImGui::SetItemTooltip("Direction vector of light emission");
+							if (DrawVec3Control("Direction", obj.lightDirection, 0.0f)) {
+								Vector3 d = obj.lightDirection;
+								float dLen = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+								if (dLen > 0.0001f) {
+									d = { d.x / dLen, d.y / dLen, d.z / dLen };
+									obj.rotation.x = std::asin(std::clamp(-d.y, -1.0f, 1.0f));
+									obj.rotation.y = std::atan2(d.x, d.z);
+									obj.rotation.z = 0.0f;
+									obj.rotationQuat = Quaternion::FromEuler(obj.rotation);
+								}
+							}
+							ImGui::SetItemTooltip("Direction vector of light emission (linked with Transform Rotation)");
 
 							if (ImGui::Checkbox("Cast Shadows##Light", &obj.lightCastShadow)) { isSceneDirty_ = true; PushUndoSnapshot(); }
 							ImGui::SetItemTooltip("Enable directional light shadow map rendering and attenuation");
@@ -4441,8 +4661,18 @@ void EditorSuite::DrawInspectorAndDetailsPanel(bool& showParticles)
 							ImGui::SetItemTooltip("Attenuation decay exponent");
 
 							if (obj.lightType == GameObject::LightType::Spot) {
-								DrawVec3Control("Direction", obj.lightDirection, 0.0f);
-								ImGui::SetItemTooltip("Direction vector of spot cone");
+								if (DrawVec3Control("Direction", obj.lightDirection, 0.0f)) {
+									Vector3 d = obj.lightDirection;
+									float dLen = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+									if (dLen > 0.0001f) {
+										d = { d.x / dLen, d.y / dLen, d.z / dLen };
+										obj.rotation.x = std::asin(std::clamp(-d.y, -1.0f, 1.0f));
+										obj.rotation.y = std::atan2(d.x, d.z);
+										obj.rotation.z = 0.0f;
+										obj.rotationQuat = Quaternion::FromEuler(obj.rotation);
+									}
+								}
+								ImGui::SetItemTooltip("Direction vector of spot cone (linked with Transform Rotation)");
 								if (ImGui::SliderFloat("Spot Angle", &obj.lightSpotAngle, 1.0f, 90.0f)) isSceneDirty_ = true;
 								if (ImGui::IsItemDeactivatedAfterEdit()) PushUndoSnapshot();
 								ImGui::SetItemTooltip("Cone half-angle of spot light in degrees");
@@ -4717,6 +4947,109 @@ void EditorSuite::DrawInspectorAndDetailsPanel(bool& showParticles)
 					DrawMapchipInspectorSection();
 				}
 
+				// 9b. AUDIO SOURCE COMPONENT (XAudio2 + Windows Media Foundation: .wav / .mp3 / .m4a / .wma)
+				if (obj.hasAudioSource || obj.type == GameObjectType::AudioSource) {
+					obj.hasAudioSource = true;
+					if (ImGui::CollapsingHeader("Audio Source (XAudio2 + Media Foundation)", ImGuiTreeNodeFlags_DefaultOpen)) {
+						// Discover available audio files in Resources/Sound and Assets/Audio
+						std::vector<std::string> audioClips;
+						audioClips.push_back("None");
+						std::vector<std::string> soundDirs = { "Resources/Sound", "Resources", "Assets/Audio", "Assets" };
+						for (const auto& dir : soundDirs) {
+							std::error_code ec;
+							if (std::filesystem::exists(dir, ec) && std::filesystem::is_directory(dir, ec)) {
+								for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+									if (!entry.is_regular_file(ec)) continue;
+									std::string ext = entry.path().extension().string();
+									std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+									if (ext == ".wav" || ext == ".mp3" || ext == ".m4a" || ext == ".wma") {
+										std::string relPath = entry.path().generic_string();
+										if (std::find(audioClips.begin(), audioClips.end(), relPath) == audioClips.end()) {
+											audioClips.push_back(relPath);
+										}
+									}
+								}
+							}
+						}
+
+						int curClipIdx = 0;
+						for (size_t cIdx = 0; cIdx < audioClips.size(); ++cIdx) {
+							if (audioClips[cIdx] == obj.audioClipName) {
+								curClipIdx = static_cast<int>(cIdx);
+								break;
+							}
+						}
+
+						std::vector<const char*> clipPtrs;
+						for (const auto& s : audioClips) clipPtrs.push_back(s.c_str());
+
+						if (ImGui::Combo("Audio ClipPreset", &curClipIdx, clipPtrs.data(), static_cast<int>(clipPtrs.size()))) {
+							obj.audioClipName = audioClips[curClipIdx];
+							if (obj.audioClipName != "None" && !obj.audioClipName.empty()) {
+								obj.runtimeSoundHandle = Audio::GetInstance()->LoadAudio(obj.audioClipName);
+							}
+							isSceneDirty_ = true;
+							PushUndoSnapshot();
+						}
+						ImGui::SetItemTooltip("Select audio file (.wav, .mp3, .m4a, .wma) decoded via Media Foundation & cached in Audio::LoadAudio");
+
+						char clipBuf[256] = {};
+						strncpy_s(clipBuf, obj.audioClipName.c_str(), sizeof(clipBuf) - 1);
+						if (ImGui::InputText("Clip Path", clipBuf, sizeof(clipBuf))) {
+							obj.audioClipName = clipBuf;
+							isSceneDirty_ = true;
+						}
+						if (ImGui::IsItemDeactivatedAfterEdit()) {
+							if (obj.audioClipName != "None" && !obj.audioClipName.empty()) {
+								obj.runtimeSoundHandle = Audio::GetInstance()->LoadAudio(obj.audioClipName);
+							}
+							PushUndoSnapshot();
+						}
+
+						if (ImGui::SliderFloat("Volume", &obj.audioVolume, 0.0f, 1.0f, "%.2f")) {
+							if (obj.runtimeVoiceHandle != 0) {
+								Audio::GetInstance()->SetVolume(obj.runtimeVoiceHandle, obj.audioVolume);
+							}
+							isSceneDirty_ = true;
+						}
+						if (ImGui::IsItemDeactivatedAfterEdit()) PushUndoSnapshot();
+
+						if (ImGui::Checkbox("Play On Awake", &obj.audioPlayOnAwake)) {
+							isSceneDirty_ = true;
+							PushUndoSnapshot();
+						}
+						ImGui::SameLine();
+						if (ImGui::Checkbox("Loop##Audio", &obj.audioLoop)) {
+							isSceneDirty_ = true;
+							PushUndoSnapshot();
+						}
+
+						bool isPlayingNow = (obj.runtimeVoiceHandle != 0) && Audio::GetInstance()->IsPlaying(obj.runtimeVoiceHandle);
+						if (isPlayingNow) {
+							ImGui::TextColored(ImVec4(0.3f, 0.95f, 0.45f, 1.0f), "Status: Playing (Voice #%u)", obj.runtimeVoiceHandle);
+						} else {
+							ImGui::TextDisabled("Status: Stopped");
+						}
+
+						if (ImGui::Button("[ > Play Preview ]", ImVec2(135.0f, 24.0f))) {
+							if (obj.audioClipName != "None" && !obj.audioClipName.empty()) {
+								if (obj.runtimeVoiceHandle != 0) {
+									Audio::GetInstance()->StopAudio(obj.runtimeVoiceHandle);
+								}
+								obj.runtimeSoundHandle = Audio::GetInstance()->LoadAudio(obj.audioClipName);
+								obj.runtimeVoiceHandle = Audio::GetInstance()->PlayAudio(obj.runtimeSoundHandle, obj.audioLoop, obj.audioVolume);
+							}
+						}
+						ImGui::SameLine();
+						if (ImGui::Button("[ [] Stop ]##AudioStop", ImVec2(100.0f, 24.0f))) {
+							if (obj.runtimeVoiceHandle != 0) {
+								Audio::GetInstance()->StopAudio(obj.runtimeVoiceHandle);
+								obj.runtimeVoiceHandle = 0;
+							}
+						}
+					}
+				}
+
 				// 10. SCRIPT COMPONENTS
 				EnsureEditModeScriptInstances();
 				for (size_t sIdx = 0; sIdx < obj.scripts.size(); ) {
@@ -4895,6 +5228,7 @@ void EditorSuite::DrawInspectorAndDetailsPanel(bool& showParticles)
 					if (ImGui::MenuItem("Camera")) { obj.hasCamera = true; isSceneDirty_ = true; PushUndoSnapshot(); }
 					if (ImGui::MenuItem("Light")) { obj.hasLight = true; isSceneDirty_ = true; PushUndoSnapshot(); }
 					if (ImGui::MenuItem("Particle System")) { obj.hasParticleSystem = true; EnsureParticleQuadInitialized(obj); isSceneDirty_ = true; PushUndoSnapshot(); }
+					if (ImGui::MenuItem("Audio Source")) { obj.hasAudioSource = true; isSceneDirty_ = true; PushUndoSnapshot(); }
 					ImGui::Separator();
 					if (ImGui::BeginMenu("Script")) {
 						const auto& registeredScripts = scriptModule_.GetRegisteredNames();
@@ -5020,6 +5354,25 @@ void EditorSuite::DrawInspectorAndDetailsPanel(bool& showParticles)
 							PushUndoSnapshot();
 							LogMessage(std::format("[Scene] Spawned 3D Model '{}' from '{}'", obj.name, obj.modelPath), 0);
 						}
+					} else if (ext == ".wav" || ext == ".mp3" || ext == ".m4a" || ext == ".wma") {
+						ImGui::Separator();
+						ImGui::Text("Audio Clip Preview (XAudio2 + Media Foundation):");
+						if (ImGui::Button("[ > Play Audio Clip ]", ImVec2(-1.0f, 26.0f))) {
+							uint32_t sh = Audio::GetInstance()->LoadAudio(selectedAssetPath_.string());
+							Audio::GetInstance()->PlayAudio(sh, false, 1.0f);
+						}
+						if (ImGui::Button("[ [] Stop All Audio ]", ImVec2(-1.0f, 26.0f))) {
+							Audio::GetInstance()->StopAllAudio();
+						}
+						if (ImGui::Button("[ Create Audio Source in Scene ]", ImVec2(-1.0f, 26.0f))) {
+							auto& aud = CreateGameObject(selectedAssetPath_.stem().string(), GameObjectType::AudioSource);
+							aud.hasAudioSource = true;
+							aud.audioClipName = selectedAssetPath_.generic_string();
+							aud.audioPlayOnAwake = true;
+							aud.runtimeSoundHandle = Audio::GetInstance()->LoadAudio(aud.audioClipName);
+							isSceneDirty_ = true;
+							PushUndoSnapshot();
+						}
 					} else if (ext == ".cpp" || ext == ".h" || ext == ".hpp") {
 						ImGui::Separator();
 						ImGui::Text("C++ Script Source File:");
@@ -5036,6 +5389,8 @@ void EditorSuite::DrawInspectorAndDetailsPanel(bool& showParticles)
 				ImGui::Text("Total GameObjects: %zu", gameObjects_.size());
 				ImGui::Text("Active Cameras: %s", gameCamera_ ? "1" : "0");
 				ImGui::Text("Lighting: %s", enableLighting_ ? "Enabled" : "Disabled");
+				ImGui::Checkbox("Frustum Culling", &enableFrustumCulling_);
+				ImGui::Text("Frustum Culling Stats: %d Visible / %d Culled", lastVisibleObjects_, lastCulledObjects_);
 
 				ImGui::EndTabItem();
 			} else {
@@ -5478,6 +5833,14 @@ void EditorSuite::DrawBuildSettingsModal()
 			if (ExportStandaloneGame()) {
 				showBuildSettingsModal_ = false;
 			}
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("[ Open Output Folder ]", ImVec2(160.0f, 28.0f))) {
+			std::filesystem::path outDir(buildOutputDirBuf_);
+			std::error_code ec;
+			std::filesystem::create_directories(outDir, ec);
+			std::filesystem::path absOut = std::filesystem::absolute(outDir, ec);
+			ShellExecuteW(NULL, L"open", absOut.wstring().c_str(), NULL, NULL, SW_SHOWNORMAL);
 		}
 		ImGui::SameLine();
 		if (ImGui::Button("Cancel", ImVec2(90.0f, 28.0f))) {
@@ -6063,6 +6426,18 @@ void EditorSuite::StartPlayMode()
 		}
 	}
 
+	// 3. Start Audio Sources configured with Play On Awake (using cached LoadAudio / PlayAudio separation)
+	Audio::GetInstance()->StopAllAudio();
+	for (auto& obj : gameObjects_) {
+		obj.runtimeVoiceHandle = 0;
+		if (obj.isActive && (obj.hasAudioSource || obj.type == GameObjectType::AudioSource)) {
+			if (obj.audioPlayOnAwake && !obj.audioClipName.empty() && obj.audioClipName != "None") {
+				obj.runtimeSoundHandle = Audio::GetInstance()->LoadAudio(obj.audioClipName);
+				obj.runtimeVoiceHandle = Audio::GetInstance()->PlayAudio(obj.runtimeSoundHandle, obj.audioLoop, obj.audioVolume);
+			}
+		}
+	}
+
 	if (!pendingDeletes_.empty()) {
 		ProcessPendingDeletes();
 	}
@@ -6070,6 +6445,12 @@ void EditorSuite::StartPlayMode()
 
 void EditorSuite::StopPlayMode()
 {
+	// Stop all active runtime audio voices when exiting Play Mode
+	Audio::GetInstance()->StopAllAudio();
+	for (auto& obj : gameObjects_) {
+		obj.runtimeVoiceHandle = 0;
+	}
+
 	RefreshAllScriptObjectViews();
 
 	// 1. Call OnDestroy() and destroy all active script instances via GameScripts DLL

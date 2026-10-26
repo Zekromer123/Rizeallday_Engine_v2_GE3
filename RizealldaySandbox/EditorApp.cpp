@@ -1,7 +1,8 @@
-#include "EditorApp.h"
+﻿#include "EditorApp.h"
 #include "scene/EditorScene.h"
 #include "scene/TitleScene.h"
 #include <cstring>
+#include <filesystem>
 #include <format>
 #include <fstream>
 
@@ -14,13 +15,21 @@ void EditorApp::Initialize() {
 	}
 
 	// 1. Initialize Engine & Framework Services
-	windowTitle_ = "Rizeallday Engine v2";
+	windowTitle_ = "Rizeallday Engine v2 - Editor Suite (Edit View / Game View / Mapchip)";
 	windowWidth_ = 1280;
 	windowHeight_ = 720;
 	Framework::Initialize();
 
-	// 2. Queue the initial application scene (EditorScene)
-	sceneManager_.ChangeScene(std::make_unique<EditorScene>());
+	// 2. Queue the initial application scene:
+	//    - If standalone exported game config exists or running automated scene transition test, open EditorScene directly.
+	//    - Otherwise start with TitleScene (3.2s Rizeallday Engine splash screen -> transitions to EditorScene).
+	bool isExportedGame = std::filesystem::exists("BuildConfig.json") ||
+	                      (std::strstr(GetCommandLineA(), "--standalone") != nullptr);
+	if (testMode_ || isExportedGame) {
+		sceneManager_.ChangeScene(std::make_unique<EditorScene>());
+	} else {
+		sceneManager_.ChangeScene(std::make_unique<TitleScene>());
+	}
 }
 
 void EditorApp::Update(float deltaTime) {

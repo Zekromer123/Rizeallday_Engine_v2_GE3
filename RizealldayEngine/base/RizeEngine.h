@@ -45,6 +45,7 @@
 #include "math/Matrix4x4.h"
 #include "math/MathUtil.h"
 #include "math/VertexData.h"
+#include "math/Frustum.h"
 
 // Framework
 #include "framework/Framework.h"
@@ -80,8 +81,8 @@ void Finalize();
 /// Subsystem accessors
 DirectXCommon* GetDirectXCommon();
 DXCManager* GetDXCManager();
+GraphicPipeline* GetGraphicPipeline();
 Input* GetInput();
 Audio* GetAudio();
 
 } // namespace RizeEngine
-

@@ -12,10 +12,20 @@
 #include "math/Vector4.h"
 #include "math/Matrix4x4.h"
 #include "math/Quaternion.h"
+#include "math/Frustum.h"
 #include "base/ScriptAPI.h"
 #include "base/ScriptBase.h"
 #include "base/ScriptModule.h"
+#ifdef USE_IMGUI
 #include <imgui.h>
+#else
+struct ImVec2 {
+	float x = 0.0f;
+	float y = 0.0f;
+	constexpr ImVec2() = default;
+	constexpr ImVec2(float _x, float _y) : x(_x), y(_y) {}
+};
+#endif
 #include <string>
 #include <vector>
 #include <map>
@@ -123,6 +133,13 @@ struct GameObject {
 	float uvRotation = 0.0f;
 	std::unique_ptr<Object3d> editObject3d;
 	std::unique_ptr<Object3d> gameObject3d;
+	std::unique_ptr<WorldTransform> shadowTransform;
+
+	// Animator / Skeletal Animation Component
+	int animationIndex = 0;
+	float animationSpeed = 1.0f;
+	bool animationLoop = true;
+	bool animationPlaying = true;
 
 	// Box Collider Component
 	bool hasBoxCollider = false;
@@ -216,6 +233,8 @@ struct GameObject {
 	float audioVolume = 1.0f;
 	bool audioPlayOnAwake = false;
 	bool audioLoop = false;
+	uint32_t runtimeSoundHandle = 0;
+	uint32_t runtimeVoiceHandle = 0;
 
 	// C++ Script Component
 	struct ScriptSavedFieldValue {
@@ -364,7 +383,13 @@ public:
 
 	// Standalone Game Exporter & Preview Mode
 	bool ExportStandaloneGame();
-	bool IsStandaloneMode() const { return isStandaloneGameMode_ || isStandalonePreview_; }
+	bool IsStandaloneMode() const {
+#ifdef USE_IMGUI
+		return isStandaloneGameMode_ || isStandalonePreview_;
+#else
+		return true;
+#endif
+	}
 	void SetStandaloneGameMode(bool enable) { isStandaloneGameMode_ = enable; }
 	void ToggleStandalonePreview();
 
@@ -552,6 +577,9 @@ private:
 	bool showGizmos_ = true;
 	bool showWireframe_ = false;
 	bool enableLighting_ = true;
+	bool enableFrustumCulling_ = true;
+	int lastVisibleObjects_ = 0;
+	int lastCulledObjects_ = 0;
 	bool isEditingColliderBounds_ = false;
 
 	// Navigation

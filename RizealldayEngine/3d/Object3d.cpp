@@ -7,6 +7,7 @@
 #include "3d/Model.h"
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 DirectXCommon* Object3d::sDxCommon_ = nullptr;
 GraphicPipeline* Object3d::sPipeline_ = nullptr;
@@ -129,6 +130,13 @@ void Object3d::PlayAnimation(int animIndex, bool loop, float speed) {
     animationTime_ = 0.0f;
 }
 
+void Object3d::SetCurrentAnimationIndex(int animIndex) {
+    if (currentAnimationIndex_ != animIndex) {
+        currentAnimationIndex_ = animIndex;
+        animationTime_ = 0.0f;
+    }
+}
+
 void Object3d::SetAnimationTime(float time) {
     animationTime_ = time;
 }
@@ -138,6 +146,17 @@ float Object3d::GetAnimationDuration() const {
         return model_->GetAnimationDuration(currentAnimationIndex_);
     }
     return 0.0f;
+}
+
+void Object3d::CopyBonePaletteFrom(const Object3d& other) {
+    animationTime_ = other.animationTime_;
+    currentAnimationIndex_ = other.currentAnimationIndex_;
+    animationSpeed_ = other.animationSpeed_;
+    isAnimationLoop_ = other.isAnimationLoop_;
+    boneTransforms_ = other.boneTransforms_;
+    if (mappedBonePalette_ && other.mappedBonePalette_) {
+        std::memcpy(mappedBonePalette_, other.mappedBonePalette_, sizeof(Matrix4x4) * 128);
+    }
 }
 
 void Object3d::Update(float deltaTime) {
@@ -153,6 +172,9 @@ void Object3d::Update(float deltaTime) {
         if (duration > 0.0f) {
             if (isAnimationLoop_) {
                 animationTime_ = std::fmod(animationTime_, duration);
+                if (animationTime_ < 0.0f) {
+                    animationTime_ += duration;
+                }
             } else if (animationTime_ > duration) {
                 animationTime_ = duration;
             }
@@ -169,7 +191,7 @@ void Object3d::Draw(ID3D12GraphicsCommandList* cmdList) {
         return;
     }
 
-    // Bind pipeline dengan blend mode yang sesuai untuk object ini
+    // Bind pipeline with matching blend mode for this object
     if (sPipeline_) {
         GeometryShaderMode gsMode = geometryShaderMode;
         if (gsMode == GeometryShaderMode::None && useGeometryShader) {

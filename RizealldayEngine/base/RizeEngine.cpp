@@ -93,8 +93,11 @@ bool IsDeviceLost() {
 static bool sFrameActive = false;
 
 void BeginFrame() {
-	// Input update
+	// Input & Audio update
 	sInput->Update();
+	if (sAudio) {
+		sAudio->Update();
+	}
 
 	if (!sDxCommon || sDxCommon->IsDeviceLost()) {
 		sFrameActive = false;
@@ -148,6 +151,10 @@ DXCManager* GetDXCManager() {
 	return sDxcManager.get();
 }
 
+GraphicPipeline* GetGraphicPipeline() {
+	return sGraphicPipeline.get();
+}
+
 Input* GetInput() {
 	return sInput;
 }
@@ -157,4 +164,3 @@ Audio* GetAudio() {
 }
 
 } // namespace RizeEngine
-

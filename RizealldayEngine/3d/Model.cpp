@@ -100,7 +100,7 @@ uint32_t Model::GetTotalTriangleCount() const {
     return total;
 }
 
-void Model::GetBounds(Vector3& outCenter, float& outMaxExtent) const {
+void Model::ComputeCachedLocalAABB() {
     Vector3 minPos = { 1e9f, 1e9f, 1e9f };
     Vector3 maxPos = { -1e9f, -1e9f, -1e9f };
     bool hasVerts = false;
@@ -147,20 +147,52 @@ void Model::GetBounds(Vector3& outCenter, float& outMaxExtent) const {
     }
 
     if (!hasVerts) {
-        outCenter = { 0.0f, 0.0f, 0.0f };
-        outMaxExtent = 1.0f;
+        localMin_ = { -0.5f, -0.5f, -0.5f };
+        localMax_ = {  0.5f,  0.5f,  0.5f };
+        hasValidBounds_ = false;
         return;
     }
 
-    outCenter = {
-        (minPos.x + maxPos.x) * 0.5f,
-        (minPos.y + maxPos.y) * 0.5f,
-        (minPos.z + maxPos.z) * 0.5f
-    };
-    float dx = maxPos.x - minPos.x;
-    float dy = maxPos.y - minPos.y;
-    float dz = maxPos.z - minPos.z;
-    outMaxExtent = (std::max)({ dx, dy, dz, 0.001f });
+    // Pad animated/skinned models slightly so animated limb motion stays inside the bounding box
+    if (hasBones && !animations_.empty()) {
+        float ex = (maxPos.x - minPos.x) * 0.25f + 0.25f;
+        float ey = (maxPos.y - minPos.y) * 0.25f + 0.25f;
+        float ez = (maxPos.z - minPos.z) * 0.25f + 0.25f;
+        minPos.x -= ex; minPos.y -= ey; minPos.z -= ez;
+        maxPos.x += ex; maxPos.y += ey; maxPos.z += ez;
+    }
+
+    // Ensure non-zero thickness along thin axes (e.g. Planes or Quads)
+    if (maxPos.x - minPos.x < 0.02f) { minPos.x -= 0.01f; maxPos.x += 0.01f; }
+    if (maxPos.y - minPos.y < 0.02f) { minPos.y -= 0.01f; maxPos.y += 0.01f; }
+    if (maxPos.z - minPos.z < 0.02f) { minPos.z -= 0.01f; maxPos.z += 0.01f; }
+
+    localMin_ = minPos;
+    localMax_ = maxPos;
+    hasValidBounds_ = true;
+}
+
+void Model::GetLocalAABB(Vector3& outMin, Vector3& outMax) const {
+    outMin = localMin_;
+    outMax = localMax_;
+}
+
+void Model::GetBounds(Vector3& outCenter, float& outMaxExtent) const {
+    if (hasValidBounds_) {
+        outCenter = {
+            (localMin_.x + localMax_.x) * 0.5f,
+            (localMin_.y + localMax_.y) * 0.5f,
+            (localMin_.z + localMax_.z) * 0.5f
+        };
+        float dx = localMax_.x - localMin_.x;
+        float dy = localMax_.y - localMin_.y;
+        float dz = localMax_.z - localMin_.z;
+        outMaxExtent = (std::max)({ dx, dy, dz, 0.001f });
+        return;
+    }
+
+    outCenter = { 0.0f, 0.0f, 0.0f };
+    outMaxExtent = 1.0f;
 }
 
 Model* Model::CreateCube() {
@@ -372,7 +404,6 @@ void Model::LoadAssimpModel(const std::string& filePath) {
         aiProcess_JoinIdenticalVertices |
         aiProcess_LimitBoneWeights);
 
-    
     if (!scene || (scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE) || !scene->mRootNode) {
         std::string err = importer.GetErrorString();
         Log::GetInstance()->logOutput("Assimp Load Error: " + err + "\n");
@@ -381,10 +412,12 @@ void Model::LoadAssimpModel(const std::string& filePath) {
 
     // 1. Build Node Hierarchy
     rootNode_ = BuildNodeHierarchy(scene->mRootNode);
-    globalInverseTransform_ = Mathematics::Inverse(AiToRizeMatrix(scene->mRootNode->mTransformation));
+    Matrix4x4 rootMat = AiToRizeMatrix(scene->mRootNode->mTransformation);
+    globalInverseTransform_ = Mathematics::Inverse(rootMat);
 
-    // Collect accumulated node transform for each mesh index in the Assimp hierarchy
+    // Collect accumulated node transform and owning node name for each mesh index in the Assimp hierarchy
     std::vector<Matrix4x4> meshNodeTransforms(scene->mNumMeshes, Mathematics::MakeIdentity4x4());
+    std::vector<std::string> meshNodeNames(scene->mNumMeshes);
     auto collectMeshNodeTransforms = [&](auto& self, const aiNode* node, const Matrix4x4& parentMat) -> void {
         if (!node) return;
         Matrix4x4 globalMat = Mathematics::Multiply(AiToRizeMatrix(node->mTransformation), parentMat);
@@ -392,6 +425,7 @@ void Model::LoadAssimpModel(const std::string& filePath) {
             unsigned int meshIdx = node->mMeshes[m];
             if (meshIdx < meshNodeTransforms.size()) {
                 meshNodeTransforms[meshIdx] = globalMat;
+                meshNodeNames[meshIdx] = node->mName.C_Str();
             }
         }
         for (unsigned int c = 0; c < node->mNumChildren; ++c) {
@@ -446,7 +480,7 @@ void Model::LoadAssimpModel(const std::string& filePath) {
             vertex.boneWeights[0] = vertex.boneWeights[1] = vertex.boneWeights[2] = vertex.boneWeights[3] = 0.0f;
         }
 
-        // Read bones
+        // Read bones (or create virtual node bone when the FBX has node animations without skin weights)
         if (mesh->mNumBones > 0) {
             std::vector<std::vector<std::pair<uint32_t, float>>> vertexBones(mesh->mNumVertices);
             for (unsigned int b = 0; b < mesh->mNumBones; b++) {
@@ -493,6 +527,25 @@ void Model::LoadAssimpModel(const std::string& filePath) {
                     }
                 }
             }
+        } else if (scene->mNumAnimations > 0 && !meshNodeNames[i].empty()) {
+            const std::string& nodeName = meshNodeNames[i];
+            uint32_t boneId = 0;
+            auto it = boneInfoMap_.find(nodeName);
+            if (it == boneInfoMap_.end()) {
+                boneId = static_cast<uint32_t>(boneList_.size());
+                BoneInfo info;
+                info.name = nodeName;
+                info.id = boneId;
+                info.offsetMatrix = Mathematics::Multiply(Mathematics::Inverse(nodeMat), rootMat);
+                boneInfoMap_[nodeName] = info;
+                boneList_.push_back(info);
+            } else {
+                boneId = it->second.id;
+            }
+            for (unsigned int v = 0; v < mesh->mNumVertices; v++) {
+                meshData.vertices[v].boneIndices[0] = boneId;
+                meshData.vertices[v].boneWeights[0] = 1.0f;
+            }
         }
         
         // Indices
@@ -527,6 +580,9 @@ void Model::LoadAssimpModel(const std::string& filePath) {
         aiAnimation* anim = scene->mAnimations[a];
         AnimationClip clip;
         clip.name = anim->mName.C_Str();
+        if (clip.name.empty()) {
+            clip.name = std::format("Animation_{}", a);
+        }
         clip.duration = static_cast<float>(anim->mDuration);
         clip.ticksPerSecond = static_cast<float>(anim->mTicksPerSecond != 0.0 ? anim->mTicksPerSecond : 25.0);
         
@@ -652,6 +708,8 @@ void Model::LoadOBJ(const std::string& directoryPath, const std::string& filenam
 }
 
 void Model::CreateGPUBuffers() {
+    ComputeCachedLocalAABB();
+
     if (!sDxCommon_ || sDxCommon_->IsDeviceLost()) {
         return;
     }
@@ -792,7 +850,6 @@ void Model::ReadNodeHierarchy(float animTimeTicks, const AnimationClip* pAnim, c
         }
     }
 
-
     for (const auto& child : node.children) {
         ReadNodeHierarchy(animTimeTicks, pAnim, child, globalTransform, outMatrices);
     }
@@ -904,4 +961,12 @@ float Model::GetAnimationDuration(int animIndex) const {
         return animations_[animIndex].duration / tps;
     }
     return 0.0f;
+}
+
+const std::string& Model::GetAnimationName(int animIndex) const {
+    static const std::string kEmpty = "";
+    if (animIndex >= 0 && animIndex < static_cast<int>(animations_.size())) {
+        return animations_[animIndex].name;
+    }
+    return kEmpty;
 }

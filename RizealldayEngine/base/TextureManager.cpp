@@ -19,6 +19,15 @@ void TextureManager::Initialize(DirectXCommon* dxCommon)
 	nextIndex_ = 1; // 0 reserved for ImGui
 	textureCache_.clear();
 
+	fallbackMetadata_ = {};
+	fallbackMetadata_.width = 1;
+	fallbackMetadata_.height = 1;
+	fallbackMetadata_.depth = 1;
+	fallbackMetadata_.arraySize = 1;
+	fallbackMetadata_.mipLevels = 1;
+	fallbackMetadata_.format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	fallbackMetadata_.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;
+
 	HRESULT hrAlloc = dxCommon_->GetDevice()->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&uploadAllocator_));
 	assert(SUCCEEDED(hrAlloc));
 	HRESULT hrList = dxCommon_->GetDevice()->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, uploadAllocator_.Get(), nullptr, IID_PPV_ARGS(&uploadCommandList_));
@@ -60,6 +69,8 @@ void TextureManager::Initialize(DirectXCommon* dxCommon)
 			dxCommon_->GetDevice()->CreateShaderResourceView(resource.Get(), &srvDesc, srvCPUHandle);
 
 			textureResources_[handle] = resource;
+			textureMetadatas_[handle] = whiteImg.GetMetadata();
+			fallbackMetadata_ = whiteImg.GetMetadata();
 		}
 
 		CreateDefaultCubemapTexture();
@@ -196,6 +207,7 @@ uint32_t TextureManager::LoadTexture(const std::string& filePath)
 	dxCommon_->GetDevice()->CreateShaderResourceView(resource.Get(), &srvDesc, srvCPUHandle);
 
 	textureResources_[handle] = resource;
+	textureMetadatas_[handle] = metadata;
 	textureCache_[normKey] = handle;
 
 	return handle;
@@ -300,6 +312,7 @@ uint32_t TextureManager::LoadPreviewTexture(const std::string& filePath)
 	dxCommon_->GetDevice()->CreateShaderResourceView(resource.Get(), &srvDesc, srvCPUHandle);
 
 	previewTextureResource_ = resource;
+	previewTextureMetadata_ = metadata;
 	currentPreviewTexturePath_ = normKey;
 	currentPreviewSrvIndex_ = targetSrvIndex;
 	return currentPreviewSrvIndex_;
@@ -326,6 +339,63 @@ D3D12_GPU_DESCRIPTOR_HANDLE TextureManager::GetGPUHandle(uint32_t textureHandle)
 		return dxCommon_->GetSrvGPUDescriptorHandle(defaultWhiteHandle_);
 	}
 	return gpuHandle;
+}
+
+const DirectX::TexMetadata& TextureManager::GetMetaData(uint32_t textureHandle) const
+{
+	if (textureHandle < kMaxTextures && textureResources_[textureHandle] != nullptr) {
+		return textureMetadatas_[textureHandle];
+	}
+	if (textureHandle >= kPreviewSrvBaseIndex &&
+		textureHandle < (kPreviewSrvBaseIndex + kPreviewSrvSlotCount) &&
+		previewTextureResource_ != nullptr) {
+		return previewTextureMetadata_;
+	}
+	if (defaultWhiteHandle_ < kMaxTextures && textureResources_[defaultWhiteHandle_] != nullptr) {
+		return textureMetadatas_[defaultWhiteHandle_];
+	}
+	return fallbackMetadata_;
+}
+
+const DirectX::TexMetadata& TextureManager::GetMetaData(const std::string& filePath)
+{
+	uint32_t handle = LoadTexture(filePath);
+	return GetMetaData(handle);
+}
+
+Vector2 TextureManager::GetTextureSize(uint32_t textureHandle) const
+{
+	const DirectX::TexMetadata& metadata = GetMetaData(textureHandle);
+	return Vector2{
+		static_cast<float>(metadata.width),
+		static_cast<float>(metadata.height)
+	};
+}
+
+uint32_t TextureManager::GetTextureHandleFromGPUDescriptor(D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle) const
+{
+	if (!dxCommon_ || gpuHandle.ptr == 0 || !dxCommon_->GetSrvDescriptorHeap()) {
+		return 0;
+	}
+	D3D12_GPU_DESCRIPTOR_HANDLE baseHandle = dxCommon_->GetSrvDescriptorHeap()->GetGPUDescriptorHandleForHeapStart();
+	uint32_t descriptorSize = dxCommon_->GetSrvDescriptorSize();
+	if (descriptorSize == 0 || gpuHandle.ptr < baseHandle.ptr) {
+		return 0;
+	}
+	uint64_t diff = gpuHandle.ptr - baseHandle.ptr;
+	if (diff % descriptorSize != 0) {
+		return 0;
+	}
+	uint32_t index = static_cast<uint32_t>(diff / descriptorSize);
+	if (index < kMaxTextures && textureResources_[index] != nullptr) {
+		return index;
+	}
+	if (index >= kPreviewSrvBaseIndex &&
+		index < (kPreviewSrvBaseIndex + kPreviewSrvSlotCount) &&
+		previewTextureResource_ != nullptr) {
+		return index;
+	}
+	return 0;
 }
 
 void TextureManager::SetDescriptorHeaps(ID3D12GraphicsCommandList* cmdList)
@@ -466,6 +536,7 @@ uint32_t TextureManager::CreateDefaultCubemapTexture()
 	dxCommon_->GetDevice()->CreateShaderResourceView(resource.Get(), &srvDesc, srvCPUHandle);
 
 	textureResources_[handle] = resource;
+	textureMetadatas_[handle] = cubeImg.GetMetadata();
 	return handle;
 }
 
@@ -547,6 +618,7 @@ uint32_t TextureManager::LoadCubemapTexture(const std::string& filePath)
 	dxCommon_->GetDevice()->CreateShaderResourceView(resource.Get(), &srvDesc, srvCPUHandle);
 
 	textureResources_[handle] = resource;
+	textureMetadatas_[handle] = metadata;
 	textureCache_[filePath] = handle;
 	return handle;
 }

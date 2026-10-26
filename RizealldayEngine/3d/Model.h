@@ -7,6 +7,7 @@
 #include <memory>
 #include "math/VertexData.h"
 #include "math/MathUtil.h"
+#include "math/Frustum.h"
 
 class DirectXCommon;
 class TextureManager;
@@ -79,12 +80,15 @@ public:
 	uint32_t GetTotalVertexCount() const;
 	uint32_t GetTotalTriangleCount() const;
 	void GetBounds(Vector3& outCenter, float& outMaxExtent) const;
+	void GetLocalAABB(Vector3& outMin, Vector3& outMax) const;
+	AABB GetLocalAABB() const { return { localMin_, localMax_ }; }
 
 	bool HasBones() const { return !boneInfoMap_.empty(); }
 	size_t GetBoneCount() const { return boneInfoMap_.size(); }
 	const std::vector<BoneInfo>& GetBoneList() const { return boneList_; }
 	size_t GetAnimationCount() const { return animations_.size(); }
 	float GetAnimationDuration(int animIndex = 0) const;
+	const std::string& GetAnimationName(int animIndex = 0) const;
 
 	void CalculateBoneTransforms(float timeInSeconds, int animIndex, std::vector<Matrix4x4>& outMatrices) const;
 
@@ -96,6 +100,7 @@ private:
 	void LoadAssimpModel(const std::string& filePath);
 	void LoadOBJ(const std::string& directoryPath, const std::string& filename);
 	void CreateGPUBuffers();
+	void ComputeCachedLocalAABB();
 
 	NodeData BuildNodeHierarchy(void* pAiNode);
 	void ReadNodeHierarchy(float animTimeTicks, const AnimationClip* pAnim, const NodeData& node, const Matrix4x4& parentTransform, std::vector<Matrix4x4>& outMatrices) const;
@@ -111,6 +116,9 @@ private:
 	Matrix4x4 globalInverseTransform_ = Mathematics::MakeIdentity4x4();
 	std::vector<AnimationClip> animations_;
 	bool lockRootMotion_ = false;
+	Vector3 localMin_ = { -0.5f, -0.5f, -0.5f };
+	Vector3 localMax_ = {  0.5f,  0.5f,  0.5f };
+	bool hasValidBounds_ = false;
 	
 	static DirectXCommon* sDxCommon_;
 
