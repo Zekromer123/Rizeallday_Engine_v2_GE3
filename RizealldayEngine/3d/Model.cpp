@@ -236,12 +236,14 @@ Model* Model::CreateCube() {
             vd.texcoord = uvs[v];
             mesh.vertices.push_back(vd);
         }
+        // Corners are listed counter-clockwise seen from outside; D3D treats clockwise as front-facing
+        // (FrontCounterClockwise = FALSE), so emit them reversed or the outer faces get back-face culled.
         mesh.indices.push_back(baseIdx + 0);
+        mesh.indices.push_back(baseIdx + 2);
         mesh.indices.push_back(baseIdx + 1);
-        mesh.indices.push_back(baseIdx + 2);
         mesh.indices.push_back(baseIdx + 0);
-        mesh.indices.push_back(baseIdx + 2);
         mesh.indices.push_back(baseIdx + 3);
+        mesh.indices.push_back(baseIdx + 2);
     }
 
     model->meshes_.push_back(std::move(mesh));

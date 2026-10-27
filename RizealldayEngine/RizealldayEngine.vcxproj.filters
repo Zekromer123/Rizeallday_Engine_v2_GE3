@@ -328,6 +328,12 @@
     <FxCompile Include="shaders\Skybox.PS.hlsl">
       <Filter>shaders</Filter>
     </FxCompile>
+    <FxCompile Include="shaders\Line.VS.hlsl">
+      <Filter>shaders</Filter>
+    </FxCompile>
+    <FxCompile Include="shaders\Line.PS.hlsl">
+      <Filter>shaders</Filter>
+    </FxCompile>
     <None Include="shaders\Sprite.hlsli">
       <Filter>shaders</Filter>
     </None>

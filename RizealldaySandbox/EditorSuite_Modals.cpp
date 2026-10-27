@@ -1,0 +1,228 @@
+﻿#include "EditorSuiteInternal.h"
+
+using EditorSuiteDetail::SceneNameFromPath;
+using EditorSuiteDetail::IsSceneFile;
+
+void EditorSuite::DrawSaveSceneAsModal()
+{
+#ifdef USE_IMGUI
+	ImGui::OpenPopup("Save Scene As...");
+	if (ImGui::BeginPopupModal("Save Scene As...", &showSaveSceneAsModal_, ImGuiWindowFlags_AlwaysAutoResize)) {
+		ImGui::Text("Scene name or file path:");
+		ImGui::SetNextItemWidth(420.0f);
+		ImGui::InputText("##SaveScenePath", saveSceneAsPathBuf_, sizeof(saveSceneAsPathBuf_));
+
+		// Show where the file will actually be written (bare names go to the project's Assets/Scenes)
+		const std::string targetPath = NormalizeScenePath(saveSceneAsPathBuf_);
+		ImGui::TextDisabled("Saves to: %s", targetPath.empty() ? "-" : targetPath.c_str());
+
+		ImGui::Separator();
+		ImGui::BeginDisabled(targetPath.empty());
+		if (ImGui::Button("Save", ImVec2(100.0f, 0.0f))) {
+			if (SaveScene(targetPath)) {
+				strncpy_s(saveSceneAsPathBuf_, targetPath.c_str(), sizeof(saveSceneAsPathBuf_) - 1);
+				strncpy_s(openScenePathBuf_, targetPath.c_str(), sizeof(openScenePathBuf_) - 1);
+			}
+			showSaveSceneAsModal_ = false;
+		}
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel", ImVec2(90.0f, 0.0f))) {
+			showSaveSceneAsModal_ = false;
+		}
+		ImGui::EndPopup();
+	}
+#endif
+}
+
+void EditorSuite::DrawOpenSceneModal()
+{
+#ifdef USE_IMGUI
+	ImGui::OpenPopup("Open Scene...");
+	if (ImGui::BeginPopupModal("Open Scene...", &showOpenSceneModal_, ImGuiWindowFlags_AlwaysAutoResize)) {
+		ImGui::Text("Select a scene (double-click to open):");
+
+		// Only scenes that belong to the open project (its Assets/ folder, recursively) are listed
+		std::vector<std::filesystem::path> sceneFiles;
+		if (!currentProjectRoot_.empty()) {
+			const std::filesystem::path assetsRoot = currentProjectRoot_ / "Assets";
+			std::error_code ec;
+			if (std::filesystem::is_directory(assetsRoot, ec)) {
+				for (auto it = std::filesystem::recursive_directory_iterator(assetsRoot, std::filesystem::directory_options::skip_permission_denied, ec);
+					it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+					if (ec) break;
+					if (it->is_regular_file(ec) && IsSceneFile(it->path())) sceneFiles.push_back(it->path());
+				}
+			}
+			std::sort(sceneFiles.begin(), sceneFiles.end());
+		}
+
+		ImGui::TextDisabled("Project: %s", currentProjectRoot_.empty() ? "(none)" : currentProjectRoot_.filename().string().c_str());
+		ImGui::BeginChild("SceneListArea", ImVec2(460.0f, 200.0f), ImGuiChildFlags_Borders);
+		if (currentProjectRoot_.empty()) {
+			ImGui::TextDisabled("No project is open. Create or open a project first.");
+		} else if (sceneFiles.empty()) {
+			ImGui::TextDisabled("No scenes found in this project's Assets/.");
+		}
+		for (const auto& scenePath : sceneFiles) {
+			const std::string pathStr = scenePath.string();
+			const bool isSel = (pathStr == openScenePathBuf_);
+			const bool isCurrent = (pathStr == currentScenePath_);
+			std::string label = SceneNameFromPath(scenePath) + (isCurrent ? "  (open)" : "");
+			if (ImGui::Selectable((label + "##" + pathStr).c_str(), isSel, ImGuiSelectableFlags_AllowDoubleClick)) {
+				strncpy_s(openScenePathBuf_, pathStr.c_str(), sizeof(openScenePathBuf_) - 1);
+				if (ImGui::IsMouseDoubleClicked(0)) {
+					LoadScene(pathStr);
+					showOpenSceneModal_ = false;
+				}
+			}
+			ImGui::SetItemTooltip("%s", pathStr.c_str());
+			ImGui::SameLine(300.0f);
+			ImGui::TextDisabled("%s", scenePath.parent_path().filename().string().c_str());
+		}
+		ImGui::EndChild();
+
+		ImGui::SetNextItemWidth(460.0f);
+		ImGui::InputText("##OpenScenePath", openScenePathBuf_, sizeof(openScenePathBuf_));
+
+		ImGui::Separator();
+		const bool pathExists = openScenePathBuf_[0] != '\0' && std::filesystem::exists(openScenePathBuf_);
+		const bool insideProject = pathExists && IsPathInsideProject(openScenePathBuf_);
+		const bool canOpen = pathExists && insideProject;
+		if (pathExists && !insideProject) {
+			ImGui::TextColored(ImVec4(0.95f, 0.4f, 0.4f, 1.0f), "This scene is outside the current project.");
+		}
+		ImGui::BeginDisabled(!canOpen);
+		if (ImGui::Button("Open", ImVec2(100.0f, 0.0f))) {
+			LoadScene(openScenePathBuf_);
+			showOpenSceneModal_ = false;
+		}
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel", ImVec2(90.0f, 0.0f))) {
+			showOpenSceneModal_ = false;
+		}
+		ImGui::EndPopup();
+	}
+#endif
+}
+
+void EditorSuite::DrawNewProjectModal()
+{
+#ifdef USE_IMGUI
+	ImGui::OpenPopup("New Project");
+	if (ImGui::BeginPopupModal("New Project", &showNewProjectModal_, ImGuiWindowFlags_AlwaysAutoResize)) {
+		ImGui::Text("Create a new, empty game project.");
+		ImGui::Separator();
+
+		ImGui::SetNextItemWidth(320.0f);
+		ImGui::InputText("Project Name", projectNameBuf_, sizeof(projectNameBuf_));
+		ImGui::SetNextItemWidth(320.0f);
+		ImGui::InputText("Location", projectFolderBuf_, sizeof(projectFolderBuf_));
+		ImGui::SameLine();
+		if (ImGui::Button("Browse...")) {
+			std::string chosen = OpenNativeFolderDialog();
+			if (!chosen.empty()) strncpy_s(projectFolderBuf_, chosen.c_str(), sizeof(projectFolderBuf_) - 1);
+		}
+
+		const std::filesystem::path previewPath = std::filesystem::path(projectFolderBuf_) / projectNameBuf_;
+		ImGui::TextDisabled("Project folder: %s", previewPath.string().c_str());
+		ImGui::TextDisabled("Creates Assets/{Scenes, Models, Textures, Audio, Scripts}, ProjectSettings/project.json");
+		ImGui::TextDisabled("and a default scene, then switches the editor to the new project.");
+
+		if (!projectModalError_.empty()) {
+			ImGui::TextColored(ImVec4(0.95f, 0.4f, 0.4f, 1.0f), "%s", projectModalError_.c_str());
+		}
+
+		ImGui::Separator();
+		if (ImGui::Button("Create Project", ImVec2(130.0f, 0.0f))) {
+			if (CreateNewProject(projectFolderBuf_, projectNameBuf_)) {
+				showNewProjectModal_ = false;
+			}
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel", ImVec2(90.0f, 0.0f))) {
+			projectModalError_.clear();
+			showNewProjectModal_ = false;
+		}
+		ImGui::EndPopup();
+	}
+#endif
+}
+
+void EditorSuite::DrawOpenProjectModal()
+{
+#ifdef USE_IMGUI
+	ImGui::OpenPopup("Open Project");
+	if (ImGui::BeginPopupModal("Open Project", &showOpenProjectModal_, ImGuiWindowFlags_AlwaysAutoResize)) {
+		ImGui::Text("Select a Project Folder (containing ProjectSettings/project.json):");
+		ImGui::Separator();
+
+		ImGui::InputText("Project Folder", openProjectFolderBuf_, sizeof(openProjectFolderBuf_));
+		ImGui::SameLine();
+		if (ImGui::Button("[ Browse Folder... ]")) {
+			std::string chosen = OpenNativeFolderDialog();
+			if (!chosen.empty()) strncpy_s(openProjectFolderBuf_, chosen.c_str(), sizeof(openProjectFolderBuf_) - 1);
+		}
+
+		ImGui::Separator();
+		if (ImGui::Button("Open Project", ImVec2(130.0f, 26.0f))) {
+			if (OpenProject(openProjectFolderBuf_)) {
+				showOpenProjectModal_ = false;
+			}
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel", ImVec2(90.0f, 26.0f))) {
+			showOpenProjectModal_ = false;
+		}
+		ImGui::EndPopup();
+	}
+#endif
+}
+
+void EditorSuite::DrawBuildSettingsModal()
+{
+#ifdef USE_IMGUI
+	ImGui::OpenPopup("Build Settings & Standalone Game Exporter");
+	if (ImGui::BeginPopupModal("Build Settings & Standalone Game Exporter", &showBuildSettingsModal_, ImGuiWindowFlags_AlwaysAutoResize)) {
+		ImGui::Text("Export Standalone DirectX 12 Game Build");
+		ImGui::Separator();
+
+		ImGui::InputText("Target Output Folder", buildOutputDirBuf_, sizeof(buildOutputDirBuf_));
+		ImGui::SameLine();
+		if (ImGui::Button("[ Browse Folder... ]")) {
+			std::string chosen = OpenNativeFolderDialog();
+			if (!chosen.empty()) strncpy_s(buildOutputDirBuf_, chosen.c_str(), sizeof(buildOutputDirBuf_) - 1);
+		}
+
+		ImGui::InputText("Game Title", buildGameTitleBuf_, sizeof(buildGameTitleBuf_));
+
+		const char* resolutions[] = { "1920 x 1080 (FHD)", "1280 x 720 (HD)", "2560 x 1440 (2K QHD)" };
+		ImGui::Combo("Window Resolution", &buildResolutionIndex_, resolutions, 3);
+		ImGui::Checkbox("Start in Fullscreen", &buildFullscreen_);
+
+		ImGui::InputText("Startup Scene", buildStartupSceneBuf_, sizeof(buildStartupSceneBuf_));
+
+		ImGui::Separator();
+		if (ImGui::Button("[ Export Standalone Game ]", ImVec2(200.0f, 28.0f))) {
+			if (ExportStandaloneGame()) {
+				showBuildSettingsModal_ = false;
+			}
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("[ Open Output Folder ]", ImVec2(160.0f, 28.0f))) {
+			std::filesystem::path outDir(buildOutputDirBuf_);
+			std::error_code ec;
+			std::filesystem::create_directories(outDir, ec);
+			std::filesystem::path absOut = std::filesystem::absolute(outDir, ec);
+			ShellExecuteW(NULL, L"open", absOut.wstring().c_str(), NULL, NULL, SW_SHOWNORMAL);
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel", ImVec2(90.0f, 28.0f))) {
+			showBuildSettingsModal_ = false;
+		}
+		ImGui::EndPopup();
+	}
+#endif
+}
+

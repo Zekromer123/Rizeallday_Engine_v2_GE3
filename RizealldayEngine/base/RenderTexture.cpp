@@ -72,7 +72,8 @@ void RenderTexture::Initialize(
 	texDesc.Height = height_;
 	texDesc.DepthOrArraySize = 1;
 	texDesc.MipLevels = 1;
-	texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+	// Typeless so the 3D pass can write through an sRGB RTV while ImGui reads the same bytes through a UNORM SRV
+	texDesc.Format = DXGI_FORMAT_R8G8B8A8_TYPELESS;
 	texDesc.SampleDesc.Count = 1;
 	texDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
 	texDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
@@ -103,10 +104,17 @@ void RenderTexture::Initialize(
 	rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
 	device->CreateRenderTargetView(colorResource_.Get(), &rtvDesc, rtvHandle_);
 
-	// 3. Create SRV (for ImGui::Image)
+	// 3. Create SRV (for ImGui::Image). ImGui renders into a UNORM back buffer view, so the sRGB-encoded
+	//    bytes are passed through unchanged (UNORM) instead of being decoded to linear (UNORM_SRGB).
 	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
-	srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	// Force alpha = 1: the viewport image must be opaque in the UI. Otherwise any pass that writes
+	// alpha < 1 (particles, transparent materials, grid lines) lets the dark panel show through.
+	srvDesc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
+		D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
+		D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1,
+		D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_2,
+		D3D12_SHADER_COMPONENT_MAPPING_FORCE_VALUE_1);
 	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 	srvDesc.Texture2D.MipLevels = 1;
 	device->CreateShaderResourceView(colorResource_.Get(), &srvDesc, srvCpuHandle_);

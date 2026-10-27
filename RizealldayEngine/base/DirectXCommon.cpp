@@ -62,12 +62,20 @@ void DirectXCommon::Initialize(HWND hwnd, uint32_t width, uint32_t height)
 	ImGui_ImplDX12_Init(
 		device.Get(),
 		swapChainDesc.BufferCount,
-		rtvDesc.Format,
+		DXGI_FORMAT_R8G8B8A8_UNORM, // matches uiRtvHandles
 		srvDescriptorHeap.Get(),
 		srvDescriptorHeap->GetCPUDescriptorHandleForHeapStart(),
 		srvDescriptorHeap->GetGPUDescriptorHandleForHeapStart()
 	);
 	ImGuiIO& io = ImGui::GetIO();
+	// UI font: Segoe UI ships with Windows; fall back to ImGui's built-in font if it is missing.
+	// Must happen before the first NewFrame() because the font atlas is locked during a frame.
+	const char* uiFontPath = "C:/Windows/Fonts/segoeui.ttf";
+	if (GetFileAttributesA(uiFontPath) != INVALID_FILE_ATTRIBUTES) {
+		if (ImFont* uiFont = io.Fonts->AddFontFromFileTTF(uiFontPath, 16.0f)) {
+			io.FontDefault = uiFont;
+		}
+	}
 	io.Fonts->Build();
 
 #endif // USE_IMGUI
@@ -108,14 +116,11 @@ void DirectXCommon::ResizeBuffers(uint32_t width, uint32_t height)
 	}
 
 	// Recreate RTVs
-	D3D12_CPU_DESCRIPTOR_HANDLE rtvStartHandle = rtvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
-	UINT rtvIncrement = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 	for (uint32_t i = 0; i < 2; ++i) {
 		hr = swapChain->GetBuffer(i, IID_PPV_ARGS(&swapChainResources[i]));
 		if (CheckDeviceLost(hr, "SwapChain::GetBuffer")) return;
-		rtvHandles[i].ptr = rtvStartHandle.ptr + static_cast<SIZE_T>(rtvIncrement) * i;
-		device->CreateRenderTargetView(swapChainResources[i].Get(), &rtvDesc, rtvHandles[i]);
 	}
+	CreateBackBufferRenderTargetViews();
 
 	// Recreate Depth Stencil
 	Microsoft::WRL::ComPtr<ID3D12Resource> newDepth = CreateDepthStencilTextureResource(device.Get(), kClientWidth, kClientHeight);
@@ -227,6 +232,10 @@ void DirectXCommon::PostDraw()//Render Target -> Present
 #ifdef USE_IMGUI
 	//ImGui
 	ImGui::Render();
+	// ImGui draws into the UNORM view of the back buffer (its colors are already sRGB-encoded)
+	commandList->RSSetViewports(1, &viewport);
+	commandList->RSSetScissorRects(1, &scissorRect);
+	commandList->OMSetRenderTargets(1, &uiRtvHandles[backBufferIndex], false, nullptr);
 	ID3D12DescriptorHeap* descriptorHeaps[] = { srvDescriptorHeap.Get() };
 	commandList->SetDescriptorHeaps(1, descriptorHeaps);
 	ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), commandList.Get());
@@ -521,8 +530,6 @@ void DirectXCommon::DescriptorHeap()
 	assert(SUCCEEDED(hr));
 
 	// Create Render Target Views for SwapChain BackBuffers [0, 1]
-	D3D12_CPU_DESCRIPTOR_HANDLE rtvStartHandle = rtvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
-
 	rtvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
 	rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
 
@@ -532,10 +539,23 @@ void DirectXCommon::DescriptorHeap()
 		assert(SUCCEEDED(hr));
 	}
 
-	rtvHandles[0] = rtvStartHandle;
-	device->CreateRenderTargetView(swapChainResources[0].Get(), &rtvDesc, rtvHandles[0]);
-	rtvHandles[1].ptr = rtvHandles[0].ptr + device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-	device->CreateRenderTargetView(swapChainResources[1].Get(), &rtvDesc, rtvHandles[1]);
+	CreateBackBufferRenderTargetViews();
+}
+
+void DirectXCommon::CreateBackBufferRenderTargetViews()
+{
+	// [0..1] sRGB views: 3D rendering writes linear colors and the hardware encodes them
+	// [6..7] UNORM views: ImGui colors are already sRGB-encoded and must not be encoded twice
+	D3D12_RENDER_TARGET_VIEW_DESC uiRtvDesc = rtvDesc;
+	uiRtvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+
+	for (uint32_t i = 0; i < 2; ++i) {
+		rtvHandles[i] = GetRtvCPUDescriptorHandle(i);
+		device->CreateRenderTargetView(swapChainResources[i].Get(), &rtvDesc, rtvHandles[i]);
+
+		uiRtvHandles[i] = GetRtvCPUDescriptorHandle(kUiRtvBaseIndex + i);
+		device->CreateRenderTargetView(swapChainResources[i].Get(), &uiRtvDesc, uiRtvHandles[i]);
+	}
 }
 
 void DirectXCommon::CreateFence()

@@ -1,4 +1,4 @@
-﻿#include "RotateScript.h"
+#include "RotateScript.h"
 #include <cstdio>
 
 void RotateScript::Initialize() {

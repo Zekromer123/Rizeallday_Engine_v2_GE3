@@ -24,6 +24,57 @@
     <ClCompile Include="EditorSuite.cpp">
       <Filter>editor</Filter>
     </ClCompile>
+    <ClCompile Include="EditorSuite_Objects.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorSuite_SceneIO.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorSuite_Project.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorSuite_Tetris.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorSuite_Render.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorSuite_UI.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorSuite_Gizmos.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorSuite_Inspector.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorSuite_AssetBrowser.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorSuite_Modals.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorSuite_Mapchip.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorSuite_Physics.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorSuite_ScriptBuild.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorSuite_PlayMode.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorSuite_Scripting.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorSuite_Particles.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorSuite_Environment.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
     <ClCompile Include="ParticleQuad.cpp">
       <Filter>3d</Filter>
     </ClCompile>
@@ -37,6 +88,9 @@
   <ItemGroup>
     <ClInclude Include="EditorApp.h">
       <Filter>base</Filter>
+    </ClInclude>
+    <ClInclude Include="EditorSuiteInternal.h">
+      <Filter>editor</Filter>
     </ClInclude>
     <ClInclude Include="EditorSuite.h">
       <Filter>editor</Filter>

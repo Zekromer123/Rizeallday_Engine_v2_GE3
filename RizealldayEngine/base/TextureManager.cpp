@@ -303,8 +303,10 @@ uint32_t TextureManager::LoadPreviewTexture(const std::string& filePath)
 		return defaultWhiteHandle_;
 	}
 
+	// Preview textures are only displayed by ImGui, which renders to a non-sRGB target:
+	// read the raw sRGB-encoded bytes (no decode) so the preview matches the source image.
 	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
-	srvDesc.Format = metadata.format;
+	srvDesc.Format = DirectX::MakeLinear(metadata.format);
 	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 	srvDesc.Texture2D.MipLevels = UINT(metadata.mipLevels);

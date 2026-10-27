@@ -179,6 +179,23 @@ if exist "$(ProjectDir)Resources" xcopy "$(ProjectDir)Resources" "$(OutDir)Resou
   <ItemGroup>
     <ClCompile Include="ParticleQuad.cpp" />
     <ClCompile Include="EditorSuite.cpp" />
+    <ClCompile Include="EditorSuite_Objects.cpp" />
+    <ClCompile Include="EditorSuite_SceneIO.cpp" />
+    <ClCompile Include="EditorSuite_Project.cpp" />
+    <ClCompile Include="EditorSuite_Tetris.cpp" />
+    <ClCompile Include="EditorSuite_Render.cpp" />
+    <ClCompile Include="EditorSuite_UI.cpp" />
+    <ClCompile Include="EditorSuite_Gizmos.cpp" />
+    <ClCompile Include="EditorSuite_Inspector.cpp" />
+    <ClCompile Include="EditorSuite_AssetBrowser.cpp" />
+    <ClCompile Include="EditorSuite_Modals.cpp" />
+    <ClCompile Include="EditorSuite_Mapchip.cpp" />
+    <ClCompile Include="EditorSuite_Physics.cpp" />
+    <ClCompile Include="EditorSuite_ScriptBuild.cpp" />
+    <ClCompile Include="EditorSuite_PlayMode.cpp" />
+    <ClCompile Include="EditorSuite_Scripting.cpp" />
+    <ClCompile Include="EditorSuite_Particles.cpp" />
+    <ClCompile Include="EditorSuite_Environment.cpp" />
     <ClCompile Include="EditorApp.cpp" />
     <ClCompile Include="scene\EditorScene.cpp" />
     <ClCompile Include="scene\TitleScene.cpp" />
@@ -198,6 +215,7 @@ if exist "$(ProjectDir)Resources" xcopy "$(ProjectDir)Resources" "$(OutDir)Resou
   <ItemGroup>
     <ClInclude Include="ParticleQuad.h" />
     <ClInclude Include="EditorSuite.h" />
+    <ClInclude Include="EditorSuiteInternal.h" />
     <ClInclude Include="EditorApp.h" />
     <ClInclude Include="scene\EditorScene.h" />
     <ClInclude Include="scene\TitleScene.h" />

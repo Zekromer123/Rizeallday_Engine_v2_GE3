@@ -9,6 +9,9 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="Scripts\PlayerController.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
     <ClCompile Include="Scripts\dllmain.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>
@@ -18,12 +21,21 @@
     <ClCompile Include="Scripts\RotateScript.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>
+    <ClCompile Include="Scripts\SpawnStressTest.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Scripts\OscillateScript.h">
       <Filter>Scripts</Filter>
     </ClInclude>
     <ClInclude Include="Scripts\RotateScript.h">
+      <Filter>Scripts</Filter>
+    </ClInclude>
+    <ClInclude Include="Scripts\PlayerController.h">
+      <Filter>Scripts</Filter>
+    </ClInclude>
+    <ClInclude Include="Scripts\SpawnStressTest.h">
       <Filter>Scripts</Filter>
     </ClInclude>
     <ClInclude Include="..\RizealldayEngine\base\ScriptAPI.h">

@@ -1,0 +1,597 @@
+﻿#include "EditorSuiteInternal.h"
+
+std::string EditorSuite::OpenNativeFolderDialog()
+{
+	std::string folderPath = "";
+	HRESULT hrInit = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+	bool shouldUninit = SUCCEEDED(hrInit);
+	{
+		Microsoft::WRL::ComPtr<IFileOpenDialog> pFileOpen = nullptr;
+		HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, IID_PPV_ARGS(&pFileOpen));
+		if (SUCCEEDED(hr) && pFileOpen) {
+			DWORD dwOptions;
+			if (SUCCEEDED(pFileOpen->GetOptions(&dwOptions))) {
+				pFileOpen->SetOptions(dwOptions | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+			}
+			if (SUCCEEDED(pFileOpen->Show(NULL))) {
+				Microsoft::WRL::ComPtr<IShellItem> pItem = nullptr;
+				if (SUCCEEDED(pFileOpen->GetResult(&pItem)) && pItem) {
+					PWSTR pszFilePath = nullptr;
+					if (SUCCEEDED(pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath)) && pszFilePath) {
+						int len = WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, NULL, 0, NULL, NULL);
+						if (len > 1) {
+							folderPath.resize(len - 1);
+							WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, folderPath.data(), len, NULL, NULL);
+						}
+						CoTaskMemFree(pszFilePath);
+					}
+				}
+			}
+		}
+	}
+	if (shouldUninit) {
+		CoUninitialize();
+	}
+	return folderPath;
+}
+
+bool EditorSuite::CreateNewProject(const std::string& parentFolder, const std::string& projectName)
+{
+	projectModalError_.clear();
+
+	// 1. Validate input
+	std::string name = projectName;
+	name.erase(0, name.find_first_not_of(" \t"));
+	name.erase(name.find_last_not_of(" \t") + 1);
+	if (name.empty()) {
+		projectModalError_ = "Project name is empty.";
+		return false;
+	}
+	if (name.find_first_of("\\/:*?\"<>|") != std::string::npos || name == "." || name == "..") {
+		projectModalError_ = "Project name contains invalid characters ( \\ / : * ? \" < > | ).";
+		return false;
+	}
+	if (parentFolder.empty()) {
+		projectModalError_ = "Parent directory is empty.";
+		return false;
+	}
+
+	try {
+		const std::filesystem::path projPath = std::filesystem::absolute(std::filesystem::path(parentFolder) / name);
+
+		// Never overwrite an existing project or any non-empty folder
+		if (std::filesystem::exists(projPath) &&
+			(!std::filesystem::is_directory(projPath) || !std::filesystem::is_empty(projPath))) {
+			projectModalError_ = std::format("Folder already exists and is not empty: {}", projPath.string());
+			return false;
+		}
+
+		// 2. Leave play mode and clear the current scene before switching projects
+		if (sceneState_ != EditorSceneState::Edit) {
+			StopPlayMode();
+		}
+
+		// 3. Folder layout
+		std::filesystem::create_directories(projPath / "Assets" / "Scenes");
+		std::filesystem::create_directories(projPath / "Assets" / "Models");
+		std::filesystem::create_directories(projPath / "Assets" / "Textures");
+		std::filesystem::create_directories(projPath / "Assets" / "Audio");
+		std::filesystem::create_directories(projPath / "Assets" / "Scripts");
+		std::filesystem::create_directories(projPath / "ProjectSettings");
+
+		// 4. ProjectSettings/project.json (scene path is relative to the project root)
+		const std::string startupSceneRel = "Assets/Scenes/SampleScene.scene.json";
+		{
+			std::ofstream pj(projPath / "ProjectSettings" / "project.json");
+			pj << "{\n  \"projectName\": \"" << name << "\",\n  \"engineVersion\": \"v2.0\",\n  \"startupScene\": \"" << startupSceneRel << "\"\n}\n";
+		}
+
+		// 5. Copy starter assets so the project folders are not empty
+		std::error_code ec;
+		if (std::filesystem::exists("Resources/circle.png")) {
+			std::filesystem::copy_file("Resources/circle.png", projPath / "Assets" / "Textures" / "circle.png", std::filesystem::copy_options::overwrite_existing, ec);
+		}
+		if (std::filesystem::exists("Resources/Model/cube.obj")) {
+			std::filesystem::copy_file("Resources/Model/cube.obj", projPath / "Assets" / "Models" / "cube.obj", std::filesystem::copy_options::overwrite_existing, ec);
+		}
+
+		// 6. Switch the editor to the new project *before* creating the scene so every path resolves inside it
+		currentProjectRoot_ = projPath;
+		currentDirectory_ = projPath / "Assets";
+
+		// 7. Fresh default scene (Main Camera, Directional Light, Ground Plane) saved into the project
+		NewScene();
+		currentScenePath_ = (projPath / startupSceneRel).string();
+		currentSceneName_ = "SampleScene";
+		if (!SaveScene(currentScenePath_)) {
+			projectModalError_ = "Project folders were created, but the default scene could not be saved.";
+			return false;
+		}
+		ResetEditorHistory();
+
+		strncpy_s(openProjectFolderBuf_, projPath.string().c_str(), sizeof(openProjectFolderBuf_) - 1);
+		strncpy_s(saveSceneAsPathBuf_, currentScenePath_.c_str(), sizeof(saveSceneAsPathBuf_) - 1);
+		strncpy_s(openScenePathBuf_, currentScenePath_.c_str(), sizeof(openScenePathBuf_) - 1);
+		strncpy_s(buildStartupSceneBuf_, currentScenePath_.c_str(), sizeof(buildStartupSceneBuf_) - 1);
+		strncpy_s(buildGameTitleBuf_, name.c_str(), sizeof(buildGameTitleBuf_) - 1);
+		sSessionProjectRoot_ = projPath;
+		AddRecentProject(projPath);
+
+		LogMessage(std::format("[Project] Created new project '{}' at: {}", name, projPath.string()), 0);
+		return true;
+	} catch (const std::exception& e) {
+		projectModalError_ = std::format("Failed to create project: {}", e.what());
+		LogMessage(std::format("[Project] {}", projectModalError_), 2);
+		return false;
+	}
+}
+
+std::string EditorSuite::ToProjectRelativePath(const std::filesystem::path& path) const
+{
+	std::error_code ec;
+	const std::filesystem::path absPath = std::filesystem::weakly_canonical(std::filesystem::absolute(path, ec), ec);
+
+	auto relativeTo = [&](const std::filesystem::path& base, std::string& out) {
+		if (base.empty()) return false;
+		std::error_code bec;
+		const std::filesystem::path absBase = std::filesystem::weakly_canonical(std::filesystem::absolute(base, bec), bec);
+		const std::filesystem::path rel = absPath.lexically_relative(absBase);
+		if (rel.empty() || rel.native().starts_with(L"..")) return false;
+		out = rel.generic_string();
+		return true;
+	};
+
+	std::string result;
+	if (relativeTo(currentProjectRoot_, result)) return result;            // e.g. Assets/Textures/foo.png
+	if (relativeTo(std::filesystem::current_path(ec), result)) return result; // e.g. Resources/circle.png
+	return path.generic_string();
+}
+
+std::string EditorSuite::ResolveAssetPath(const std::string& path) const
+{
+	if (path.empty() || currentProjectRoot_.empty()) return path;
+	const std::filesystem::path p(path);
+	if (p.is_absolute()) return path;
+
+	// Called every frame for custom models, so cache the filesystem lookup (cleared on project switch)
+	if (resolvedAssetRoot_ != currentProjectRoot_) {
+		resolvedAssetCache_.clear();
+		resolvedAssetRoot_ = currentProjectRoot_;
+	}
+	if (auto it = resolvedAssetCache_.find(path); it != resolvedAssetCache_.end()) {
+		return it->second;
+	}
+
+	std::error_code ec;
+	const std::filesystem::path inProject = currentProjectRoot_ / p;
+	// Engine assets such as Resources/... are not in the project and stay relative to the working directory
+	std::string resolved = std::filesystem::exists(inProject, ec) ? inProject.string() : path;
+	resolvedAssetCache_.emplace(path, resolved);
+	return resolved;
+}
+
+std::filesystem::path EditorSuite::GetScenesDirectory() const
+{
+	if (!currentProjectRoot_.empty()) return currentProjectRoot_ / "Assets" / "Scenes";
+	return std::filesystem::path("Assets") / "Scenes";
+}
+
+std::string EditorSuite::NormalizeScenePath(const std::string& input) const
+{
+	std::string trimmed = input;
+	trimmed.erase(0, trimmed.find_first_not_of(" \t"));
+	trimmed.erase(trimmed.find_last_not_of(" \t") + 1);
+	if (trimmed.empty()) return trimmed;
+
+	std::filesystem::path p(trimmed);
+	// A bare name ("Level1") goes into the scenes folder of the current project
+	if (!p.has_parent_path()) {
+		p = GetScenesDirectory() / p;
+	}
+	// Always use the .scene.json extension so the file shows up in Open Scene
+	const std::string fileName = p.filename().string();
+	if (!fileName.ends_with(".scene.json")) {
+		std::string stem = fileName;
+		if (stem.ends_with(".json")) stem.resize(stem.size() - 5);
+		p.replace_filename(stem + ".scene.json");
+	}
+	return p.string();
+}
+
+void EditorSuite::ResetEditorHistory()
+{
+	undoStack_.clear();
+	redoStack_.clear();
+	PushUndoSnapshot(); // baseline state so the first Ctrl+Z has something to return to
+	isSceneDirty_ = false;
+	selectedObjectIndex_ = -1;
+}
+
+bool EditorSuite::IsPathInsideProject(const std::filesystem::path& path) const
+{
+	if (currentProjectRoot_.empty()) return false;
+	std::error_code ec;
+	const std::filesystem::path absRoot = std::filesystem::weakly_canonical(currentProjectRoot_, ec);
+	const std::filesystem::path absPath = std::filesystem::weakly_canonical(std::filesystem::absolute(path, ec), ec);
+	const std::filesystem::path rel = absPath.lexically_relative(absRoot);
+	return !rel.empty() && !rel.native().starts_with(L"..");
+}
+
+namespace {
+	/// %LOCALAPPDATA%/RizealldayEngine/recent_projects.txt (one project folder per line, newest first)
+	std::filesystem::path RecentProjectsFilePath()
+	{
+		char* localAppData = nullptr;
+		size_t len = 0;
+		std::filesystem::path base;
+		if (_dupenv_s(&localAppData, &len, "LOCALAPPDATA") == 0 && localAppData) {
+			base = localAppData;
+		}
+		free(localAppData);
+		if (base.empty()) return {};
+		return base / "RizealldayEngine" / "recent_projects.txt";
+	}
+
+	constexpr size_t kMaxRecentProjects = 10;
+}
+
+void EditorSuite::LoadRecentProjects()
+{
+	recentProjects_.clear();
+	selectedRecentProject_ = -1;
+	const std::filesystem::path file = RecentProjectsFilePath();
+	if (file.empty()) return;
+
+	std::ifstream in(file);
+	std::string line;
+	std::error_code ec;
+	while (std::getline(in, line) && recentProjects_.size() < kMaxRecentProjects) {
+		if (!line.empty() && line.back() == '\r') line.pop_back();
+		if (line.empty()) continue;
+		const std::filesystem::path projPath(line);
+		// Skip projects that were moved or deleted
+		if (std::filesystem::exists(projPath / "ProjectSettings" / "project.json", ec)) {
+			recentProjects_.push_back(projPath);
+		}
+	}
+	if (!recentProjects_.empty()) selectedRecentProject_ = 0;
+}
+
+void EditorSuite::AddRecentProject(const std::filesystem::path& projectRoot)
+{
+	LoadRecentProjects();
+	std::error_code ec;
+	const std::filesystem::path root = std::filesystem::weakly_canonical(projectRoot, ec);
+	std::erase_if(recentProjects_, [&](const std::filesystem::path& p) {
+		std::error_code eqEc;
+		return std::filesystem::equivalent(p, root, eqEc);
+	});
+	recentProjects_.insert(recentProjects_.begin(), root);
+	if (recentProjects_.size() > kMaxRecentProjects) recentProjects_.resize(kMaxRecentProjects);
+
+	const std::filesystem::path file = RecentProjectsFilePath();
+	if (file.empty()) return;
+	std::filesystem::create_directories(file.parent_path(), ec);
+	std::ofstream out(file, std::ios::trunc);
+	for (const auto& p : recentProjects_) {
+		out << p.string() << "\n";
+	}
+}
+
+void EditorSuite::DrawProjectHub()
+{
+#ifdef USE_IMGUI
+	const char* popupId = "Rizeallday Engine##ProjectHub";
+	ImGui::OpenPopup(popupId);
+
+	const ImGuiViewport* viewport = ImGui::GetMainViewport();
+	ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+	ImGui::SetNextWindowSize(ImVec2(820.0f, 0.0f), ImGuiCond_Always);
+
+	// No close button: the editor needs a project before it can be used
+	if (!ImGui::BeginPopupModal(popupId, nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) {
+		return;
+	}
+
+	ImGui::TextUnformatted("Welcome to Rizeallday Engine");
+	ImGui::TextDisabled("Create a new game project or open an existing one to start.");
+	ImGui::Spacing();
+
+	bool opened = false;
+	if (ImGui::BeginTable("##HubColumns", 2, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchSame)) {
+		ImGui::TableNextRow();
+
+		// Left: open an existing project
+		ImGui::TableSetColumnIndex(0);
+		ImGui::SeparatorText("Open Project");
+		ImGui::BeginChild("##RecentProjects", ImVec2(0.0f, 210.0f), ImGuiChildFlags_Borders);
+		if (recentProjects_.empty()) {
+			ImGui::TextDisabled("No recent projects.");
+			ImGui::TextDisabled("Use \"Browse...\" to open a project folder.");
+		}
+		for (int i = 0; i < static_cast<int>(recentProjects_.size()); ++i) {
+			const auto& proj = recentProjects_[i];
+			ImGui::PushID(i);
+			const std::string name = proj.filename().string();
+			if (ImGui::Selectable(name.c_str(), selectedRecentProject_ == i, ImGuiSelectableFlags_AllowDoubleClick)) {
+				selectedRecentProject_ = i;
+				if (ImGui::IsMouseDoubleClicked(0)) {
+					opened = OpenProject(proj.string());
+				}
+			}
+			ImGui::Indent(12.0f);
+			ImGui::TextDisabled("%s", proj.string().c_str());
+			ImGui::Unindent(12.0f);
+			ImGui::PopID();
+		}
+		ImGui::EndChild();
+
+		const bool hasSelection = selectedRecentProject_ >= 0 && selectedRecentProject_ < static_cast<int>(recentProjects_.size());
+		ImGui::BeginDisabled(!hasSelection);
+		if (ImGui::Button("Open Selected") && hasSelection) {
+			opened = OpenProject(recentProjects_[selectedRecentProject_].string());
+		}
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		if (ImGui::Button("Browse...##OpenProject")) {
+			const std::string chosen = OpenNativeFolderDialog();
+			if (!chosen.empty()) {
+				opened = OpenProject(chosen);
+			}
+		}
+		ImGui::SetItemTooltip("Pick a project folder (contains ProjectSettings/project.json or Assets/)");
+
+		// Right: create a new project
+		ImGui::TableSetColumnIndex(1);
+		ImGui::SeparatorText("New Project");
+		ImGui::TextUnformatted("Project Name");
+		ImGui::SetNextItemWidth(-1.0f);
+		ImGui::InputText("##HubProjectName", projectNameBuf_, sizeof(projectNameBuf_));
+		ImGui::TextUnformatted("Location");
+		ImGui::SetNextItemWidth(-ImGui::CalcTextSize("Browse...").x - ImGui::GetStyle().FramePadding.x * 2.0f - ImGui::GetStyle().ItemSpacing.x);
+		ImGui::InputText("##HubProjectFolder", projectFolderBuf_, sizeof(projectFolderBuf_));
+		ImGui::SameLine();
+		if (ImGui::Button("Browse...##NewProject")) {
+			const std::string chosen = OpenNativeFolderDialog();
+			if (!chosen.empty()) strncpy_s(projectFolderBuf_, chosen.c_str(), sizeof(projectFolderBuf_) - 1);
+		}
+		const std::filesystem::path previewPath = std::filesystem::path(projectFolderBuf_) / projectNameBuf_;
+		ImGui::TextWrapped("Will be created at: %s", previewPath.string().c_str());
+		ImGui::TextDisabled("Includes Assets/ folders, project settings and a default scene.");
+		ImGui::Spacing();
+		if (ImGui::Button("Create Project", ImVec2(-1.0f, 0.0f))) {
+			opened = CreateNewProject(projectFolderBuf_, projectNameBuf_);
+		}
+
+		ImGui::EndTable();
+	}
+
+	if (!projectModalError_.empty()) {
+		ImGui::Spacing();
+		ImGui::TextColored(ImVec4(0.95f, 0.4f, 0.4f, 1.0f), "%s", projectModalError_.c_str());
+	}
+
+	if (opened) {
+		projectModalError_.clear();
+		showProjectHub_ = false;
+		ImGui::CloseCurrentPopup();
+	}
+	ImGui::EndPopup();
+#endif
+}
+
+
+bool EditorSuite::OpenProject(const std::string& folderPath)
+{
+	if (folderPath.empty()) return false;
+
+	std::filesystem::path projPath(folderPath);
+	if (!std::filesystem::exists(projPath / "ProjectSettings" / "project.json") &&
+		projPath.has_parent_path() &&
+		std::filesystem::exists(projPath.parent_path() / "ProjectSettings" / "project.json")) {
+		projPath = projPath.parent_path();
+	}
+
+	projectModalError_.clear();
+	std::filesystem::path projJsonPath = projPath / "ProjectSettings" / "project.json";
+	if (!std::filesystem::exists(projJsonPath)) {
+		// A folder with an Assets/ directory (e.g. an older workspace) is adopted as a project
+		std::error_code ec;
+		if (std::filesystem::is_directory(projPath / "Assets", ec)) {
+			std::filesystem::create_directories(projPath / "ProjectSettings", ec);
+			std::filesystem::create_directories(projPath / "Assets" / "Scenes", ec);
+			std::ofstream pj(projJsonPath);
+			pj << "{\n  \"projectName\": \"" << projPath.filename().string() << "\",\n  \"engineVersion\": \"v2.0\",\n  \"startupScene\": \"Assets/Scenes/SampleScene.scene.json\"\n}\n";
+			LogMessage(std::format("[Project] Converted folder into a project (created ProjectSettings/project.json): {}", projPath.string()), 0);
+		} else {
+			projectModalError_ = std::format("Not a project folder (no ProjectSettings/project.json or Assets/): {}", folderPath);
+			LogMessage(std::format("[Project] {}", projectModalError_), 1);
+			return false;
+		}
+	}
+
+	std::string projectName = projPath.filename().string();
+	std::string startupScene = "Assets/Scenes/SampleScene.scene.json";
+
+	std::ifstream pj(projJsonPath);
+	if (pj.is_open()) {
+		std::stringstream buf;
+		buf << pj.rdbuf();
+		std::string content = buf.str();
+
+		auto ExtractJsonString = [&](const std::string& key, std::string& outVal) {
+			std::string token = "\"" + key + "\": \"";
+			size_t p = content.find(token);
+			if (p != std::string::npos) {
+				size_t ep = content.find("\"", p + token.length());
+				if (ep != std::string::npos) {
+					outVal = content.substr(p + token.length(), ep - (p + token.length()));
+				}
+			}
+		};
+
+		ExtractJsonString("projectName", projectName);
+		ExtractJsonString("startupScene", startupScene);
+	}
+
+	if (sceneState_ != EditorSceneState::Edit) {
+		StopPlayMode();
+	}
+
+	currentProjectRoot_ = std::filesystem::absolute(projPath);
+	currentDirectory_ = currentProjectRoot_ / "Assets";
+	if (!std::filesystem::exists(currentDirectory_)) currentDirectory_ = currentProjectRoot_;
+	strncpy_s(openProjectFolderBuf_, currentProjectRoot_.string().c_str(), sizeof(openProjectFolderBuf_) - 1);
+	strncpy_s(buildGameTitleBuf_, projectName.c_str(), sizeof(buildGameTitleBuf_) - 1);
+
+	std::filesystem::path sceneFullPath = currentProjectRoot_ / startupScene;
+	if (!std::filesystem::exists(sceneFullPath)) {
+		sceneFullPath = currentProjectRoot_ / "Assets" / "Scenes" / "SampleScene.scene.json";
+	}
+	if (std::filesystem::exists(sceneFullPath)) {
+		LoadScene(sceneFullPath.string());
+		strncpy_s(buildStartupSceneBuf_, sceneFullPath.string().c_str(), sizeof(buildStartupSceneBuf_) - 1);
+	} else {
+		// Project without a scene yet: start from a fresh default scene inside the project
+		NewScene();
+	}
+	const std::string sceneDefault = (GetScenesDirectory() / (currentSceneName_ + ".scene.json")).string();
+	strncpy_s(saveSceneAsPathBuf_, sceneDefault.c_str(), sizeof(saveSceneAsPathBuf_) - 1);
+	strncpy_s(openScenePathBuf_, currentScenePath_.c_str(), sizeof(openScenePathBuf_) - 1);
+	ResetEditorHistory();
+	sSessionProjectRoot_ = currentProjectRoot_;
+	AddRecentProject(currentProjectRoot_);
+
+	LogMessage(std::format("[Project] Opened project '{}' at: {}", projectName, projPath.string()), 0);
+	return true;
+}
+
+void EditorSuite::ToggleStandalonePreview()
+{
+	if (!isStandalonePreview_) {
+		isStandalonePreview_ = true;
+		if (sceneState_ == EditorSceneState::Edit) {
+			StartPlayMode();
+		} else {
+			sceneState_ = EditorSceneState::Play;
+		}
+		LogMessage("[Standalone] Entered Standalone Game Preview (F11 / Esc to exit).", 0);
+	} else {
+		isStandalonePreview_ = false;
+		if (sceneState_ != EditorSceneState::Edit) {
+			StopPlayMode();
+		}
+		LogMessage("[Standalone] Exited Standalone Game Preview.", 0);
+	}
+}
+
+bool EditorSuite::ExportStandaloneGame()
+{
+	try {
+		std::filesystem::path outDir(buildOutputDirBuf_);
+		std::filesystem::create_directories(outDir);
+
+		char exePath[MAX_PATH] = {};
+		GetModuleFileNameA(NULL, exePath, MAX_PATH);
+		std::filesystem::path sourceExe(exePath);
+
+		std::string gameTitle = (buildGameTitleBuf_[0] != '\0') ? buildGameTitleBuf_ : "RizealldayGame";
+		std::string targetExeName = gameTitle + ".exe";
+		std::filesystem::copy_file(sourceExe, outDir / targetExeName, std::filesystem::copy_options::overwrite_existing);
+
+		auto binDir = sourceExe.parent_path();
+		std::vector<std::filesystem::path> dllSearchDirs = {
+			binDir,
+			std::filesystem::current_path(),
+			binDir.parent_path().parent_path()
+		};
+		for (const auto& dir : dllSearchDirs) {
+			if (std::filesystem::exists(dir) && std::filesystem::is_directory(dir)) {
+				for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+					if (entry.is_regular_file() && entry.path().extension() == ".dll") {
+						std::filesystem::copy_file(entry.path(), outDir / entry.path().filename(), std::filesystem::copy_options::overwrite_existing);
+					}
+				}
+			}
+		}
+
+		// Copy bin/Scripts/GameScripts.dll into exported standalone directory
+		{
+			std::filesystem::path srcScriptsDll = scriptModule_.ResolveDllPath();
+			if (std::filesystem::exists(srcScriptsDll)) {
+				std::error_code ec;
+				std::filesystem::path dstScriptsDll = outDir / ScriptModule::kScriptsDllSubpath;
+				std::filesystem::create_directories(dstScriptsDll.parent_path(), ec);
+				std::filesystem::copy_file(srcScriptsDll, dstScriptsDll, std::filesystem::copy_options::overwrite_existing, ec);
+			}
+		}
+
+		// Copy Resources/ and shaders/
+		if (std::filesystem::exists("Resources")) {
+			std::filesystem::copy("Resources", outDir / "Resources", std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing);
+		} else if (std::filesystem::exists(binDir / "Resources")) {
+			std::filesystem::copy(binDir / "Resources", outDir / "Resources", std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing);
+		}
+
+		if (std::filesystem::exists("shaders")) {
+			std::filesystem::copy("shaders", outDir / "shaders", std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing);
+		} else if (std::filesystem::exists(binDir / "shaders")) {
+			std::filesystem::copy(binDir / "shaders", outDir / "shaders", std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing);
+		}
+
+		// Copy the open project's Assets/ (scenes, textures, models, audio). Scenes store asset paths
+		// relative to the project root, which becomes the exported game's working directory.
+		if (!currentProjectRoot_.empty() && std::filesystem::exists(currentProjectRoot_ / "Assets")) {
+			std::filesystem::copy(currentProjectRoot_ / "Assets", outDir / "Assets", std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing);
+		}
+
+		// Determine relative path for startup scene inside exported directory
+		std::string rawStartup = (buildStartupSceneBuf_[0] != '\0') ? buildStartupSceneBuf_ : "Assets/Scenes/SampleScene.scene.json";
+		std::filesystem::path srcScenePath(rawStartup);
+		std::string relStartup = "Assets/Scenes/SampleScene.scene.json";
+		const std::string projectRelStartup = ToProjectRelativePath(srcScenePath);
+		if (!srcScenePath.is_absolute()) {
+			relStartup = srcScenePath.generic_string();
+		} else if (!std::filesystem::path(projectRelStartup).is_absolute()) {
+			relStartup = projectRelStartup;
+		} else if (srcScenePath.has_filename()) {
+			relStartup = (std::filesystem::path("Assets/Scenes") / srcScenePath.filename()).generic_string();
+		}
+
+		std::filesystem::path destScenePath = outDir / relStartup;
+		std::filesystem::create_directories(destScenePath.parent_path());
+
+		if (std::filesystem::exists(srcScenePath)) {
+			std::error_code ec;
+			if (!std::filesystem::equivalent(srcScenePath, destScenePath, ec)) {
+				std::filesystem::copy_file(srcScenePath, destScenePath, std::filesystem::copy_options::overwrite_existing, ec);
+			}
+		} else {
+			std::ofstream sf(destScenePath);
+			if (sf.is_open()) {
+				sf << SerializeSceneToString();
+			}
+		}
+
+		int resW = 1920, resH = 1080;
+		if (buildResolutionIndex_ == 1) { resW = 1280; resH = 720; }
+		else if (buildResolutionIndex_ == 2) { resW = 2560; resH = 1440; }
+
+		{
+			std::ofstream cfg((outDir / "game_build.cfg").string());
+			cfg << "standaloneGameMode = true\n";
+			cfg << "gameTitle = " << gameTitle << "\n";
+			cfg << "resolutionWidth = " << resW << "\n";
+			cfg << "resolutionHeight = " << resH << "\n";
+			cfg << "fullscreen = " << (buildFullscreen_ ? "true" : "false") << "\n";
+			cfg << "startupScene = " << relStartup << "\n";
+		}
+
+		LogMessage(std::format("[Build] Successfully exported standalone game '{}' to: {}", targetExeName, outDir.string()), 0);
+		return true;
+	} catch (const std::exception& e) {
+		LogMessage(std::format("[Build] Standalone export failed: {}", e.what()), 2);
+		return false;
+	}
+}
+

@@ -101,11 +101,11 @@ struct ScriptFieldInfo {
 using ScriptText = char[128];
 
 class EditorSuite;
+/// Fallback host interface. It intentionally exposes no object lookup: on the engine side GameObject is the
+/// editor struct, which must never reach the DLL. Scripts look objects up through EngineAPI (views only).
 class IScriptHost {
 public:
 	virtual ~IScriptHost() = default;
-	virtual GameObject* FindGameObjectById(uint32_t id, bool warnIfMissing = true) = 0;
-	virtual GameObject* FindGameObjectByName(const char* name, bool warnIfMissing = true) = 0;
 	virtual void QueueDeleteGameObjectById(uint32_t id) = 0;
 	virtual void LogScriptMessage(const char* msg, int logType = 0) = 0;
 };
@@ -125,20 +125,17 @@ public:
 	virtual void OnDestroy() {}
 	virtual void OnAfterReload() {}
 
-	void SetOwner(GameObject* ownerObj, uint32_t id = 0) {
+	/// Only a ScriptGameObjectView can become the owner. In the DLL GameObject is the same type;
+	/// on the engine side there is deliberately no overload taking the editor GameObject.
+	void SetOwner(ScriptGameObjectView* ownerView, uint32_t id = 0) {
+		GameObject* ownerObj = reinterpret_cast<GameObject*>(ownerView);
 		gameObject = ownerObj;
 		owner = ownerObj;
 		gameObject_ = ownerObj;
-		if (id != 0 || !ownerObj) {
+		if (id != 0 || !ownerView) {
 			ownerId_ = id;
 		}
 	}
-
-#ifndef GAMESCRIPTS_EXPORTS
-	void SetOwner(ScriptGameObjectView* ownerView, uint32_t id = 0) {
-		SetOwner(reinterpret_cast<GameObject*>(ownerView), id);
-	}
-#endif
 
 	GameObject* GetOwner() const { return gameObject_; }
 	GameObject* GetGameObject() const { return gameObject_; }
@@ -172,13 +169,10 @@ public:
 		return &exposedFields_[index];
 	}
 
-	// EngineAPI convenience helpers for scripts
+	// EngineAPI convenience helpers for scripts (lookups only go through EngineAPI, which returns views)
 	GameObject* FindGameObjectById(uint32_t id) const {
 		if (engineApi_ && engineApi_->findObjectById) {
 			return reinterpret_cast<GameObject*>(engineApi_->findObjectById(engineApi_->hostContext, id, true));
-		}
-		if (host_) {
-			return host_->FindGameObjectById(id, true);
 		}
 		return nullptr;
 	}
@@ -187,9 +181,6 @@ public:
 		if (!name) return nullptr;
 		if (engineApi_ && engineApi_->findObjectByName) {
 			return reinterpret_cast<GameObject*>(engineApi_->findObjectByName(engineApi_->hostContext, name, true));
-		}
-		if (host_) {
-			return host_->FindGameObjectByName(name, true);
 		}
 		return nullptr;
 	}

@@ -29,6 +29,7 @@ struct ImVec2 {
 #include <string>
 #include <vector>
 #include <map>
+#include <unordered_map>
 #include <cstdint>
 #include <memory>
 #include <filesystem>
@@ -321,8 +322,8 @@ public:
 	GameObject& CreateSphere(const std::string& name = "Sphere", const Vector3& pos = { 0.0f, 0.0f, 0.0f });
 	GameObject& CreatePlane(const std::string& name = "Plane", const Vector3& pos = { 0.0f, 0.0f, 0.0f });
 	GameObject& CreateQuad(const std::string& name = "Textured Quad", const Vector3& pos = { 0.0f, 0.0f, 0.0f });
-	GameObject* FindGameObjectById(uint32_t id, bool warnIfMissing = true) override;
-	GameObject* FindGameObjectByName(const char* name, bool warnIfMissing = true) override;
+	GameObject* FindGameObjectById(uint32_t id, bool warnIfMissing = true);
+	GameObject* FindGameObjectByName(const char* name, bool warnIfMissing = true);
 	GameObject* FindGameObjectByName(const std::string& name, bool warnIfMissing = true) {
 		return FindGameObjectByName(name.c_str(), warnIfMissing);
 	}
@@ -355,6 +356,12 @@ public:
 	void SyncViewToGameObject(const ScriptGameObjectView& src, GameObject& dst);
 	void RefreshAllScriptObjectViews();
 	ScriptGameObjectView* GetOrUpdateScriptViewById(uint32_t id);
+	ScriptGameObjectView* FindPendingSpawnView(uint32_t id);
+	ScriptGameObjectView* QueueScriptSpawn(const char* name, int primitiveType, const Vector3& position);
+	bool CancelPendingSpawn(uint32_t id);
+	void ProcessPendingSpawns();
+	void RetireScriptView(uint32_t id);
+	void ClearRetiredScriptViews();
 
 	void TriggerScriptBuild();
 	void PollScriptSourceWatcher(float deltaTime);
@@ -380,6 +387,20 @@ public:
 	static std::string OpenNativeFolderDialog();
 	bool CreateNewProject(const std::string& parentFolder, const std::string& projectName);
 	bool OpenProject(const std::string& folderPath);
+
+	// Project-relative asset paths: stored relative to the project root (or the working directory
+	// when no project is open) and resolved back to a loadable path when the asset is loaded
+	std::string ToProjectRelativePath(const std::filesystem::path& path) const;
+	std::string ResolveAssetPath(const std::string& path) const;
+	std::filesystem::path GetScenesDirectory() const;
+	std::string NormalizeScenePath(const std::string& input) const;
+	void ResetEditorHistory();
+	bool IsPathInsideProject(const std::filesystem::path& path) const;
+
+	// Project Hub (startup "create or open a project" popup) and recent-project list
+	void DrawProjectHub();
+	void LoadRecentProjects();
+	void AddRecentProject(const std::filesystem::path& projectRoot);
 
 	// Standalone Game Exporter & Preview Mode
 	bool ExportStandaloneGame();
@@ -409,6 +430,8 @@ private:
 	void RenderShadowPass(ID3D12GraphicsCommandList* cmdList);
 	void RenderScene3D(ID3D12GraphicsCommandList* cmdList, Camera& camera, bool isEditView);
 	void ApplyUnity6DarkTheme();
+	// Height of the Play/Build toolbar below the main menu bar; panels are laid out under it
+	static constexpr float kTopBarHeight = 40.0f;
 	void DrawMainMenuBar();
 	void DrawTopPlayBar();
 	void DrawHierarchyPanel();
@@ -429,7 +452,6 @@ private:
 
 	// Viewport Overlays and Gizmos
 	void DrawSceneViewOverlays(const ImVec2& vpPos, const ImVec2& vpSize);
-	void DrawGroundGrid(const ImVec2& vpPos, const ImVec2& vpSize);
 	void DrawFloatingToolStrip(const ImVec2& vpPos, const ImVec2& vpSize);
 	void DrawOrientationCompass(const ImVec2& vpPos, const ImVec2& vpSize);
 	void DrawFloatingBottomBar(const ImVec2& vpPos, const ImVec2& vpSize);
@@ -511,6 +533,17 @@ private:
 	std::vector<int> pendingDeletes_;
 	int pendingDuplicateIndex_ = -1;
 
+	// Objects instantiated by scripts are queued here and created at a safe point,
+	// so gameObjects_ never reallocates while a script callback is running.
+	struct PendingSpawn {
+		uint32_t id = 0;
+		std::string name;
+		int primitiveType = 0;
+	};
+	std::vector<PendingSpawn> pendingSpawns_;
+	// Set while ProcessPendingSpawns() runs: skips undo snapshots, selection changes and per-object logs
+	bool isSpawningFromScript_ = false;
+
 	// Scene State & Serialization
 	std::string currentSceneName_ = "SampleScene";
 	std::string currentScenePath_ = "Assets/Scenes/SampleScene.scene.json";
@@ -547,6 +580,14 @@ private:
 	bool showOpenProjectModal_ = false;
 	char openProjectFolderBuf_[512] = "D:\\Projects\\NewGameProject";
 	std::filesystem::path currentProjectRoot_ = "";
+	std::string projectModalError_;
+	bool showProjectHub_ = false;
+	std::vector<std::filesystem::path> recentProjects_;
+	int selectedRecentProject_ = -1;
+	// Project of this editor session; EditorSuite is re-created on Title <-> Editor transitions
+	static inline std::filesystem::path sSessionProjectRoot_;
+	mutable std::unordered_map<std::string, std::string> resolvedAssetCache_;
+	mutable std::filesystem::path resolvedAssetRoot_;
 
 	// Physics State & Play Mode Snapshots
 	struct TransformSnapshot {
@@ -599,7 +640,12 @@ private:
 	// C++ Script Generator & Hot Reload State
 	ScriptModule scriptModule_{};
 	EngineAPI engineApi_{};
-	std::vector<ScriptGameObjectView> scriptObjectViews_;
+	// Script views keyed by GameObject id. Heap-allocated so pointers handed to scripts stay valid
+	// while gameObjects_ grows or shrinks. Views of deleted objects are retired (isActive = false)
+	// instead of freed, and only released when no script can still hold them.
+	std::unordered_map<uint32_t, std::unique_ptr<ScriptGameObjectView>> scriptObjectViews_;
+	std::vector<std::unique_ptr<ScriptGameObjectView>> retiredScriptViews_;
+	static constexpr size_t kMaxRetiredScriptViews = 4096;
 
 	bool showScriptGenModal_ = false;
 	int scriptGenTargetObjectIndex_ = -1; // >= 0 when opened via [Add Component -> Script -> New Script...]

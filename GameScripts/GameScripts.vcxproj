@@ -140,13 +140,17 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="Scripts\PlayerController.cpp" />
     <ClCompile Include="Scripts\dllmain.cpp" />
     <ClCompile Include="Scripts\OscillateScript.cpp" />
     <ClCompile Include="Scripts\RotateScript.cpp" />
+    <ClCompile Include="Scripts\SpawnStressTest.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Scripts\OscillateScript.h" />
     <ClInclude Include="Scripts\RotateScript.h" />
+    <ClInclude Include="Scripts\PlayerController.h" />
+    <ClInclude Include="Scripts\SpawnStressTest.h" />
     <ClInclude Include="..\RizealldayEngine\base\ScriptAPI.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

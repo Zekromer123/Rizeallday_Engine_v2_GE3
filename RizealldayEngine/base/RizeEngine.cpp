@@ -71,7 +71,7 @@ void Initialize(const char* title, int width, int height) {
 	WorldTransform::StaticInitialize(sDxCommon);
 	Camera::StaticInitialize(sDxCommon);
 	LightGroup::StaticInitialize(sDxCommon);
-	PrimitiveDrawer::GetInstance()->Initialize(sDxCommon);
+	PrimitiveDrawer::GetInstance()->Initialize(sDxCommon, sDxcManager.get());
 
 	// Register pipeline with Object3d so Draw() can bind blend modes
 	Object3d::StaticSetPipeline(sGraphicPipeline.get());
@@ -133,6 +133,8 @@ void Finalize() {
 
 	// Cleanup
 	sAudio->Finalize();
+
+	PrimitiveDrawer::GetInstance()->Finalize();
 
 	sGraphicPipeline.reset();
 	sDxcManager.reset();

@@ -10,13 +10,15 @@ class DirectXCommon
 {
 public:
 	// Descriptor Heap Capacities:
-	// RTV Heap (8): [0..1] SwapChain, [2] Scene RT, [3] Game RT, [4] Asset Preview RT
+	// RTV Heap (8): [0..1] SwapChain (sRGB, 3D), [2] Scene RT, [3] Game RT, [4] Asset Preview RT,
+	//               [6..7] SwapChain (UNORM, ImGui)
 	// DSV Heap (8): [0] Main Depth, [1] Scene Depth, [2] Game Depth, [3] ShadowMap DSV, [4] Asset Preview Depth
 	// SRV Heap (256): [0] ImGui, [1..127] Cached Textures, [128] Scene SRV, [129] Game SRV, [130] ShadowMap SRV,
 	//                 [131] Cubemap SRV, [132] Asset Preview RT SRV, [133..136] Preview Texture Ring, [140..249] Particles
 	static constexpr uint32_t kMaxRtvDescriptors = 8;
 	static constexpr uint32_t kMaxDsvDescriptors = 8;
 	static constexpr uint32_t kMaxSrvDescriptors = 256;
+	static constexpr uint32_t kUiRtvBaseIndex = 6;
 
 	static DirectXCommon* GetInstance();
 
@@ -90,6 +92,9 @@ private:
 	DXGI_SWAP_CHAIN_DESC1 swapChainDesc{};
 	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandles[2];
 	D3D12_RENDER_TARGET_VIEW_DESC rtvDesc{};
+	// Non-sRGB views of the back buffers used only for ImGui, whose colors are already sRGB-encoded
+	D3D12_CPU_DESCRIPTOR_HANDLE uiRtvHandles[2]{};
+	void CreateBackBufferRenderTargetViews();
 
 	// Descriptor Heap
 	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> rtvDescriptorHeap = nullptr;

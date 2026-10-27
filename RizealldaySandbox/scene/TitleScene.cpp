@@ -143,9 +143,21 @@ void TitleScene::Draw() {
 	const float maxLineH = 140.0f;
 	const float currentLineH = maxLineH * lineProgress;
 
+	// Logo sizes (fixed height, width from the texture aspect ratio)
+	const float logoH = 100.0f;
+	const Vector2 iconTexSize = TextureManager::GetInstance()->GetTextureSize(iconSprite_->GetTextureHandle());
+	const Vector2 textTexSize = TextureManager::GetInstance()->GetTextureSize(textSprite_->GetTextureHandle());
+	const float iconW = (iconTexSize.y > 0.0f) ? logoH * (iconTexSize.x / iconTexSize.y) : 100.0f;
+	const float textW = (textTexSize.y > 0.0f) ? logoH * (textTexSize.x / textTexSize.y) : 280.0f;
+
+	// Center the whole "icon | text" group on screen. The divider line sits between icon and text,
+	// so it is offset from the screen center whenever the icon and text widths differ.
 	const float gap = 24.0f;
-	const float slitLeft = cx - (lineW * 0.5f) - 2.0f;
-	const float slitRight = cx + (lineW * 0.5f) + 2.0f;
+	const float groupW = iconW + gap + lineW + gap + textW;
+	const float groupLeft = cx - groupW * 0.5f;
+	const float lineX = groupLeft + iconW + gap + lineW * 0.5f;
+	const float slitLeft = lineX - (lineW * 0.5f) - 2.0f;
+	const float slitRight = lineX + (lineW * 0.5f) + 2.0f;
 
 	// 1. Background (1280x720)
 	bgSprite_->SetPosition({ 0.0f, 0.0f });
@@ -155,11 +167,8 @@ void TitleScene::Draw() {
 
 	// 2. Icon (Left side, clipped at slitLeft using Chapter 05 SetTextureRect)
 	if (slideProgress > 0.001f) {
-		const Vector2 iconTexSize = TextureManager::GetInstance()->GetTextureSize(iconSprite_->GetTextureHandle());
-		const float iconH = 100.0f;
-		const float iconW = (iconTexSize.y > 0.0f) ? iconH * (iconTexSize.x / iconTexSize.y) : 100.0f;
-
-		const float iconFinalX = cx - gap - iconW;
+		const float iconH = logoH;
+		const float iconFinalX = groupLeft;
 		const float iconStartX = slitLeft + 10.0f;
 		const float curIconX = iconStartX + (iconFinalX - iconStartX) * slideProgress;
 		const float iconY = cy - iconH * 0.5f;
@@ -180,11 +189,8 @@ void TitleScene::Draw() {
 
 	// 3. Engine Text (Right side, clipped at slitRight using Chapter 05 SetTextureRect)
 	if (slideProgress > 0.001f) {
-		const Vector2 textTexSize = TextureManager::GetInstance()->GetTextureSize(textSprite_->GetTextureHandle());
-		const float textH = 100.0f;
-		const float textW = (textTexSize.y > 0.0f) ? textH * (textTexSize.x / textTexSize.y) : 280.0f;
-
-		const float textFinalX = cx + gap;
+		const float textH = logoH;
+		const float textFinalX = slitRight + gap - 2.0f;
 		const float textStartX = slitRight - textW - 10.0f;
 		const float curTextX = textStartX + (textFinalX - textStartX) * slideProgress;
 		const float textY = cy - textH * 0.5f;
@@ -210,7 +216,7 @@ void TitleScene::Draw() {
 
 	// 4. Center Vertical White Line
 	if (currentLineH > 0.5f) {
-		lineSprite_->SetPosition({ cx - lineW * 0.5f, cy - currentLineH * 0.5f });
+		lineSprite_->SetPosition({ lineX - lineW * 0.5f, cy - currentLineH * 0.5f });
 		lineSprite_->SetSize({ lineW, currentLineH });
 		lineSprite_->SetColor({ 1.0f, 1.0f, 1.0f, lineProgress });
 		lineSprite_->Update();

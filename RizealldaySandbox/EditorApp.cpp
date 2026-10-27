@@ -1,4 +1,4 @@
-﻿#include "EditorApp.h"
+#include "EditorApp.h"
 #include "scene/EditorScene.h"
 #include "scene/TitleScene.h"
 #include <cstring>
@@ -15,7 +15,7 @@ void EditorApp::Initialize() {
 	}
 
 	// 1. Initialize Engine & Framework Services
-	windowTitle_ = "Rizeallday Engine v2 - Editor Suite (Edit View / Game View / Mapchip)";
+	windowTitle_ = "Rizeallday Engine v2";
 	windowWidth_ = 1280;
 	windowHeight_ = 720;
 	Framework::Initialize();
