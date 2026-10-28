@@ -76,7 +76,7 @@
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <TreatWarningAsError>false</TreatWarningAsError>
-      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)..\RizealldayEngine;$(ProjectDir)..\RizealldayEngine\base;$(ProjectDir)..\externals\imgui\backends;$(ProjectDir)..\externals\imgui;$(ProjectDir)..\externals\assimp\include;$(ProjectDir)..\externals\DirectXTex\DirectXTex;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)..\RizealldayEngine;$(ProjectDir)..\RizealldayEngine\base;$(ProjectDir)..\externals\imgui\backends;$(ProjectDir)..\externals\imgui;$(ProjectDir)..\externals\assimp\include;$(ProjectDir)..\externals\DirectXTex\DirectXTex;$(ProjectDir)..\externals;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -113,7 +113,7 @@ if exist "$(ProjectDir)Resources" xcopy "$(ProjectDir)Resources" "$(OutDir)Resou
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
-      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)..\RizealldayEngine;$(ProjectDir)..\RizealldayEngine\base;$(ProjectDir)..\externals\imgui\backends;$(ProjectDir)..\externals\imgui;$(ProjectDir)..\externals\assimp\include;$(ProjectDir)..\externals\DirectXTex\DirectXTex;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)..\RizealldayEngine;$(ProjectDir)..\RizealldayEngine\base;$(ProjectDir)..\externals\imgui\backends;$(ProjectDir)..\externals\imgui;$(ProjectDir)..\externals\assimp\include;$(ProjectDir)..\externals\DirectXTex\DirectXTex;$(ProjectDir)..\externals;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -149,7 +149,7 @@ if exist "$(ProjectDir)Resources" xcopy "$(ProjectDir)Resources" "$(OutDir)Resou
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
-      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)..\RizealldayEngine;$(ProjectDir)..\RizealldayEngine\base;$(ProjectDir)..\externals\imgui\backends;$(ProjectDir)..\externals\imgui;$(ProjectDir)..\externals\assimp\include;$(ProjectDir)..\externals\DirectXTex\DirectXTex;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)..\RizealldayEngine;$(ProjectDir)..\RizealldayEngine\base;$(ProjectDir)..\externals\imgui\backends;$(ProjectDir)..\externals\imgui;$(ProjectDir)..\externals\assimp\include;$(ProjectDir)..\externals\DirectXTex\DirectXTex;$(ProjectDir)..\externals;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <Optimization>Disabled</Optimization>
       <WholeProgramOptimization>false</WholeProgramOptimization>
     </ClCompile>
@@ -191,11 +191,17 @@ if exist "$(ProjectDir)Resources" xcopy "$(ProjectDir)Resources" "$(OutDir)Resou
     <ClCompile Include="EditorSuite_Modals.cpp" />
     <ClCompile Include="EditorSuite_Mapchip.cpp" />
     <ClCompile Include="EditorSuite_Physics.cpp" />
+    <ClCompile Include="EditorSuite_Prefabs.cpp" />
+    <ClCompile Include="EditorSuite_Runtime.cpp" />
+    <ClCompile Include="EditorSuite_Samples.cpp" />
     <ClCompile Include="EditorSuite_ScriptBuild.cpp" />
     <ClCompile Include="EditorSuite_PlayMode.cpp" />
     <ClCompile Include="EditorSuite_Scripting.cpp" />
     <ClCompile Include="EditorSuite_Particles.cpp" />
     <ClCompile Include="EditorSuite_Environment.cpp" />
+    <ClCompile Include="EditorSuite_Hierarchy.cpp" />
+    <ClCompile Include="EditorSuite_Tests.cpp" />
+    <ClCompile Include="EditorSuite_Profiler.cpp" />
     <ClCompile Include="EditorApp.cpp" />
     <ClCompile Include="scene\EditorScene.cpp" />
     <ClCompile Include="scene\TitleScene.cpp" />
@@ -216,6 +222,9 @@ if exist "$(ProjectDir)Resources" xcopy "$(ProjectDir)Resources" "$(OutDir)Resou
     <ClInclude Include="ParticleQuad.h" />
     <ClInclude Include="EditorSuite.h" />
     <ClInclude Include="EditorSuiteInternal.h" />
+    <ClInclude Include="SceneJson.h" />
+    <ClInclude Include="TransformUtil.h" />
+    <ClInclude Include="Tests\TestFramework.h" />
     <ClInclude Include="EditorApp.h" />
     <ClInclude Include="scene\EditorScene.h" />
     <ClInclude Include="scene\TitleScene.h" />

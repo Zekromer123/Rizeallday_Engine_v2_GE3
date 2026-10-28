@@ -8,23 +8,30 @@
 
 class DirectXCommon;
 
+/// World transform of one draw. The matrices live on the CPU; Upload() copies them into this frame's
+/// upload memory at bind time, so several cameras/passes can draw the same object in one frame and
+/// the CPU can record the next frame while the GPU still reads the previous one.
 class WorldTransform {
 public:
 	WorldTransform() = default;
-	~WorldTransform();
+	~WorldTransform() = default;
+
 	static void StaticInitialize(DirectXCommon* dxCommon);
+
 	void Initialize();
 	void UpdateMatrix(const Matrix4x4& viewProjectionMatrix);
-	D3D12_GPU_VIRTUAL_ADDRESS GetGPUAddress() const { return resource_ ? resource_->GetGPUVirtualAddress() : 0; }
+
+	/// Uploads the current matrices for this frame and returns the GPU address to bind (0 on failure)
+	D3D12_GPU_VIRTUAL_ADDRESS Upload() const;
 
 	Vector3 scale = {1.0f, 1.0f, 1.0f};
 	Vector3 rotation = {0.0f, 0.0f, 0.0f};
 	Quaternion rotationQuat = Quaternion::Identity();
 	Vector3 translation = {0.0f, 0.0f, 0.0f};
+
 	Matrix4x4 matWorld = {};
 
 private:
 	static DirectXCommon* sDxCommon_;
-	Microsoft::WRL::ComPtr<ID3D12Resource> resource_;
-	TransformationMatrix* mappedData_ = nullptr;
+	TransformationMatrix data_{};
 };

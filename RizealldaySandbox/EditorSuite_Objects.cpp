@@ -20,7 +20,9 @@ GameObject& EditorSuite::CreateGameObject(const std::string& name, GameObjectTyp
 	if (!isSpawningFromScript_) {
 		selectedObjectIndex_ = static_cast<int>(gameObjects_.size()) - 1;
 		isSceneDirty_ = true;
-		PushUndoSnapshot();
+		// Recorded at the start of the next frame: callers (CreateCube, menus, ...) still fill in
+		// mesh/collider/light fields after this returns, and the undo command must contain the final object
+		undoPushPending_ = true;
 	}
 	return gameObjects_.back();
 }
@@ -141,12 +143,36 @@ void EditorSuite::QueueDeleteGameObject(int index)
 	}
 }
 
+std::string EditorSuite::GetCollisionLayerName(uint32_t layer)
+{
+	static constexpr const char* kNames[LAYER_NAMED_COUNT] = {
+		"Default", "Player", "Enemy", "PlayerBullet", "Wall", "Trigger", "EnemyBullet", "Pickup"
+	};
+	layer &= 31u;
+	return (layer < LAYER_NAMED_COUNT) ? kNames[layer] : std::format("Layer {}", layer);
+}
+
+int EditorSuite::FindGameObjectIndexById(uint32_t id)
+{
+	auto it = idIndexCache_.find(id);
+	if (it != idIndexCache_.end() && it->second < gameObjects_.size() && gameObjects_[it->second].id == id) {
+		return static_cast<int>(it->second);
+	}
+	// Stale or missing entry: the vector changed since the last rebuild
+	idIndexCache_.clear();
+	idIndexCache_.reserve(gameObjects_.size());
+	for (size_t i = 0; i < gameObjects_.size(); ++i) {
+		idIndexCache_[gameObjects_[i].id] = i;
+	}
+	it = idIndexCache_.find(id);
+	return (it != idIndexCache_.end()) ? static_cast<int>(it->second) : -1;
+}
+
 GameObject* EditorSuite::FindGameObjectById(uint32_t id, bool warnIfMissing)
 {
-	for (auto& obj : gameObjects_) {
-		if (obj.id == id) {
-			return &obj;
-		}
+	const int index = FindGameObjectIndexById(id);
+	if (index >= 0) {
+		return &gameObjects_[static_cast<size_t>(index)];
 	}
 	if (warnIfMissing) {
 		LogMessage(std::format("[Script] Warning: GameObject with ID {} was not found (may have been deleted).", id), 1);

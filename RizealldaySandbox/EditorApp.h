@@ -13,6 +13,9 @@ public:
 
 	SceneManager& GetSceneManager() { return sceneManager_; }
 
+	/// Process exit code: result of a `--run-tests` run (0 = passed), always 0 otherwise
+	static int GetExitCode();
+
 private:
 	SceneManager sceneManager_{};
 	bool testMode_ = false;

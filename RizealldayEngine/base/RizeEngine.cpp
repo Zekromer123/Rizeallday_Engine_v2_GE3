@@ -1,5 +1,6 @@
 ﻿#include "base/RizeEngine.h"
 #include "base/DirectXCommon.h"
+#include "base/Profiler.h"
 #include "base/WinApp.h"
 #include "base/DXCManager.h"
 #include "base/GraphicPipeline.h"
@@ -14,6 +15,7 @@
 #include "3d/Camera.h"
 #include "3d/LightGroup.h"
 #include "3d/PrimitiveDrawer.h"
+#include "2d/UIRenderer.h"
 #include "3d/CircleShadow.h"
 #include <memory>
 
@@ -46,6 +48,9 @@ void Initialize(const char* title, int width, int height) {
 	sDxCommon = DirectXCommon::GetInstance();
 	sDxCommon->Initialize(sWinApp->GetHWND(), clientW, clientH);
 
+	// Profiler (needs the device + queue)
+	Profiler::GetInstance()->Initialize(sDxCommon);
+
 	// DXC Shader Compiler
 	sDxcManager = std::make_unique<DXCManager>();
 	sDxcManager->Initialize();
@@ -72,6 +77,7 @@ void Initialize(const char* title, int width, int height) {
 	Camera::StaticInitialize(sDxCommon);
 	LightGroup::StaticInitialize(sDxCommon);
 	PrimitiveDrawer::GetInstance()->Initialize(sDxCommon, sDxcManager.get());
+	UIRenderer::GetInstance()->Initialize(sDxCommon, sDxcManager.get());
 
 	// Register pipeline with Object3d so Draw() can bind blend modes
 	Object3d::StaticSetPipeline(sGraphicPipeline.get());
@@ -135,6 +141,10 @@ void Finalize() {
 	sAudio->Finalize();
 
 	PrimitiveDrawer::GetInstance()->Finalize();
+	UIRenderer::GetInstance()->Finalize();
+
+	// Release the query heaps before DirectXCommon flushes its deferred-release queue
+	Profiler::GetInstance()->Finalize();
 
 	sGraphicPipeline.reset();
 	sDxcManager.reset();

@@ -8,6 +8,8 @@
 #include "3d/LightGroup.h"
 #include "3d/CollisionManager.h"
 #include "3d/PrimitiveDrawer.h"
+#include "2d/UIRenderer.h"
+#include "base/Profiler.h"
 #include <fstream>
 #include <sstream>
 #include <cmath>
@@ -20,6 +22,7 @@
 #include <objbase.h>
 #include <oleauto.h>
 #include <shellapi.h>
+#include "TransformUtil.h"
 
 #ifdef USE_IMGUI
 #include <imgui.h>

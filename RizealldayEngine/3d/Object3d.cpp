@@ -30,83 +30,26 @@ void Object3d::StaticSetShadowMap(ShadowMap* shadowMap) {
     sShadowMap_ = shadowMap;
 }
 
-Object3d::~Object3d() {
-    if (materialResource_) {
-        if (sDxCommon_) {
-            sDxCommon_->DeferRelease(materialResource_);
-        }
-        materialResource_.Reset();
-        materialData_ = nullptr;
-    }
-    if (bonePaletteResource_) {
-        if (sDxCommon_) {
-            sDxCommon_->DeferRelease(bonePaletteResource_);
-        }
-        bonePaletteResource_.Reset();
-        mappedBonePalette_ = nullptr;
-    }
-}
+Object3d::~Object3d() = default;
 
 void Object3d::Initialize() {
-    if (!sDxCommon_ || sDxCommon_->IsDeviceLost()) {
-        return;
-    }
-    if (materialResource_) {
-        sDxCommon_->DeferRelease(materialResource_);
-        materialResource_.Reset();
-        materialData_ = nullptr;
-    }
-    if (bonePaletteResource_) {
-        sDxCommon_->DeferRelease(bonePaletteResource_);
-        bonePaletteResource_.Reset();
-        mappedBonePalette_ = nullptr;
-    }
+    // 1. Material (CPU copy, uploaded per draw)
+    material_ = Material{};
+    material_.color = {1.0f, 1.0f, 1.0f, 1.0f};
+    material_.enableLighting = 1;
+    material_.lightingType = 4; // Blinn-Phong default
+    material_.shininess = 32.0f;
+    material_.specularColor = { 1.0f, 1.0f, 1.0f };
 
-    D3D12_HEAP_PROPERTIES heapProps{};
-    heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
-
-    // 1. Material Constant Buffer
-    D3D12_RESOURCE_DESC matDesc{};
-    matDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    matDesc.Width = (sizeof(Material) + 255) & ~255;
-    matDesc.Height = 1; matDesc.DepthOrArraySize = 1; matDesc.MipLevels = 1;
-    matDesc.SampleDesc.Count = 1; matDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-    HRESULT hr = sDxCommon_->GetDevice()->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &matDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&materialResource_));
-    if (FAILED(hr) || !materialResource_) {
-        sDxCommon_->CheckDeviceLost(hr, "Object3d::Initialize(Material)");
-        return;
-    }
-    materialResource_->Map(0, nullptr, reinterpret_cast<void**>(&materialData_));
-
-    if (materialData_) {
-        materialData_->color = {1.0f, 1.0f, 1.0f, 1.0f};
-        materialData_->enableLighting = 1;
-        materialData_->lightingType = 4; // Blinn-Phong default
-        materialData_->shininess = 32.0f;
-        materialData_->specularColor = { 1.0f, 1.0f, 1.0f };
-    }
-
-    // 2. Bone Palette Constant Buffer (128 Matrix4x4 = 8192 bytes)
-    D3D12_RESOURCE_DESC boneDesc{};
-    boneDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    boneDesc.Width = sizeof(Matrix4x4) * 128;
-    boneDesc.Height = 1; boneDesc.DepthOrArraySize = 1; boneDesc.MipLevels = 1;
-    boneDesc.SampleDesc.Count = 1; boneDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-    hr = sDxCommon_->GetDevice()->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &boneDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&bonePaletteResource_));
-    if (FAILED(hr) || !bonePaletteResource_) {
-        sDxCommon_->CheckDeviceLost(hr, "Object3d::Initialize(BonePalette)");
-        return;
-    }
-    bonePaletteResource_->Map(0, nullptr, reinterpret_cast<void**>(&mappedBonePalette_));
-
-    if (mappedBonePalette_) {
-        for (int i = 0; i < 128; i++) {
-            mappedBonePalette_[i] = Mathematics::MakeIdentity4x4();
-        }
-    }
+    // 2. Bone palette (identity until an animated model updates it)
+    ResetBonePalette();
 
     // 3. World Transform
     worldTransform.Initialize();
+}
+
+void Object3d::ResetBonePalette() {
+    bonePalette_.assign(kMaxBones, Mathematics::MakeIdentity4x4());
 }
 
 void Object3d::SetModel(Model* model, bool resetAnim) {
@@ -115,11 +58,7 @@ void Object3d::SetModel(Model* model, bool resetAnim) {
         if (resetAnim) {
             animationTime_ = 0.0f;
         }
-        if (mappedBonePalette_) {
-            for (int i = 0; i < 128; i++) {
-                mappedBonePalette_[i] = Mathematics::MakeIdentity4x4();
-            }
-        }
+        ResetBonePalette();
     }
 }
 
@@ -154,9 +93,7 @@ void Object3d::CopyBonePaletteFrom(const Object3d& other) {
     animationSpeed_ = other.animationSpeed_;
     isAnimationLoop_ = other.isAnimationLoop_;
     boneTransforms_ = other.boneTransforms_;
-    if (mappedBonePalette_ && other.mappedBonePalette_) {
-        std::memcpy(mappedBonePalette_, other.mappedBonePalette_, sizeof(Matrix4x4) * 128);
-    }
+    bonePalette_ = other.bonePalette_;
 }
 
 void Object3d::Update(float deltaTime) {
@@ -166,7 +103,7 @@ void Object3d::Update(float deltaTime) {
         worldTransform.UpdateMatrix(Mathematics::MakeIdentity4x4());
     }
 
-    if (model_ && model_->HasBones() && mappedBonePalette_) {
+    if (model_ && model_->HasBones()) {
         animationTime_ += deltaTime * animationSpeed_;
         float duration = model_->GetAnimationDuration(currentAnimationIndex_);
         if (duration > 0.0f) {
@@ -179,15 +116,51 @@ void Object3d::Update(float deltaTime) {
                 animationTime_ = duration;
             }
         }
-
         model_->CalculateBoneTransforms(animationTime_, currentAnimationIndex_, boneTransforms_);
-        size_t copyCount = (std::min)(boneTransforms_.size(), static_cast<size_t>(128));
-        std::memcpy(mappedBonePalette_, boneTransforms_.data(), sizeof(Matrix4x4) * copyCount);
+
+        if (bonePalette_.size() != kMaxBones) {
+            ResetBonePalette();
+        }
+        size_t copyCount = (std::min)(boneTransforms_.size(), kMaxBones);
+        std::memcpy(bonePalette_.data(), boneTransforms_.data(), sizeof(Matrix4x4) * copyCount);
     }
 }
 
+D3D12_GPU_VIRTUAL_ADDRESS Object3d::UploadBonePalette() const {
+    if (!sDxCommon_ || sDxCommon_->IsDeviceLost()) {
+        return 0;
+    }
+    const size_t paletteBytes = sizeof(Matrix4x4) * kMaxBones;
+    if (model_ && model_->HasBones() && bonePalette_.size() == kMaxBones) {
+        return sDxCommon_->UploadData(bonePalette_.data(), paletteBytes);
+    }
+
+    // Shared identity palette, uploaded once per frame for all static meshes
+    static uint64_t sIdentityFrame = ~0ull;
+    static D3D12_GPU_VIRTUAL_ADDRESS sIdentityAddress = 0;
+    if (sIdentityFrame != sDxCommon_->GetFrameIndex() || sIdentityAddress == 0) {
+        DirectXCommon::UploadAllocation alloc = sDxCommon_->AllocateUpload(paletteBytes);
+        if (!alloc.cpu) return 0;
+        Matrix4x4* dst = static_cast<Matrix4x4*>(alloc.cpu);
+        const Matrix4x4 identity = Mathematics::MakeIdentity4x4();
+        for (size_t i = 0; i < kMaxBones; ++i) {
+            dst[i] = identity;
+        }
+        sIdentityAddress = alloc.gpu;
+        sIdentityFrame = sDxCommon_->GetFrameIndex();
+    }
+    return sIdentityAddress;
+}
+
 void Object3d::Draw(ID3D12GraphicsCommandList* cmdList) {
-    if (!cmdList || !sDxCommon_ || sDxCommon_->IsDeviceLost() || !materialResource_ || worldTransform.GetGPUAddress() == 0) {
+    if (!cmdList || !sDxCommon_ || sDxCommon_->IsDeviceLost()) {
+        return;
+    }
+
+    const D3D12_GPU_VIRTUAL_ADDRESS materialAddr = sDxCommon_->UploadConstants(material_);
+    const D3D12_GPU_VIRTUAL_ADDRESS transformAddr = worldTransform.Upload();
+    const D3D12_GPU_VIRTUAL_ADDRESS boneAddr = UploadBonePalette();
+    if (materialAddr == 0 || transformAddr == 0 || boneAddr == 0) {
         return;
     }
 
@@ -200,21 +173,24 @@ void Object3d::Draw(ID3D12GraphicsCommandList* cmdList) {
         sPipeline_->Bind(cmdList, blendMode, gsMode);
     }
 
-    cmdList->SetGraphicsRootConstantBufferView(0, materialResource_->GetGPUVirtualAddress());
-    cmdList->SetGraphicsRootConstantBufferView(1, worldTransform.GetGPUAddress());
+    cmdList->SetGraphicsRootConstantBufferView(0, materialAddr);
+    cmdList->SetGraphicsRootConstantBufferView(1, transformAddr);
+
     if (sLightGroup_) {
         sLightGroup_->Draw(cmdList, 3);
     }
-    if (bonePaletteResource_) {
-        cmdList->SetGraphicsRootConstantBufferView(4, bonePaletteResource_->GetGPUVirtualAddress());
-    }
+
+    cmdList->SetGraphicsRootConstantBufferView(4, boneAddr);
+
     D3D12_GPU_VIRTUAL_ADDRESS camAddr = camera_ ? camera_->GetGPUVirtualAddress() : Camera::GetDefaultGPUVirtualAddress();
     if (camAddr != 0) {
         cmdList->SetGraphicsRootConstantBufferView(5, camAddr);
     }
+
     if (sShadowMap_) {
         cmdList->SetGraphicsRootDescriptorTable(6, sShadowMap_->GetSrvGPUHandle());
     }
+
     if (model_) {
         model_->Draw(cmdList, textureHandle_);
     }

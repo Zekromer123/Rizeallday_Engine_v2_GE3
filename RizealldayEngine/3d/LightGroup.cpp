@@ -14,45 +14,9 @@ std::unique_ptr<LightGroup> LightGroup::Create() {
     return instance;
 }
 
-LightGroup::~LightGroup() {
-    if (constBuffer_) {
-        constBuffer_->Unmap(0, nullptr);
-        mappedData_ = nullptr;
-        if (sDxCommon_) {
-            sDxCommon_->DeferRelease(constBuffer_);
-        }
-        constBuffer_.Reset();
-    }
-}
-
 void LightGroup::Initialize() {
     assert(sDxCommon_);
     
-    D3D12_HEAP_PROPERTIES heapProps{};
-    heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
-    
-    D3D12_RESOURCE_DESC desc{};
-    desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    desc.Width = (sizeof(LightGroupGPU) + 0xff) & ~0xff; // 256-byte alignment
-    desc.Height = 1;
-    desc.DepthOrArraySize = 1;
-    desc.MipLevels = 1;
-    desc.SampleDesc.Count = 1;
-    desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-    
-    HRESULT hr = sDxCommon_->GetDevice()->CreateCommittedResource(
-        &heapProps,
-        D3D12_HEAP_FLAG_NONE,
-        &desc,
-        D3D12_RESOURCE_STATE_GENERIC_READ,
-        nullptr,
-        IID_PPV_ARGS(&constBuffer_)
-    );
-    assert(SUCCEEDED(hr));
-    
-    hr = constBuffer_->Map(0, nullptr, reinterpret_cast<void**>(&mappedData_));
-    assert(SUCCEEDED(hr));
-
     SetDefaultLighting();
     Update();
 }
@@ -76,29 +40,37 @@ void LightGroup::SetDefaultLighting() {
 }
 
 void LightGroup::Update() {
-    if (mappedData_) {
-        mappedData_->ambientColor = ambientColor_;
-        mappedData_->ambientIntensity = ambientIntensity_;
-        mappedData_->directionalLight = directionalLight_;
-        
-        for (int i = 0; i < MaxPointLights; ++i) {
-            mappedData_->pointLights[i] = pointLights_[i];
-        }
-        
-        for (int i = 0; i < MaxSpotLights; ++i) {
-            mappedData_->spotLights[i] = spotLights_[i];
-        }
-
-        mappedData_->lightViewProjection = lightViewProjection_;
-        mappedData_->shadowActive = shadowActive_;
-        mappedData_->shadowBias = shadowBias_;
-        mappedData_->shadowStrength = shadowStrength_;
-        mappedData_->shadowNormalBias = shadowNormalBias_;
+    data_.ambientColor = ambientColor_;
+    data_.ambientIntensity = ambientIntensity_;
+    data_.directionalLight = directionalLight_;
+    
+    for (int i = 0; i < MaxPointLights; ++i) {
+        data_.pointLights[i] = pointLights_[i];
     }
+    
+    for (int i = 0; i < MaxSpotLights; ++i) {
+        data_.spotLights[i] = spotLights_[i];
+    }
+
+    data_.lightViewProjection = lightViewProjection_;
+    data_.shadowActive = shadowActive_;
+    data_.shadowBias = shadowBias_;
+    data_.shadowStrength = shadowStrength_;
+    data_.shadowNormalBias = shadowNormalBias_;
+    ++version_;
 }
 
 void LightGroup::Draw(ID3D12GraphicsCommandList* cmdList, uint32_t rootParameterIndex) {
-    if (constBuffer_) {
-        cmdList->SetGraphicsRootConstantBufferView(rootParameterIndex, constBuffer_->GetGPUVirtualAddress());
+    if (!sDxCommon_ || sDxCommon_->IsDeviceLost()) {
+        return;
+    }
+    const uint64_t frame = sDxCommon_->GetFrameIndex();
+    if (uploadFrame_ != frame || uploadedVersion_ != version_ || uploadedAddress_ == 0) {
+        uploadedAddress_ = sDxCommon_->UploadConstants(data_);
+        uploadFrame_ = frame;
+        uploadedVersion_ = version_;
+    }
+    if (uploadedAddress_ != 0) {
+        cmdList->SetGraphicsRootConstantBufferView(rootParameterIndex, uploadedAddress_);
     }
 }

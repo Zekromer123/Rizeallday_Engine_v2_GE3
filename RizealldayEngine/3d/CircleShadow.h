@@ -40,9 +40,9 @@ public:
 
     /// Customize shadow color
     void SetColor(const Vector4& color);
-    void SetSoftness(float softness) { if (materialData_) materialData_->softness = softness; }
+    void SetSoftness(float softness) { material_.softness = softness; }
 
-    CircleShadowMaterialGPU* GetMaterial() { return materialData_; }
+    CircleShadowMaterialGPU* GetMaterial() { return &material_; }
 
 private:
     static DirectXCommon* sDxCommon_;
@@ -56,16 +56,15 @@ private:
     // Per-instance resources
     Microsoft::WRL::ComPtr<ID3D12Resource> vertexResource_;
     Microsoft::WRL::ComPtr<ID3D12Resource> indexResource_;
-    Microsoft::WRL::ComPtr<ID3D12Resource> materialResource_;
-    Microsoft::WRL::ComPtr<ID3D12Resource> transformResource_;
 
     D3D12_VERTEX_BUFFER_VIEW vbView_{};
     D3D12_INDEX_BUFFER_VIEW  ibView_{};
 
-    CircleShadowMaterialGPU* materialData_  = nullptr;
+    // Per-frame data lives on the CPU and is uploaded to the per-frame upload allocator at draw time
+    CircleShadowMaterialGPU material_{};
 
     struct TransformMatrix { Matrix4x4 WVP; Matrix4x4 World; };
-    TransformMatrix* transformData_ = nullptr;
+    TransformMatrix transform_{};
 
     Vector3 position_ = {};
     float   radius_   = 1.0f;

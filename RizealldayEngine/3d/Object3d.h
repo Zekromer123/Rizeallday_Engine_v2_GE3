@@ -45,7 +45,9 @@ public:
 	void SetLoopAnimation(bool loop) { isAnimationLoop_ = loop; }
 	bool IsAnimationLoop() const { return isAnimationLoop_; }
 	void CopyBonePaletteFrom(const Object3d& other);
-	D3D12_GPU_VIRTUAL_ADDRESS GetBonePaletteGPUAddress() const { return bonePaletteResource_ ? bonePaletteResource_->GetGPUVirtualAddress() : 0; }
+	/// Uploads this frame's bone palette (b1 VS, 128 matrices) and returns its GPU address.
+	/// Meshes without bones share one identity palette per frame instead of uploading 8 KB each.
+	D3D12_GPU_VIRTUAL_ADDRESS UploadBonePalette() const;
 
 	/// Blend mode for rendering (default: Opaque)
 	BlendMode blendMode = BlendMode::Opaque;
@@ -66,7 +68,8 @@ public:
 	uint32_t GetTextureHandle() const { return textureHandle_; }
 
 	/// Access material to modify color/alpha
-	Material* GetMaterial() const { return materialData_; }
+	/// (CPU copy; uploaded for each draw, so changes apply to the next Draw call)
+	Material* GetMaterial() { return &material_; }
 
 	WorldTransform worldTransform;
 
@@ -79,13 +82,14 @@ private:
 	Model* model_ = nullptr;
 	Camera* camera_ = nullptr;
 	uint32_t textureHandle_ = 0;
-	Microsoft::WRL::ComPtr<ID3D12Resource> materialResource_;
-	Material* materialData_ = nullptr;
+	// Per-draw constants are kept on the CPU and uploaded through DirectXCommon's per-frame allocator
+	Material material_{};
 
-	// Bone Palette constant buffer (128 matrices * 64 bytes = 8192 bytes)
-	Microsoft::WRL::ComPtr<ID3D12Resource> bonePaletteResource_;
-	Matrix4x4* mappedBonePalette_ = nullptr;
+	// Bone palette (128 matrices * 64 bytes = 8192 bytes); only uploaded for meshes that have bones
+	static constexpr size_t kMaxBones = 128;
+	std::vector<Matrix4x4> bonePalette_;
 	std::vector<Matrix4x4> boneTransforms_;
+	void ResetBonePalette();
 
 	float animationTime_ = 0.0f;
 	float animationSpeed_ = 1.0f;

@@ -68,16 +68,10 @@ public:
 private:
 	void CreateRootSignature();
 	void CreatePSO(DXCManager* dxc);
-	void CreateConstantBuffer();
 
 	DirectXCommon* dxCommon_ = nullptr;
 	Microsoft::WRL::ComPtr<ID3D12RootSignature> rootSignature_;
 	Microsoft::WRL::ComPtr<ID3D12PipelineState> pso_;
-	Microsoft::WRL::ComPtr<ID3D12Resource> constantBuffer_;
-	uint8_t* mappedData_ = nullptr;
-	uint32_t currentSlot_ = 0;
-	static const uint32_t kNumSlots = 16;
-	static const uint32_t kSlotSize = 256;
 
 	SkyboxMode mode_ = SkyboxMode::Gradient;
 	Vector4 topColor_ = { 0.22f, 0.45f, 0.78f, 1.0f };

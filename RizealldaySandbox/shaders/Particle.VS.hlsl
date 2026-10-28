@@ -7,7 +7,7 @@ struct TransformationMatrix
     float32_t4 color;
 };
 
-// Root Parameter 1: Descriptor Table -> StructuredBuffer (t0, Vertex Shader)
+// Root Parameter 1: root SRV -> StructuredBuffer (t0, Vertex Shader), uploaded per frame
 StructuredBuffer<TransformationMatrix> gTransformationMatrices : register(t0);
 
 struct VertexShaderInput

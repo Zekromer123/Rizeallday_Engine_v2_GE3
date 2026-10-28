@@ -1,239 +1,288 @@
 ﻿#include "EditorSuiteInternal.h"
+#include "SceneJson.h"
+#include <chrono>
 
 using EditorSuiteDetail::SceneNameFromPath;
 using EditorSuiteDetail::IsSceneFile;
 
 std::string EditorSuite::SerializeSceneToString() const
 {
-	std::ostringstream ss;
-	ss << "{\n";
-	ss << "  \"sceneName\": \"" << currentSceneName_ << "\",\n";
-	ss << "  \"skybox\": {\n";
-	ss << "    \"mode\": " << static_cast<int>(skybox_.GetMode()) << ",\n";
-	ss << "    \"topColor\": [" << skybox_.GetTopColor().x << ", " << skybox_.GetTopColor().y << ", " << skybox_.GetTopColor().z << ", " << skybox_.GetTopColor().w << "],\n";
-	ss << "    \"horizonColor\": [" << skybox_.GetHorizonColor().x << ", " << skybox_.GetHorizonColor().y << ", " << skybox_.GetHorizonColor().z << ", " << skybox_.GetHorizonColor().w << "],\n";
-	ss << "    \"bottomColor\": [" << skybox_.GetBottomColor().x << ", " << skybox_.GetBottomColor().y << ", " << skybox_.GetBottomColor().z << ", " << skybox_.GetBottomColor().w << "],\n";
-	ss << "    \"solidColor\": [" << skybox_.GetSolidColor().x << ", " << skybox_.GetSolidColor().y << ", " << skybox_.GetSolidColor().z << ", " << skybox_.GetSolidColor().w << "],\n";
-	ss << "    \"cubemapPath\": \"" << skybox_.GetCubemapPath() << "\",\n";
-	ss << "    \"rotation\": " << skybox_.GetRotation() << ",\n";
-	ss << "    \"exposure\": " << skybox_.GetExposure() << "\n";
-	ss << "  },\n";
-	ss << "  \"gameObjects\": [\n";
+	using SceneJson::Json;
+	using SceneJson::Num;
+	using SceneJson::Arr;
 
-	for (size_t i = 0; i < gameObjects_.size(); ++i) {
-		const auto& obj = gameObjects_[i];
-		ss << "    {\n";
-		ss << "      \"id\": " << obj.id << ",\n";
-		ss << "      \"name\": \"" << obj.name << "\",\n";
-		ss << "      \"type\": " << static_cast<int>(obj.type) << ",\n";
-		ss << "      \"isActive\": " << (obj.isActive ? "true" : "false") << ",\n";
-		ss << "      \"isStatic\": " << (obj.isStatic ? "true" : "false") << ",\n";
-		ss << "      \"tag\": \"" << obj.tag << "\",\n";
-		ss << "      \"layer\": " << obj.layer << ",\n";
-		ss << "      \"parentId\": " << obj.parentId << ",\n";
-		ss << "      \"translation\": [" << obj.translation.x << ", " << obj.translation.y << ", " << obj.translation.z << "],\n";
-		ss << "      \"rotation\": [" << obj.rotation.x << ", " << obj.rotation.y << ", " << obj.rotation.z << "],\n";
-		ss << "      \"rotationQuat\": [" << obj.rotationQuat.x << ", " << obj.rotationQuat.y << ", " << obj.rotationQuat.z << ", " << obj.rotationQuat.w << "],\n";
-		ss << "      \"scale\": [" << obj.scale.x << ", " << obj.scale.y << ", " << obj.scale.z << "],\n";
+	Json root = Json::object();
+	root["sceneName"] = currentSceneName_;
 
-		// Mesh
-		ss << "      \"hasMesh\": " << (obj.hasMesh ? "true" : "false") << ",\n";
-		ss << "      \"meshEnabled\": " << (obj.meshEnabled ? "true" : "false") << ",\n";
-		ss << "      \"meshType\": " << static_cast<int>(obj.meshType) << ",\n";
-		ss << "      \"materialColor\": [" << obj.materialColor.x << ", " << obj.materialColor.y << ", " << obj.materialColor.z << ", " << obj.materialColor.w << "],\n";
-		ss << "      \"isLit\": " << (obj.isLit ? "true" : "false") << ",\n";
-		ss << "      \"lightingType\": " << obj.lightingType << ",\n";
-		ss << "      \"shininess\": " << obj.shininess << ",\n";
-		ss << "      \"specularColor\": [" << obj.specularColor.x << ", " << obj.specularColor.y << ", " << obj.specularColor.z << "],\n";
-		ss << "      \"castShadow\": " << (obj.castShadow ? "true" : "false") << ",\n";
-		ss << "      \"receiveShadow\": " << (obj.receiveShadow ? "true" : "false") << ",\n";
-		ss << "      \"useGeometryShader\": " << (obj.useGeometryShader ? "true" : "false") << ",\n";
-		ss << "      \"geometryShaderEffect\": " << obj.geometryShaderEffect << ",\n";
-		ss << "      \"explodeAmount\": " << obj.explodeAmount << ",\n";
-		ss << "      \"texturePath\": \"" << obj.texturePath << "\",\n";
-		ss << "      \"modelPath\": \"" << obj.modelPath << "\",\n";
-		ss << "      \"uvOffset\": [" << obj.uvOffset.x << ", " << obj.uvOffset.y << "],\n";
-		ss << "      \"uvTiling\": [" << obj.uvTiling.x << ", " << obj.uvTiling.y << "],\n";
-		ss << "      \"uvRotation\": " << obj.uvRotation << ",\n";
+	// Scene-level settings are written by WriteSceneSettingsJson (shared with the undo system)
+	Json settings = Json::object();
+	WriteSceneSettingsJson(&settings);
+	root["skybox"] = std::move(settings["skybox"]);
 
-		// Colliders
-		ss << "      \"hasBoxCollider\": " << (obj.hasBoxCollider ? "true" : "false") << ",\n";
-		ss << "      \"boxColliderEnabled\": " << (obj.boxColliderEnabled ? "true" : "false") << ",\n";
-		ss << "      \"isTrigger\": " << (obj.isTrigger ? "true" : "false") << ",\n";
-		ss << "      \"providesContacts\": " << (obj.providesContacts ? "true" : "false") << ",\n";
-		ss << "      \"boxCenter\": [" << obj.boxCenter.x << ", " << obj.boxCenter.y << ", " << obj.boxCenter.z << "],\n";
-		ss << "      \"boxSize\": [" << obj.boxSize.x << ", " << obj.boxSize.y << ", " << obj.boxSize.z << "],\n";
-		ss << "      \"hasSphereCollider\": " << (obj.hasSphereCollider ? "true" : "false") << ",\n";
-		ss << "      \"sphereColliderEnabled\": " << (obj.sphereColliderEnabled ? "true" : "false") << ",\n";
-		ss << "      \"sphereIsTrigger\": " << (obj.sphereIsTrigger ? "true" : "false") << ",\n";
-		ss << "      \"sphereCenter\": [" << obj.sphereCenter.x << ", " << obj.sphereCenter.y << ", " << obj.sphereCenter.z << "],\n";
-		ss << "      \"sphereRadius\": " << obj.sphereRadius << ",\n";
-
-		// Rigidbody
-		ss << "      \"hasRigidbody\": " << (obj.hasRigidbody ? "true" : "false") << ",\n";
-		ss << "      \"rbEnabled\": " << (obj.rbEnabled ? "true" : "false") << ",\n";
-		ss << "      \"mass\": " << obj.mass << ",\n";
-		ss << "      \"drag\": " << obj.drag << ",\n";
-		ss << "      \"gravityScale\": " << obj.gravityScale << ",\n";
-		ss << "      \"useGravity\": " << (obj.useGravity ? "true" : "false") << ",\n";
-		ss << "      \"isKinematic\": " << (obj.isKinematic ? "true" : "false") << ",\n";
-		ss << "      \"bounciness\": " << obj.bounciness << ",\n";
-
-		// Camera
-		ss << "      \"hasCamera\": " << (obj.hasCamera ? "true" : "false") << ",\n";
-		ss << "      \"cameraEnabled\": " << (obj.cameraEnabled ? "true" : "false") << ",\n";
-		ss << "      \"fov\": " << obj.fov << ",\n";
-		ss << "      \"nearClip\": " << obj.nearClip << ",\n";
-		ss << "      \"farClip\": " << obj.farClip << ",\n";
-		ss << "      \"isOrthographic\": " << (obj.isOrthographic ? "true" : "false") << ",\n";
-
-		// Light
-		ss << "      \"hasLight\": " << (obj.hasLight ? "true" : "false") << ",\n";
-		ss << "      \"lightEnabled\": " << (obj.lightEnabled ? "true" : "false") << ",\n";
-		ss << "      \"lightType\": " << static_cast<int>(obj.lightType) << ",\n";
-		ss << "      \"lightColor\": [" << obj.lightColor.x << ", " << obj.lightColor.y << ", " << obj.lightColor.z << "],\n";
-		ss << "      \"lightIntensity\": " << obj.lightIntensity << ",\n";
-		ss << "      \"lightDirection\": [" << obj.lightDirection.x << ", " << obj.lightDirection.y << ", " << obj.lightDirection.z << "],\n";
-		ss << "      \"lightRange\": " << obj.lightRange << ",\n";
-		ss << "      \"lightDecay\": " << obj.lightDecay << ",\n";
-		ss << "      \"lightSpotAngle\": " << obj.lightSpotAngle << ",\n";
-		ss << "      \"lightSpotFalloffStart\": " << obj.lightSpotFalloffStart << ",\n";
-		ss << "      \"lightCastShadow\": " << (obj.lightCastShadow ? "true" : "false") << ",\n";
-		ss << "      \"lightShadowBias\": " << obj.lightShadowBias << ",\n";
-		ss << "      \"lightShadowStrength\": " << obj.lightShadowStrength << ",\n";
-		ss << "      \"lightShadowNormalBias\": " << obj.lightShadowNormalBias << ",\n";
-
-		// Particle System
-		ss << "      \"hasParticleSystem\": " << (obj.hasParticleSystem ? "true" : "false") << ",\n";
-		ss << "      \"attachedParentId\": " << obj.attachedParentId << ",\n";
-		ss << "      \"localOffset\": [" << obj.localOffset.x << ", " << obj.localOffset.y << ", " << obj.localOffset.z << "],\n";
-		ss << "      \"particlePreset\": " << obj.particlePreset << ",\n";
-		ss << "      \"particleShape\": " << obj.particleShape << ",\n";
-		ss << "      \"particleSpawnRadius\": " << obj.particleSpawnRadius << ",\n";
-		ss << "      \"particleBoxExtents\": [" << obj.particleBoxExtents.x << ", " << obj.particleBoxExtents.y << ", " << obj.particleBoxExtents.z << "],\n";
-		ss << "      \"particleConeAngle\": " << obj.particleConeAngle << ",\n";
-		ss << "      \"particleSpawnRate\": " << obj.particleSpawnRate << ",\n";
-		ss << "      \"particleMaxParticles\": " << obj.particleMaxParticles << ",\n";
-		ss << "      \"particleBurstCount\": " << obj.particleBurstCount << ",\n";
-		ss << "      \"particleDirection\": [" << obj.particleDirection.x << ", " << obj.particleDirection.y << ", " << obj.particleDirection.z << "],\n";
-		ss << "      \"particleSpreadAngle\": " << obj.particleSpreadAngle << ",\n";
-		ss << "      \"particleSpeedMin\": " << obj.particleSpeedMin << ",\n";
-		ss << "      \"particleSpeedMax\": " << obj.particleSpeedMax << ",\n";
-		ss << "      \"particleGravity\": " << obj.particleGravity << ",\n";
-		ss << "      \"particleDrag\": " << obj.particleDrag << ",\n";
-		ss << "      \"particleWindEnabled\": " << (obj.particleWindEnabled ? "true" : "false") << ",\n";
-		ss << "      \"particleWindAcceleration\": [" << obj.particleWindAcceleration.x << ", " << obj.particleWindAcceleration.y << ", " << obj.particleWindAcceleration.z << "],\n";
-		ss << "      \"particleLifetimeMin\": " << obj.particleLifetimeMin << ",\n";
-		ss << "      \"particleLifetimeMax\": " << obj.particleLifetimeMax << ",\n";
-		ss << "      \"particleStartScale\": " << obj.particleStartScale << ",\n";
-		ss << "      \"particleEndScale\": " << obj.particleEndScale << ",\n";
-		ss << "      \"particleStartColor\": [" << obj.particleStartColor.x << ", " << obj.particleStartColor.y << ", " << obj.particleStartColor.z << ", " << obj.particleStartColor.w << "],\n";
-		ss << "      \"particleEndColor\": [" << obj.particleEndColor.x << ", " << obj.particleEndColor.y << ", " << obj.particleEndColor.z << ", " << obj.particleEndColor.w << "],\n";
-		ss << "      \"particleBlendMode\": " << obj.particleBlendMode << ",\n";
-		ss << "      \"particleBillboardMode\": " << obj.particleBillboardMode << ",\n";
-
-		// Mapchip, Audio, Animation & Scripts
-		ss << "      \"hasMapchip\": " << (obj.hasMapchip ? "true" : "false") << ",\n";
-		ss << "      \"hasAudioSource\": " << (obj.hasAudioSource ? "true" : "false") << ",\n";
-		ss << "      \"audioClipName\": \"" << obj.audioClipName << "\",\n";
-		ss << "      \"audioVolume\": " << obj.audioVolume << ",\n";
-		ss << "      \"audioPlayOnAwake\": " << (obj.audioPlayOnAwake ? "true" : "false") << ",\n";
-		ss << "      \"audioLoop\": " << (obj.audioLoop ? "true" : "false") << ",\n";
-		ss << "      \"animationIndex\": " << obj.animationIndex << ",\n";
-		ss << "      \"animationSpeed\": " << obj.animationSpeed << ",\n";
-		ss << "      \"animationLoop\": " << (obj.animationLoop ? "true" : "false") << ",\n";
-		ss << "      \"animationPlaying\": " << (obj.animationPlaying ? "true" : "false") << ",\n";
-		ss << "      \"hasScript\": " << ((!obj.scripts.empty() || obj.hasScript) ? "true" : "false") << ",\n";
-		ss << "      \"scriptClassName\": \"" << (!obj.scripts.empty() ? obj.scripts.front().className : obj.scriptClassName) << "\",\n";
-		ss << "      \"scripts\": [";
-		for (size_t sIdx = 0; sIdx < obj.scripts.size(); ++sIdx) {
-			ss << "\"" << obj.scripts[sIdx].className << "\"" << (sIdx + 1 < obj.scripts.size() ? ", " : "");
-		}
-		ss << "],\n";
-		ss << "      \"scriptComponents\": [";
-		for (size_t sIdx = 0; sIdx < obj.scripts.size(); ++sIdx) {
-			const auto& sc = obj.scripts[sIdx];
-			std::map<std::string, GameObject::ScriptSavedFieldValue> fieldsToWrite = sc.savedFields;
-			if (sc.instance) {
-				int fCount = scriptModule_.GetFieldCount(sc.instance.get());
-				for (int fIdx = 0; fIdx < fCount; ++fIdx) {
-					ScriptFieldInfo info{};
-					if (!scriptModule_.GetFieldInfo(sc.instance.get(), fIdx, info) || !info.dataPtr || !info.name || info.name[0] == '\0') continue;
-					GameObject::ScriptSavedFieldValue val{};
-					val.type = info.type;
-					switch (info.type) {
-					case ScriptFieldType::Float: val.floatVal = *static_cast<const float*>(info.dataPtr); break;
-					case ScriptFieldType::Int: val.intVal = *static_cast<const int*>(info.dataPtr); break;
-					case ScriptFieldType::Bool: val.boolVal = *static_cast<const bool*>(info.dataPtr); break;
-					case ScriptFieldType::Vec3: val.vec3Val = *static_cast<const Vector3*>(info.dataPtr); break;
-					case ScriptFieldType::CharBuffer: val.strVal = static_cast<const char*>(info.dataPtr); break;
-					}
-					fieldsToWrite[info.name] = val;
-				}
-			}
-
-			ss << "{\"className\":\"" << sc.className << "\",\"fields\":[";
-			size_t fWritten = 0;
-			for (const auto& [fName, fVal] : fieldsToWrite) {
-				if (fWritten > 0) ss << ",";
-				ss << "{\"name\":\"" << fName << "\",\"type\":" << static_cast<int>(fVal.type);
-				switch (fVal.type) {
-				case ScriptFieldType::Float:
-					ss << ",\"v0\":" << fVal.floatVal << "}";
-					break;
-				case ScriptFieldType::Int:
-					ss << ",\"v0\":" << fVal.intVal << "}";
-					break;
-				case ScriptFieldType::Bool:
-					ss << ",\"v0\":" << (fVal.boolVal ? 1 : 0) << "}";
-					break;
-				case ScriptFieldType::Vec3:
-					ss << ",\"v0\":" << fVal.vec3Val.x << ",\"v1\":" << fVal.vec3Val.y << ",\"v2\":" << fVal.vec3Val.z << "}";
-					break;
-				case ScriptFieldType::CharBuffer: {
-					std::string escaped;
-					for (char ch : fVal.strVal) {
-						if (ch == '\"' || ch == '\\') escaped.push_back('\\');
-						escaped.push_back(ch);
-					}
-					ss << ",\"str\":\"" << escaped << "\"}";
-					break;
-				}
-				}
-				++fWritten;
-			}
-			ss << "]}" << (sIdx + 1 < obj.scripts.size() ? "," : "");
-		}
-		ss << "]\n";
-
-		ss << "    }" << (i < gameObjects_.size() - 1 ? "," : "") << "\n";
+	Json objects = Json::array();
+	for (const auto& obj : gameObjects_) {
+		Json o = Json::object();
+		WriteGameObjectJson(obj, &o);
+		objects.push_back(std::move(o));
 	}
+	root["gameObjects"] = std::move(objects);
+	root["mapchip"] = std::move(settings["mapchip"]);
 
-	ss << "  ],\n";
+	return SceneJson::DumpCompact(root);
+}
+
+// `outJson` is a SceneJson::Json* (kept opaque so EditorSuite.h does not include nlohmann/json)
+void EditorSuite::WriteSceneSettingsJson(void* outJson) const
+{
+	using SceneJson::Json;
+	using SceneJson::Num;
+	using SceneJson::Arr;
+
+	Json& root = *static_cast<Json*>(outJson);
+
+	Json sky = Json::object();
+	sky["mode"] = static_cast<int>(skybox_.GetMode());
+	sky["topColor"] = Arr(skybox_.GetTopColor());
+	sky["horizonColor"] = Arr(skybox_.GetHorizonColor());
+	sky["bottomColor"] = Arr(skybox_.GetBottomColor());
+	sky["solidColor"] = Arr(skybox_.GetSolidColor());
+	sky["cubemapPath"] = skybox_.GetCubemapPath();
+	sky["rotation"] = Num(skybox_.GetRotation());
+	sky["exposure"] = Num(skybox_.GetExposure());
+	root["skybox"] = std::move(sky);
 
 	// Mapchip Data
-	ss << "  \"mapchip\": {\n";
-	ss << "    \"rows\": " << mapRows_ << ",\n";
-	ss << "    \"cols\": " << mapCols_ << ",\n";
-	ss << "    \"tileSize\": " << mapTileSize_ << ",\n";
-	ss << "    \"data\": [\n";
+	Json mapchip = Json::object();
+	mapchip["rows"] = mapRows_;
+	mapchip["cols"] = mapCols_;
+	mapchip["tileSize"] = Num(mapTileSize_);
+	Json data = Json::array();
 	for (int r = 0; r < mapRows_; ++r) {
-		ss << "      [";
+		Json row = Json::array();
 		for (int c = 0; c < mapCols_; ++c) {
-			ss << mapGrid_[r][c] << (c < mapCols_ - 1 ? ", " : "");
+			const bool inRange = r < static_cast<int>(mapGrid_.size()) && c < static_cast<int>(mapGrid_[r].size());
+			row.push_back(inRange ? mapGrid_[r][c] : 0);
 		}
-		ss << "]" << (r < mapRows_ - 1 ? "," : "") << "\n";
+		data.push_back(std::move(row));
 	}
-	ss << "    ]\n";
-	ss << "  }\n";
+	mapchip["data"] = std::move(data);
+	root["mapchip"] = std::move(mapchip);
+}
 
-	ss << "}\n";
-	return ss.str();
+// `outJson` is a SceneJson::Json* receiving one GameObject entry of the scene file
+void EditorSuite::WriteGameObjectJson(const GameObject& obj, void* outJson) const
+{
+	using SceneJson::Json;
+	using SceneJson::Num;
+	using SceneJson::Arr;
+
+	Json& o = *static_cast<Json*>(outJson);
+	o = Json::object();
+	o["id"] = obj.id;
+	o["name"] = obj.name;
+	o["type"] = static_cast<int>(obj.type);
+	o["isActive"] = obj.isActive;
+	o["isStatic"] = obj.isStatic;
+	o["tag"] = obj.tag;
+	o["layer"] = obj.layer;
+	o["collisionMask"] = obj.collisionMask;
+	o["parentId"] = obj.parentId;
+	o["translation"] = Arr(obj.translation);
+	o["rotation"] = Arr(obj.rotation);
+	o["rotationQuat"] = Arr(obj.rotationQuat);
+	o["scale"] = Arr(obj.scale);
+
+	// Mesh
+	o["hasMesh"] = obj.hasMesh;
+	o["meshEnabled"] = obj.meshEnabled;
+	o["meshType"] = static_cast<int>(obj.meshType);
+	o["materialColor"] = Arr(obj.materialColor);
+	o["isLit"] = obj.isLit;
+	o["lightingType"] = obj.lightingType;
+	o["shininess"] = Num(obj.shininess);
+	o["specularColor"] = Arr(obj.specularColor);
+	o["castShadow"] = obj.castShadow;
+	o["receiveShadow"] = obj.receiveShadow;
+	o["useGeometryShader"] = obj.useGeometryShader;
+	o["geometryShaderEffect"] = obj.geometryShaderEffect;
+	o["explodeAmount"] = Num(obj.explodeAmount);
+	o["texturePath"] = obj.texturePath;
+	o["modelPath"] = obj.modelPath;
+	o["uvOffset"] = Arr(obj.uvOffset);
+	o["uvTiling"] = Arr(obj.uvTiling);
+	o["uvRotation"] = Num(obj.uvRotation);
+
+	// Colliders
+	o["hasBoxCollider"] = obj.hasBoxCollider;
+	o["boxColliderEnabled"] = obj.boxColliderEnabled;
+	o["isTrigger"] = obj.isTrigger;
+	o["providesContacts"] = obj.providesContacts;
+	o["boxCenter"] = Arr(obj.boxCenter);
+	o["boxSize"] = Arr(obj.boxSize);
+	o["hasSphereCollider"] = obj.hasSphereCollider;
+	o["sphereColliderEnabled"] = obj.sphereColliderEnabled;
+	o["sphereIsTrigger"] = obj.sphereIsTrigger;
+	o["sphereCenter"] = Arr(obj.sphereCenter);
+	o["sphereRadius"] = Num(obj.sphereRadius);
+
+	// Rigidbody
+	o["hasRigidbody"] = obj.hasRigidbody;
+	o["rbEnabled"] = obj.rbEnabled;
+	o["mass"] = Num(obj.mass);
+	o["drag"] = Num(obj.drag);
+	o["gravityScale"] = Num(obj.gravityScale);
+	o["useGravity"] = obj.useGravity;
+	o["isKinematic"] = obj.isKinematic;
+	o["bounciness"] = Num(obj.bounciness);
+
+	// Camera
+	o["hasCamera"] = obj.hasCamera;
+	o["cameraEnabled"] = obj.cameraEnabled;
+	o["fov"] = Num(obj.fov);
+	o["nearClip"] = Num(obj.nearClip);
+	o["farClip"] = Num(obj.farClip);
+	o["isOrthographic"] = obj.isOrthographic;
+
+	// Light
+	o["hasLight"] = obj.hasLight;
+	o["lightEnabled"] = obj.lightEnabled;
+	o["lightType"] = static_cast<int>(obj.lightType);
+	o["lightColor"] = Arr(obj.lightColor);
+	o["lightIntensity"] = Num(obj.lightIntensity);
+	o["lightDirection"] = Arr(obj.lightDirection);
+	o["lightRange"] = Num(obj.lightRange);
+	o["lightDecay"] = Num(obj.lightDecay);
+	o["lightSpotAngle"] = Num(obj.lightSpotAngle);
+	o["lightSpotFalloffStart"] = Num(obj.lightSpotFalloffStart);
+	o["lightCastShadow"] = obj.lightCastShadow;
+	o["lightShadowBias"] = Num(obj.lightShadowBias);
+	o["lightShadowStrength"] = Num(obj.lightShadowStrength);
+	o["lightShadowNormalBias"] = Num(obj.lightShadowNormalBias);
+
+	// Particle System
+	o["hasParticleSystem"] = obj.hasParticleSystem;
+	o["attachedParentId"] = obj.attachedParentId;
+	o["localOffset"] = Arr(obj.localOffset);
+	o["particlePreset"] = obj.particlePreset;
+	o["particleShape"] = obj.particleShape;
+	o["particleSpawnRadius"] = Num(obj.particleSpawnRadius);
+	o["particleBoxExtents"] = Arr(obj.particleBoxExtents);
+	o["particleConeAngle"] = Num(obj.particleConeAngle);
+	o["particleSpawnRate"] = Num(obj.particleSpawnRate);
+	o["particleMaxParticles"] = obj.particleMaxParticles;
+	o["particleBurstCount"] = obj.particleBurstCount;
+	o["particleDirection"] = Arr(obj.particleDirection);
+	o["particleSpreadAngle"] = Num(obj.particleSpreadAngle);
+	o["particleSpeedMin"] = Num(obj.particleSpeedMin);
+	o["particleSpeedMax"] = Num(obj.particleSpeedMax);
+	o["particleGravity"] = Num(obj.particleGravity);
+	o["particleDrag"] = Num(obj.particleDrag);
+	o["particleWindEnabled"] = obj.particleWindEnabled;
+	o["particleWindAcceleration"] = Arr(obj.particleWindAcceleration);
+	o["particleLifetimeMin"] = Num(obj.particleLifetimeMin);
+	o["particleLifetimeMax"] = Num(obj.particleLifetimeMax);
+	o["particleStartScale"] = Num(obj.particleStartScale);
+	o["particleEndScale"] = Num(obj.particleEndScale);
+	o["particleStartColor"] = Arr(obj.particleStartColor);
+	o["particleEndColor"] = Arr(obj.particleEndColor);
+	o["particleBlendMode"] = obj.particleBlendMode;
+	o["particleBillboardMode"] = obj.particleBillboardMode;
+
+	// Mapchip, Audio, Animation & Scripts
+	o["hasMapchip"] = obj.hasMapchip;
+	o["hasAudioSource"] = obj.hasAudioSource;
+	o["audioClipName"] = obj.audioClipName;
+	o["audioVolume"] = Num(obj.audioVolume);
+	o["audioPlayOnAwake"] = obj.audioPlayOnAwake;
+	o["audioLoop"] = obj.audioLoop;
+	o["animationIndex"] = obj.animationIndex;
+	o["animationSpeed"] = Num(obj.animationSpeed);
+	o["animationLoop"] = obj.animationLoop;
+	o["animationPlaying"] = obj.animationPlaying;
+	o["hasScript"] = (!obj.scripts.empty() || obj.hasScript);
+	o["scriptClassName"] = !obj.scripts.empty() ? obj.scripts.front().className : obj.scriptClassName;
+
+	Json scriptNames = Json::array();
+	for (const auto& sc : obj.scripts) {
+		scriptNames.push_back(sc.className);
+	}
+	o["scripts"] = std::move(scriptNames);
+
+	Json scriptComponents = Json::array();
+	for (const auto& sc : obj.scripts) {
+		// Live instance values override the saved snapshot
+		std::map<std::string, GameObject::ScriptSavedFieldValue> fieldsToWrite = sc.savedFields;
+		if (sc.instance) {
+			int fCount = scriptModule_.GetFieldCount(sc.instance.get());
+			for (int fIdx = 0; fIdx < fCount; ++fIdx) {
+				ScriptFieldInfo info{};
+				if (!scriptModule_.GetFieldInfo(sc.instance.get(), fIdx, info) || !info.dataPtr || !info.name || info.name[0] == '\0') continue;
+				GameObject::ScriptSavedFieldValue val{};
+				val.type = info.type;
+				switch (info.type) {
+				case ScriptFieldType::Float: val.floatVal = *static_cast<const float*>(info.dataPtr); break;
+				case ScriptFieldType::Int: val.intVal = *static_cast<const int*>(info.dataPtr); break;
+				case ScriptFieldType::Bool: val.boolVal = *static_cast<const bool*>(info.dataPtr); break;
+				case ScriptFieldType::Vec3: val.vec3Val = *static_cast<const Vector3*>(info.dataPtr); break;
+				case ScriptFieldType::CharBuffer: val.strVal = static_cast<const char*>(info.dataPtr); break;
+				}
+				fieldsToWrite[info.name] = val;
+			}
+		}
+
+		Json fields = Json::array();
+		for (const auto& [fName, fVal] : fieldsToWrite) {
+			Json f = Json::object();
+			f["name"] = fName;
+			f["type"] = static_cast<int>(fVal.type);
+			switch (fVal.type) {
+			case ScriptFieldType::Float:
+				f["v0"] = Num(fVal.floatVal);
+				break;
+			case ScriptFieldType::Int:
+				f["v0"] = fVal.intVal;
+				break;
+			case ScriptFieldType::Bool:
+				f["v0"] = fVal.boolVal ? 1 : 0;
+				break;
+			case ScriptFieldType::Vec3:
+				f["v0"] = Num(fVal.vec3Val.x);
+				f["v1"] = Num(fVal.vec3Val.y);
+				f["v2"] = Num(fVal.vec3Val.z);
+				break;
+			case ScriptFieldType::CharBuffer:
+				f["str"] = fVal.strVal;
+				break;
+			}
+			fields.push_back(std::move(f));
+		}
+
+		Json comp = Json::object();
+		comp["className"] = sc.className;
+		comp["fields"] = std::move(fields);
+		scriptComponents.push_back(std::move(comp));
+	}
+	o["scriptComponents"] = std::move(scriptComponents);
 }
 
 bool EditorSuite::DeserializeSceneFromString(const std::string& content)
 {
+	using SceneJson::Json;
+
 	if (content.empty()) return false;
+
+	// Parse first: a broken file must never wipe the scene that is currently open
+	std::string parseError;
+	const std::optional<Json> parsed = SceneJson::Parse(content, &parseError);
+	if (!parsed) {
+		LogMessage(std::format("[Scene] Failed to parse scene JSON: {}", parseError), 2);
+		return false;
+	}
+	const Json& root = *parsed;
+	if (!root.is_object()) {
+		LogMessage("[Scene] Failed to parse scene JSON: root is not an object", 2);
+		return false;
+	}
 
 	// Destroy any active script instances before clearing scene objects
 	RefreshAllScriptObjectViews();
@@ -253,459 +302,62 @@ bool EditorSuite::DeserializeSceneFromString(const std::string& content)
 	}
 	gameObjects_.clear();
 	pendingSpawns_.clear();
+	ResetPrefabPools();
+	UIRenderer::GetInstance()->Clear();
 
 	// Read sceneName with fallback to SampleScene
-	size_t namePos = content.find("\"sceneName\": \"");
-	if (namePos != std::string::npos) {
-		size_t endPos = content.find("\"", namePos + 14);
-		if (endPos != std::string::npos) {
-			currentSceneName_ = content.substr(namePos + 14, endPos - (namePos + 14));
-		}
-	} else {
+	if (!SceneJson::Read(root, "sceneName", currentSceneName_)) {
 		currentSceneName_ = "SampleScene";
 	}
 
-	// Helper lambdas for robust fallback parsing
-	auto GetStringField = [](const std::string& block, const std::string& key, std::string& outVal) {
-		std::string token = "\"" + key + "\": \"";
-		size_t p = block.find(token);
-		if (p != std::string::npos) {
-			size_t ep = block.find("\"", p + token.length());
-			if (ep != std::string::npos) outVal = block.substr(p + token.length(), ep - (p + token.length()));
-		}
-	};
-
-	auto GetBoolField = [](const std::string& block, const std::string& key, bool& outVal) {
-		std::string token = "\"" + key + "\": ";
-		size_t p = block.find(token);
-		if (p != std::string::npos) {
-			if (block.substr(p + token.length(), 4) == "true") outVal = true;
-			else if (block.substr(p + token.length(), 5) == "false") outVal = false;
-		}
-	};
-
-	auto GetIntField = [](const std::string& block, const std::string& key, int& outVal) {
-		std::string token = "\"" + key + "\": ";
-		size_t p = block.find(token);
-		if (p != std::string::npos) {
-			sscanf_s(block.c_str() + p + token.length(), "%d", &outVal);
-		}
-	};
-
-	auto GetFloatField = [](const std::string& block, const std::string& key, float& outVal) {
-		std::string token = "\"" + key + "\": ";
-		size_t p = block.find(token);
-		if (p != std::string::npos) {
-			sscanf_s(block.c_str() + p + token.length(), "%f", &outVal);
-		}
-	};
-
-	auto GetVec2Field = [](const std::string& block, const std::string& key, Vector2& outVal) {
-		std::string token = "\"" + key + "\": [";
-		size_t p = block.find(token);
-		if (p != std::string::npos) {
-			sscanf_s(block.c_str() + p + token.length(), "%f, %f", &outVal.x, &outVal.y);
-		}
-	};
-
-	auto GetVec3Field = [](const std::string& block, const std::string& key, Vector3& outVal) {
-		std::string token = "\"" + key + "\": [";
-		size_t p = block.find(token);
-		if (p != std::string::npos) {
-			sscanf_s(block.c_str() + p + token.length(), "%f, %f, %f", &outVal.x, &outVal.y, &outVal.z);
-		}
-	};
-
-	auto GetVec4Field = [](const std::string& block, const std::string& key, Vector4& outVal) {
-		std::string token = "\"" + key + "\": [";
-		size_t p = block.find(token);
-		if (p != std::string::npos) {
-			sscanf_s(block.c_str() + p + token.length(), "%f, %f, %f, %f", &outVal.x, &outVal.y, &outVal.z, &outVal.w);
-		}
-	};
-
-	// Parse Skybox block
-	size_t skyboxPos = content.find("\"skybox\": {");
-	if (skyboxPos != std::string::npos) {
-		size_t skyboxEnd = content.find("}", skyboxPos);
-		if (skyboxEnd != std::string::npos) {
-			std::string skyBlock = content.substr(skyboxPos, skyboxEnd - skyboxPos + 1);
-			int modeInt = 0;
-			GetIntField(skyBlock, "mode", modeInt);
-			skybox_.SetMode(static_cast<SkyboxMode>(modeInt));
-
-			Vector4 top = skybox_.GetTopColor();
-			GetVec4Field(skyBlock, "topColor", top);
-			skybox_.SetTopColor(top);
-
-			Vector4 horiz = skybox_.GetHorizonColor();
-			GetVec4Field(skyBlock, "horizonColor", horiz);
-			skybox_.SetHorizonColor(horiz);
-
-			Vector4 bot = skybox_.GetBottomColor();
-			GetVec4Field(skyBlock, "bottomColor", bot);
-			skybox_.SetBottomColor(bot);
-
-			Vector4 solid = skybox_.GetSolidColor();
-			GetVec4Field(skyBlock, "solidColor", solid);
-			skybox_.SetSolidColor(solid);
-
-			std::string cubemap = skybox_.GetCubemapPath();
-			GetStringField(skyBlock, "cubemapPath", cubemap);
-			skybox_.SetCubemapPath(cubemap);
-			if (skybox_.GetMode() == SkyboxMode::Cubemap) {
-				skybox_.LoadCubemap(cubemap);
-			}
-
-			float rot = skybox_.GetRotation();
-			GetFloatField(skyBlock, "rotation", rot);
-			skybox_.SetRotation(rot);
-
-			float exp = skybox_.GetExposure();
-			GetFloatField(skyBlock, "exposure", exp);
-			skybox_.SetExposure(exp);
-		}
-	}
+	ReadSceneSettingsJson(&root);
 
 	// Parse individual GameObjects
-	size_t objStart = content.find("    {");
-	while (objStart != std::string::npos) {
-		size_t objEnd = content.find("\n    }", objStart);
-		if (objEnd != std::string::npos) {
-			objEnd += 1; // Advance past '\n' to "    }"
-		} else {
-			objEnd = content.find("    }", objStart);
-		}
-		if (objEnd == std::string::npos) break;
-
-		std::string block = content.substr(objStart, objEnd - objStart);
-
-		// Default-initialized GameObject guarantees safe fallback for any missing field
-		GameObject obj;
-		obj.id = nextObjectId_++;
-
-		int typeInt = 0;
-		GetIntField(block, "type", typeInt);
-		obj.type = static_cast<GameObjectType>(typeInt);
-
-		GetStringField(block, "name", obj.name);
-		GetBoolField(block, "isActive", obj.isActive);
-		GetBoolField(block, "isStatic", obj.isStatic);
-		GetStringField(block, "tag", obj.tag);
-
-		int layerInt = 0;
-		GetIntField(block, "layer", layerInt);
-		obj.layer = static_cast<uint32_t>(layerInt);
-
-		GetIntField(block, "parentId", obj.parentId);
-
-		// Transform
-		GetVec3Field(block, "translation", obj.translation);
-		GetVec3Field(block, "rotation", obj.rotation);
-		GetVec3Field(block, "scale", obj.scale);
-
-		Vector4 qVec = { 0.0f, 0.0f, 0.0f, 1.0f };
-		GetVec4Field(block, "rotationQuat", qVec);
-		obj.rotationQuat = { qVec.x, qVec.y, qVec.z, qVec.w };
-		if (obj.rotationQuat.x == 0.0f && obj.rotationQuat.y == 0.0f && obj.rotationQuat.z == 0.0f && obj.rotationQuat.w == 0.0f) {
-			obj.rotationQuat = Quaternion::FromEuler(obj.rotation);
-		}
-
-		// Mesh
-		GetBoolField(block, "hasMesh", obj.hasMesh);
-		GetBoolField(block, "meshEnabled", obj.meshEnabled);
-		int meshTypeInt = 0;
-		GetIntField(block, "meshType", meshTypeInt);
-		obj.meshType = static_cast<GameObject::MeshType>(meshTypeInt);
-		GetVec4Field(block, "materialColor", obj.materialColor);
-		GetBoolField(block, "isLit", obj.isLit);
-		GetIntField(block, "lightingType", obj.lightingType);
-		GetFloatField(block, "shininess", obj.shininess);
-		GetVec3Field(block, "specularColor", obj.specularColor);
-		GetBoolField(block, "castShadow", obj.castShadow);
-		GetBoolField(block, "receiveShadow", obj.receiveShadow);
-		GetBoolField(block, "useGeometryShader", obj.useGeometryShader);
-		GetIntField(block, "geometryShaderEffect", obj.geometryShaderEffect);
-		GetFloatField(block, "explodeAmount", obj.explodeAmount);
-		if (obj.geometryShaderEffect == 0 && obj.useGeometryShader) {
-			obj.geometryShaderEffect = 1;
-		}
-		GetStringField(block, "texturePath", obj.texturePath);
-		if (!obj.texturePath.empty()) {
-			obj.textureHandle = TextureManager::GetInstance()->LoadTexture(ResolveAssetPath(obj.texturePath));
-		}
-		GetStringField(block, "modelPath", obj.modelPath);
-		GetVec2Field(block, "uvOffset", obj.uvOffset);
-		GetVec2Field(block, "uvTiling", obj.uvTiling);
-		GetFloatField(block, "uvRotation", obj.uvRotation);
-
-		// Box Collider
-		GetBoolField(block, "hasBoxCollider", obj.hasBoxCollider);
-		GetBoolField(block, "boxColliderEnabled", obj.boxColliderEnabled);
-		GetBoolField(block, "isTrigger", obj.isTrigger);
-		GetBoolField(block, "providesContacts", obj.providesContacts);
-		GetVec3Field(block, "boxCenter", obj.boxCenter);
-		GetVec3Field(block, "boxSize", obj.boxSize);
-
-		// Sphere Collider
-		GetBoolField(block, "hasSphereCollider", obj.hasSphereCollider);
-		GetBoolField(block, "sphereColliderEnabled", obj.sphereColliderEnabled);
-		GetBoolField(block, "sphereIsTrigger", obj.sphereIsTrigger);
-		GetVec3Field(block, "sphereCenter", obj.sphereCenter);
-		GetFloatField(block, "sphereRadius", obj.sphereRadius);
-
-		// Rigidbody
-		GetBoolField(block, "hasRigidbody", obj.hasRigidbody);
-		GetBoolField(block, "rbEnabled", obj.rbEnabled);
-		GetFloatField(block, "mass", obj.mass);
-		GetFloatField(block, "drag", obj.drag);
-		GetFloatField(block, "gravityScale", obj.gravityScale);
-		GetBoolField(block, "useGravity", obj.useGravity);
-		GetBoolField(block, "isKinematic", obj.isKinematic);
-		GetFloatField(block, "bounciness", obj.bounciness);
-
-		// Camera
-		GetBoolField(block, "hasCamera", obj.hasCamera);
-		GetBoolField(block, "cameraEnabled", obj.cameraEnabled);
-		GetFloatField(block, "fov", obj.fov);
-		GetFloatField(block, "nearClip", obj.nearClip);
-		GetFloatField(block, "farClip", obj.farClip);
-		GetBoolField(block, "isOrthographic", obj.isOrthographic);
-
-		// Light
-		GetBoolField(block, "hasLight", obj.hasLight);
-		GetBoolField(block, "lightEnabled", obj.lightEnabled);
-		int lightTypeInt = 0;
-		GetIntField(block, "lightType", lightTypeInt);
-		obj.lightType = static_cast<GameObject::LightType>(lightTypeInt);
-		GetVec3Field(block, "lightColor", obj.lightColor);
-		GetFloatField(block, "lightIntensity", obj.lightIntensity);
-		GetVec3Field(block, "lightDirection", obj.lightDirection);
-		GetFloatField(block, "lightRange", obj.lightRange);
-		GetFloatField(block, "lightDecay", obj.lightDecay);
-		GetFloatField(block, "lightSpotAngle", obj.lightSpotAngle);
-		GetFloatField(block, "lightSpotFalloffStart", obj.lightSpotFalloffStart);
-		GetBoolField(block, "lightCastShadow", obj.lightCastShadow);
-		GetFloatField(block, "lightShadowBias", obj.lightShadowBias);
-		GetFloatField(block, "lightShadowStrength", obj.lightShadowStrength);
-		GetFloatField(block, "lightShadowNormalBias", obj.lightShadowNormalBias);
-		if (obj.hasLight && (obj.lightType == GameObject::LightType::Directional || obj.lightType == GameObject::LightType::Spot)) {
-			if (std::abs(obj.rotation.x) < 0.0001f && std::abs(obj.rotation.y) < 0.0001f && std::abs(obj.rotation.z) < 0.0001f) {
-				Vector3 d = obj.lightDirection;
-				float dLen = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
-				if (dLen > 0.0001f) {
-					d = { d.x / dLen, d.y / dLen, d.z / dLen };
-					obj.rotation.x = std::asin(std::clamp(-d.y, -1.0f, 1.0f));
-					obj.rotation.y = std::atan2(d.x, d.z);
-					obj.rotation.z = 0.0f;
-					obj.rotationQuat = Quaternion::FromEuler(obj.rotation);
-				}
+	const Json* objectsJson = SceneJson::Find(root, "gameObjects");
+	if (objectsJson && objectsJson->is_array()) {
+		// Pass 1: claim the saved IDs so links (parentId / attachedParentId) survive the round trip.
+		// 0, missing and duplicate IDs get a fresh one in pass 2.
+		std::vector<uint32_t> savedIds(objectsJson->size(), 0);
+		std::unordered_set<uint32_t> usedIds;
+		uint32_t maxLoadedId = 0;
+		for (size_t i = 0; i < objectsJson->size(); ++i) {
+			const Json& oj = (*objectsJson)[i];
+			if (!oj.is_object()) continue;
+			uint32_t savedId = 0;
+			SceneJson::Read(oj, "id", savedId);
+			if (savedId != 0 && usedIds.insert(savedId).second) {
+				savedIds[i] = savedId;
+				maxLoadedId = (std::max)(maxLoadedId, savedId);
 			}
 		}
+		nextObjectId_ = (std::max)(nextObjectId_, maxLoadedId + 1);
 
-		// Particle System
-		GetBoolField(block, "hasParticleSystem", obj.hasParticleSystem);
-		GetIntField(block, "attachedParentId", obj.attachedParentId);
-		GetVec3Field(block, "localOffset", obj.localOffset);
-		GetIntField(block, "particlePreset", obj.particlePreset);
-		GetIntField(block, "particleShape", obj.particleShape);
-		GetFloatField(block, "particleSpawnRadius", obj.particleSpawnRadius);
-		GetVec3Field(block, "particleBoxExtents", obj.particleBoxExtents);
-		GetFloatField(block, "particleConeAngle", obj.particleConeAngle);
-		GetFloatField(block, "particleSpawnRate", obj.particleSpawnRate);
-		GetIntField(block, "particleMaxParticles", obj.particleMaxParticles);
-		GetIntField(block, "particleBurstCount", obj.particleBurstCount);
-		GetVec3Field(block, "particleDirection", obj.particleDirection);
-		GetFloatField(block, "particleSpreadAngle", obj.particleSpreadAngle);
-		GetFloatField(block, "particleSpeedMin", obj.particleSpeedMin);
-		GetFloatField(block, "particleSpeedMax", obj.particleSpeedMax);
-		GetFloatField(block, "particleGravity", obj.particleGravity);
-		GetFloatField(block, "particleDrag", obj.particleDrag);
-		GetBoolField(block, "particleWindEnabled", obj.particleWindEnabled);
-		GetVec3Field(block, "particleWindAcceleration", obj.particleWindAcceleration);
-		GetFloatField(block, "particleLifetimeMin", obj.particleLifetimeMin);
-		GetFloatField(block, "particleLifetimeMax", obj.particleLifetimeMax);
-		GetFloatField(block, "particleStartScale", obj.particleStartScale);
-		GetFloatField(block, "particleEndScale", obj.particleEndScale);
-		GetVec4Field(block, "particleStartColor", obj.particleStartColor);
-		GetVec4Field(block, "particleEndColor", obj.particleEndColor);
-		GetIntField(block, "particleBlendMode", obj.particleBlendMode);
-		GetIntField(block, "particleBillboardMode", obj.particleBillboardMode);
+		// Pass 2: build the objects
+		for (size_t objIndex = 0; objIndex < objectsJson->size(); ++objIndex) {
+			const Json& j = (*objectsJson)[objIndex];
+			if (!j.is_object()) continue;
 
-		// Mapchip, Audio, Animation & Scripts
-		GetBoolField(block, "hasMapchip", obj.hasMapchip);
-		GetBoolField(block, "hasAudioSource", obj.hasAudioSource);
-		GetStringField(block, "audioClipName", obj.audioClipName);
-		GetFloatField(block, "audioVolume", obj.audioVolume);
-		GetBoolField(block, "audioPlayOnAwake", obj.audioPlayOnAwake);
-		GetBoolField(block, "audioLoop", obj.audioLoop);
-		GetIntField(block, "animationIndex", obj.animationIndex);
-		GetFloatField(block, "animationSpeed", obj.animationSpeed);
-		GetBoolField(block, "animationLoop", obj.animationLoop);
-		GetBoolField(block, "animationPlaying", obj.animationPlaying);
-		GetBoolField(block, "hasScript", obj.hasScript);
-		GetStringField(block, "scriptClassName", obj.scriptClassName);
-
-		bool parsedScriptComponents = false;
-		size_t scPos = block.find("\"scriptComponents\": [");
-		if (scPos != std::string::npos) {
-			parsedScriptComponents = true;
-			size_t cursor = scPos + 21;
-			while (cursor < block.size()) {
-				size_t clsTok = block.find("{\"className\":\"", cursor);
-				if (clsTok == std::string::npos) break;
-				size_t clsEnd = block.find("\"", clsTok + 14);
-				if (clsEnd == std::string::npos) break;
-				std::string clsName = block.substr(clsTok + 14, clsEnd - (clsTok + 14));
-
-				GameObject::ScriptComponent sc(clsName);
-				sc.isMissingScript = !scriptModule_.IsRegistered(clsName);
-				if (sc.isMissingScript) {
-					LogMessage(std::format("[Script] Warning: Missing Script '{}' on GameObject '{}'. Preserving saved field data.", clsName, obj.name), 1);
-				}
-
-				size_t fieldsTok = block.find("\"fields\":[", clsEnd);
-				size_t fieldsClose = (fieldsTok != std::string::npos) ? block.find("]}", fieldsTok + 10) : std::string::npos;
-				if (fieldsTok != std::string::npos && fieldsClose != std::string::npos) {
-					std::string fieldsSub = block.substr(fieldsTok + 10, fieldsClose - (fieldsTok + 10));
-					size_t fCur = 0;
-					while (fCur < fieldsSub.size()) {
-						size_t fOpen = fieldsSub.find("{\"name\":\"", fCur);
-						if (fOpen == std::string::npos) break;
-						size_t fEnd = fieldsSub.find("}", fOpen);
-						if (fEnd == std::string::npos) break;
-						std::string fEntry = fieldsSub.substr(fOpen, fEnd - fOpen + 1);
-
-						size_t nEnd = fEntry.find("\"", 9);
-						if (nEnd != std::string::npos) {
-							std::string fName = fEntry.substr(9, nEnd - 9);
-							int fTypeInt = 0;
-							size_t tPos = fEntry.find("\"type\":");
-							if (tPos != std::string::npos) {
-								sscanf_s(fEntry.c_str() + tPos + 7, "%d", &fTypeInt);
-							}
-							GameObject::ScriptSavedFieldValue fVal{};
-							fVal.type = static_cast<ScriptFieldType>(fTypeInt);
-							switch (fVal.type) {
-							case ScriptFieldType::Float: {
-								size_t v0Pos = fEntry.find("\"v0\":");
-								if (v0Pos != std::string::npos) sscanf_s(fEntry.c_str() + v0Pos + 5, "%f", &fVal.floatVal);
-								break;
-							}
-							case ScriptFieldType::Int: {
-								size_t v0Pos = fEntry.find("\"v0\":");
-								if (v0Pos != std::string::npos) sscanf_s(fEntry.c_str() + v0Pos + 5, "%d", &fVal.intVal);
-								break;
-							}
-							case ScriptFieldType::Bool: {
-								int bInt = 0;
-								size_t v0Pos = fEntry.find("\"v0\":");
-								if (v0Pos != std::string::npos) sscanf_s(fEntry.c_str() + v0Pos + 5, "%d", &bInt);
-								fVal.boolVal = (bInt != 0);
-								break;
-							}
-							case ScriptFieldType::Vec3: {
-								size_t v0Pos = fEntry.find("\"v0\":");
-								size_t v1Pos = fEntry.find("\"v1\":");
-								size_t v2Pos = fEntry.find("\"v2\":");
-								if (v0Pos != std::string::npos) sscanf_s(fEntry.c_str() + v0Pos + 5, "%f", &fVal.vec3Val.x);
-								if (v1Pos != std::string::npos) sscanf_s(fEntry.c_str() + v1Pos + 5, "%f", &fVal.vec3Val.y);
-								if (v2Pos != std::string::npos) sscanf_s(fEntry.c_str() + v2Pos + 5, "%f", &fVal.vec3Val.z);
-								break;
-							}
-							case ScriptFieldType::CharBuffer: {
-								size_t sPos = fEntry.find("\"str\":\"");
-								if (sPos != std::string::npos) {
-									std::string unesc;
-									for (size_t si = sPos + 7; si < fEntry.size(); ++si) {
-										if (fEntry[si] == '\\' && si + 1 < fEntry.size()) {
-											unesc.push_back(fEntry[++si]);
-										} else if (fEntry[si] == '\"') {
-											break;
-										} else {
-											unesc.push_back(fEntry[si]);
-										}
-									}
-									fVal.strVal = unesc;
-								}
-								break;
-							}
-							}
-							sc.savedFields[fName] = fVal;
-						}
-						fCur = fEnd + 1;
-					}
-					cursor = fieldsClose + 2;
-				} else {
-					cursor = clsEnd + 1;
-				}
-
-				if (!clsName.empty()) {
-					obj.scripts.push_back(std::move(sc));
-				}
+			// Default-initialized GameObject guarantees safe fallback for any missing field
+			GameObject obj;
+			if (savedIds[objIndex] != 0) {
+				obj.id = savedIds[objIndex];
+			} else {
+				obj.id = nextObjectId_++;
 			}
-		}
 
-		if (!parsedScriptComponents) {
-			size_t scriptsArrPos = block.find("\"scripts\": [");
-			if (scriptsArrPos != std::string::npos) {
-				size_t scriptsArrEnd = block.find("]", scriptsArrPos + 12);
-				if (scriptsArrEnd != std::string::npos) {
-					std::string arrContent = block.substr(scriptsArrPos + 12, scriptsArrEnd - (scriptsArrPos + 12));
-					size_t qStart = arrContent.find("\"");
-					while (qStart != std::string::npos) {
-						size_t qEnd = arrContent.find("\"", qStart + 1);
-						if (qEnd == std::string::npos) break;
-						std::string clsName = arrContent.substr(qStart + 1, qEnd - (qStart + 1));
-						if (!clsName.empty()) {
-							GameObject::ScriptComponent sc(clsName);
-							sc.isMissingScript = !scriptModule_.IsRegistered(clsName);
-							if (sc.isMissingScript) {
-								LogMessage(std::format("[Script] Warning: Missing Script '{}' on GameObject '{}'. Preserving script name on save.", clsName, obj.name), 1);
-							}
-							obj.scripts.push_back(std::move(sc));
-						}
-						qStart = arrContent.find("\"", qEnd + 1);
-					}
-				}
-			} else if (obj.hasScript && !obj.scriptClassName.empty()) {
-				GameObject::ScriptComponent sc(obj.scriptClassName);
-				sc.isMissingScript = !scriptModule_.IsRegistered(obj.scriptClassName);
-				if (sc.isMissingScript) {
-					LogMessage(std::format("[Script] Warning: Missing Script '{}' on GameObject '{}'. Preserving script name on save.", obj.scriptClassName, obj.name), 1);
-				}
-				obj.scripts.push_back(std::move(sc));
-			}
-		}
-		obj.hasScript = !obj.scripts.empty();
-		if (!obj.scripts.empty()) {
-			obj.scriptClassName = obj.scripts.front().className;
-		}
+			ReadGameObjectJson(&j, obj);
 
-		if (obj.hasParticleSystem) {
-			EnsureParticleQuadInitialized(obj);
+			gameObjects_.push_back(std::move(obj));
 		}
-
-		gameObjects_.push_back(std::move(obj));
-		objStart = content.find("    {", objEnd);
 	}
 
 	// Sync parentIndex, childrenIds, and attachToIndex for loaded objects
+	RebuildHierarchyLinks();
+	UpdateWorldMatrices();
 	for (size_t i = 0; i < gameObjects_.size(); ++i) {
-		gameObjects_[i].childrenIds.clear();
-		gameObjects_[i].parentIndex = -1;
 		gameObjects_[i].attachToIndex = -1;
 	}
 	for (size_t i = 0; i < gameObjects_.size(); ++i) {
-		if (gameObjects_[i].parentId != -1) {
-			for (size_t p = 0; p < gameObjects_.size(); ++p) {
-				if (gameObjects_[p].id == static_cast<uint32_t>(gameObjects_[i].parentId)) {
-					gameObjects_[i].parentIndex = static_cast<int>(p);
-					gameObjects_[p].childrenIds.push_back(gameObjects_[i].id);
-					break;
-				}
-			}
-		}
 		if (gameObjects_[i].attachedParentId != -1) {
 			for (size_t p = 0; p < gameObjects_.size(); ++p) {
 				if (gameObjects_[p].id == static_cast<uint32_t>(gameObjects_[i].attachedParentId)) {
@@ -716,36 +368,323 @@ bool EditorSuite::DeserializeSceneFromString(const std::string& content)
 		}
 	}
 
-	// Parse Mapchip section if present
-	size_t mapPos = content.find("\"mapchip\": {");
-	if (mapPos != std::string::npos) {
-		std::string mapBlock = content.substr(mapPos);
-		GetIntField(mapBlock, "rows", mapRows_);
-		GetIntField(mapBlock, "cols", mapCols_);
-		GetFloatField(mapBlock, "tileSize", mapTileSize_);
-
-		size_t dataPos = mapBlock.find("\"data\": [");
-		if (dataPos != std::string::npos) {
-			mapGrid_.assign(mapRows_, std::vector<int>(mapCols_, 0));
-			size_t rowStart = mapBlock.find("[", dataPos + 9);
-			for (int r = 0; r < mapRows_ && rowStart != std::string::npos; ++r) {
-				size_t rowEnd = mapBlock.find("]", rowStart);
-				if (rowEnd == std::string::npos) break;
-				std::string rowStr = mapBlock.substr(rowStart + 1, rowEnd - (rowStart + 1));
-				std::stringstream rss(rowStr);
-				std::string cell;
-				int c = 0;
-				while (std::getline(rss, cell, ',') && c < mapCols_) {
-					try { mapGrid_[r][c++] = std::stoi(cell); } catch (...) {}
-				}
-				rowStart = mapBlock.find("[", rowEnd);
-			}
-		}
-	}
 
 	EnsureEditModeScriptInstances();
 	selectedObjectIndex_ = gameObjects_.empty() ? -1 : 0;
 	return true;
+}
+
+// `json` is a const SceneJson::Json* holding the scene root (reads "skybox" and "mapchip" if present)
+void EditorSuite::ReadSceneSettingsJson(const void* json)
+{
+	using SceneJson::Json;
+	const Json& root = *static_cast<const Json*>(json);
+
+	// Skybox
+	if (const Json* sky = SceneJson::Find(root, "skybox"); sky && sky->is_object()) {
+		int modeInt = 0;
+		SceneJson::Read(*sky, "mode", modeInt);
+		skybox_.SetMode(static_cast<SkyboxMode>(modeInt));
+
+		Vector4 top = skybox_.GetTopColor();
+		SceneJson::Read(*sky, "topColor", top);
+		skybox_.SetTopColor(top);
+
+		Vector4 horiz = skybox_.GetHorizonColor();
+		SceneJson::Read(*sky, "horizonColor", horiz);
+		skybox_.SetHorizonColor(horiz);
+
+		Vector4 bot = skybox_.GetBottomColor();
+		SceneJson::Read(*sky, "bottomColor", bot);
+		skybox_.SetBottomColor(bot);
+
+		Vector4 solid = skybox_.GetSolidColor();
+		SceneJson::Read(*sky, "solidColor", solid);
+		skybox_.SetSolidColor(solid);
+
+		std::string cubemap = skybox_.GetCubemapPath();
+		SceneJson::Read(*sky, "cubemapPath", cubemap);
+		skybox_.SetCubemapPath(cubemap);
+		if (skybox_.GetMode() == SkyboxMode::Cubemap) {
+			skybox_.LoadCubemap(cubemap);
+		}
+
+		float rot = skybox_.GetRotation();
+		SceneJson::Read(*sky, "rotation", rot);
+		skybox_.SetRotation(rot);
+
+		float exp = skybox_.GetExposure();
+		SceneJson::Read(*sky, "exposure", exp);
+		skybox_.SetExposure(exp);
+	}
+
+	// Mapchip section
+	if (const Json* mapJson = SceneJson::Find(root, "mapchip"); mapJson && mapJson->is_object()) {
+		SceneJson::Read(*mapJson, "rows", mapRows_);
+		SceneJson::Read(*mapJson, "cols", mapCols_);
+		SceneJson::Read(*mapJson, "tileSize", mapTileSize_);
+		mapRows_ = (std::max)(mapRows_, 0);
+		mapCols_ = (std::max)(mapCols_, 0);
+
+		const Json* dataJson = SceneJson::Find(*mapJson, "data");
+		if (dataJson && dataJson->is_array()) {
+			mapGrid_.assign(mapRows_, std::vector<int>(mapCols_, 0));
+			for (int r = 0; r < mapRows_ && r < static_cast<int>(dataJson->size()); ++r) {
+				const Json& rowJson = (*dataJson)[static_cast<size_t>(r)];
+				if (!rowJson.is_array()) continue;
+				for (int c = 0; c < mapCols_ && c < static_cast<int>(rowJson.size()); ++c) {
+					const Json& cell = rowJson[static_cast<size_t>(c)];
+					if (cell.is_number()) mapGrid_[r][c] = static_cast<int>(cell.get<double>());
+				}
+			}
+		}
+	}
+}
+
+// `json` is a const SceneJson::Json* for one GameObject entry. The caller assigns obj.id.
+void EditorSuite::ReadGameObjectJson(const void* json, GameObject& obj)
+{
+	using SceneJson::Json;
+	const Json& j = *static_cast<const Json*>(json);
+
+	SceneJson::ReadEnum(j, "type", obj.type);
+
+	SceneJson::Read(j, "name", obj.name);
+	SceneJson::Read(j, "isActive", obj.isActive);
+	SceneJson::Read(j, "isStatic", obj.isStatic);
+	SceneJson::Read(j, "tag", obj.tag);
+	SceneJson::Read(j, "layer", obj.layer);
+	obj.layer &= 31u;
+	SceneJson::Read(j, "collisionMask", obj.collisionMask);
+	SceneJson::Read(j, "parentId", obj.parentId);
+
+	// Transform
+	SceneJson::Read(j, "translation", obj.translation);
+	SceneJson::Read(j, "rotation", obj.rotation);
+	SceneJson::Read(j, "scale", obj.scale);
+
+	obj.rotationQuat = { 0.0f, 0.0f, 0.0f, 1.0f };
+	SceneJson::Read(j, "rotationQuat", obj.rotationQuat);
+	if (obj.rotationQuat.x == 0.0f && obj.rotationQuat.y == 0.0f && obj.rotationQuat.z == 0.0f && obj.rotationQuat.w == 0.0f) {
+		obj.rotationQuat = Quaternion::FromEuler(obj.rotation);
+	}
+
+	// Mesh
+	SceneJson::Read(j, "hasMesh", obj.hasMesh);
+	SceneJson::Read(j, "meshEnabled", obj.meshEnabled);
+	obj.meshType = static_cast<GameObject::MeshType>(0);
+	SceneJson::ReadEnum(j, "meshType", obj.meshType);
+	SceneJson::Read(j, "materialColor", obj.materialColor);
+	SceneJson::Read(j, "isLit", obj.isLit);
+	SceneJson::Read(j, "lightingType", obj.lightingType);
+	SceneJson::Read(j, "shininess", obj.shininess);
+	SceneJson::Read(j, "specularColor", obj.specularColor);
+	SceneJson::Read(j, "castShadow", obj.castShadow);
+	SceneJson::Read(j, "receiveShadow", obj.receiveShadow);
+	SceneJson::Read(j, "useGeometryShader", obj.useGeometryShader);
+	SceneJson::Read(j, "geometryShaderEffect", obj.geometryShaderEffect);
+	SceneJson::Read(j, "explodeAmount", obj.explodeAmount);
+	if (obj.geometryShaderEffect == 0 && obj.useGeometryShader) {
+		obj.geometryShaderEffect = 1;
+	}
+	SceneJson::Read(j, "texturePath", obj.texturePath);
+	if (!obj.texturePath.empty()) {
+		obj.textureHandle = TextureManager::GetInstance()->LoadTexture(ResolveAssetPath(obj.texturePath));
+	}
+	SceneJson::Read(j, "modelPath", obj.modelPath);
+	SceneJson::Read(j, "uvOffset", obj.uvOffset);
+	SceneJson::Read(j, "uvTiling", obj.uvTiling);
+	SceneJson::Read(j, "uvRotation", obj.uvRotation);
+
+	// Box Collider
+	SceneJson::Read(j, "hasBoxCollider", obj.hasBoxCollider);
+	SceneJson::Read(j, "boxColliderEnabled", obj.boxColliderEnabled);
+	SceneJson::Read(j, "isTrigger", obj.isTrigger);
+	SceneJson::Read(j, "providesContacts", obj.providesContacts);
+	SceneJson::Read(j, "boxCenter", obj.boxCenter);
+	SceneJson::Read(j, "boxSize", obj.boxSize);
+
+	// Sphere Collider
+	SceneJson::Read(j, "hasSphereCollider", obj.hasSphereCollider);
+	SceneJson::Read(j, "sphereColliderEnabled", obj.sphereColliderEnabled);
+	SceneJson::Read(j, "sphereIsTrigger", obj.sphereIsTrigger);
+	SceneJson::Read(j, "sphereCenter", obj.sphereCenter);
+	SceneJson::Read(j, "sphereRadius", obj.sphereRadius);
+
+	// Rigidbody
+	SceneJson::Read(j, "hasRigidbody", obj.hasRigidbody);
+	SceneJson::Read(j, "rbEnabled", obj.rbEnabled);
+	SceneJson::Read(j, "mass", obj.mass);
+	SceneJson::Read(j, "drag", obj.drag);
+	SceneJson::Read(j, "gravityScale", obj.gravityScale);
+	SceneJson::Read(j, "useGravity", obj.useGravity);
+	SceneJson::Read(j, "isKinematic", obj.isKinematic);
+	SceneJson::Read(j, "bounciness", obj.bounciness);
+
+	// Camera
+	SceneJson::Read(j, "hasCamera", obj.hasCamera);
+	SceneJson::Read(j, "cameraEnabled", obj.cameraEnabled);
+	SceneJson::Read(j, "fov", obj.fov);
+	SceneJson::Read(j, "nearClip", obj.nearClip);
+	SceneJson::Read(j, "farClip", obj.farClip);
+	SceneJson::Read(j, "isOrthographic", obj.isOrthographic);
+
+	// Light
+	SceneJson::Read(j, "hasLight", obj.hasLight);
+	SceneJson::Read(j, "lightEnabled", obj.lightEnabled);
+	obj.lightType = static_cast<GameObject::LightType>(0);
+	SceneJson::ReadEnum(j, "lightType", obj.lightType);
+	SceneJson::Read(j, "lightColor", obj.lightColor);
+	SceneJson::Read(j, "lightIntensity", obj.lightIntensity);
+	SceneJson::Read(j, "lightDirection", obj.lightDirection);
+	SceneJson::Read(j, "lightRange", obj.lightRange);
+	SceneJson::Read(j, "lightDecay", obj.lightDecay);
+	SceneJson::Read(j, "lightSpotAngle", obj.lightSpotAngle);
+	SceneJson::Read(j, "lightSpotFalloffStart", obj.lightSpotFalloffStart);
+	SceneJson::Read(j, "lightCastShadow", obj.lightCastShadow);
+	SceneJson::Read(j, "lightShadowBias", obj.lightShadowBias);
+	SceneJson::Read(j, "lightShadowStrength", obj.lightShadowStrength);
+	SceneJson::Read(j, "lightShadowNormalBias", obj.lightShadowNormalBias);
+	if (obj.hasLight && (obj.lightType == GameObject::LightType::Directional || obj.lightType == GameObject::LightType::Spot)) {
+		if (std::abs(obj.rotation.x) < 0.0001f && std::abs(obj.rotation.y) < 0.0001f && std::abs(obj.rotation.z) < 0.0001f) {
+			Vector3 d = obj.lightDirection;
+			float dLen = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+			if (dLen > 0.0001f) {
+				d = { d.x / dLen, d.y / dLen, d.z / dLen };
+				obj.rotation.x = std::asin(std::clamp(-d.y, -1.0f, 1.0f));
+				obj.rotation.y = std::atan2(d.x, d.z);
+				obj.rotation.z = 0.0f;
+				obj.rotationQuat = Quaternion::FromEuler(obj.rotation);
+			}
+		}
+	}
+
+	// Particle System
+	SceneJson::Read(j, "hasParticleSystem", obj.hasParticleSystem);
+	SceneJson::Read(j, "attachedParentId", obj.attachedParentId);
+	SceneJson::Read(j, "localOffset", obj.localOffset);
+	SceneJson::Read(j, "particlePreset", obj.particlePreset);
+	SceneJson::Read(j, "particleShape", obj.particleShape);
+	SceneJson::Read(j, "particleSpawnRadius", obj.particleSpawnRadius);
+	SceneJson::Read(j, "particleBoxExtents", obj.particleBoxExtents);
+	SceneJson::Read(j, "particleConeAngle", obj.particleConeAngle);
+	SceneJson::Read(j, "particleSpawnRate", obj.particleSpawnRate);
+	SceneJson::Read(j, "particleMaxParticles", obj.particleMaxParticles);
+	SceneJson::Read(j, "particleBurstCount", obj.particleBurstCount);
+	SceneJson::Read(j, "particleDirection", obj.particleDirection);
+	SceneJson::Read(j, "particleSpreadAngle", obj.particleSpreadAngle);
+	SceneJson::Read(j, "particleSpeedMin", obj.particleSpeedMin);
+	SceneJson::Read(j, "particleSpeedMax", obj.particleSpeedMax);
+	SceneJson::Read(j, "particleGravity", obj.particleGravity);
+	SceneJson::Read(j, "particleDrag", obj.particleDrag);
+	SceneJson::Read(j, "particleWindEnabled", obj.particleWindEnabled);
+	SceneJson::Read(j, "particleWindAcceleration", obj.particleWindAcceleration);
+	SceneJson::Read(j, "particleLifetimeMin", obj.particleLifetimeMin);
+	SceneJson::Read(j, "particleLifetimeMax", obj.particleLifetimeMax);
+	SceneJson::Read(j, "particleStartScale", obj.particleStartScale);
+	SceneJson::Read(j, "particleEndScale", obj.particleEndScale);
+	SceneJson::Read(j, "particleStartColor", obj.particleStartColor);
+	SceneJson::Read(j, "particleEndColor", obj.particleEndColor);
+	SceneJson::Read(j, "particleBlendMode", obj.particleBlendMode);
+	SceneJson::Read(j, "particleBillboardMode", obj.particleBillboardMode);
+
+	// Mapchip, Audio, Animation & Scripts
+	SceneJson::Read(j, "hasMapchip", obj.hasMapchip);
+	SceneJson::Read(j, "hasAudioSource", obj.hasAudioSource);
+	SceneJson::Read(j, "audioClipName", obj.audioClipName);
+	SceneJson::Read(j, "audioVolume", obj.audioVolume);
+	SceneJson::Read(j, "audioPlayOnAwake", obj.audioPlayOnAwake);
+	SceneJson::Read(j, "audioLoop", obj.audioLoop);
+	SceneJson::Read(j, "animationIndex", obj.animationIndex);
+	SceneJson::Read(j, "animationSpeed", obj.animationSpeed);
+	SceneJson::Read(j, "animationLoop", obj.animationLoop);
+	SceneJson::Read(j, "animationPlaying", obj.animationPlaying);
+	SceneJson::Read(j, "hasScript", obj.hasScript);
+	SceneJson::Read(j, "scriptClassName", obj.scriptClassName);
+
+	const Json* scComponents = SceneJson::Find(j, "scriptComponents");
+	const bool parsedScriptComponents = (scComponents && scComponents->is_array());
+	if (parsedScriptComponents) {
+		for (const Json& cj : *scComponents) {
+			if (!cj.is_object()) continue;
+			std::string clsName;
+			SceneJson::Read(cj, "className", clsName);
+			if (clsName.empty()) continue;
+
+			GameObject::ScriptComponent sc(clsName);
+			sc.isMissingScript = !scriptModule_.IsRegistered(clsName);
+			if (sc.isMissingScript) {
+				LogMessage(std::format("[Script] Warning: Missing Script '{}' on GameObject '{}'. Preserving saved field data.", clsName, obj.name), 1);
+			}
+
+			const Json* fieldsJson = SceneJson::Find(cj, "fields");
+			if (fieldsJson && fieldsJson->is_array()) {
+				for (const Json& fj : *fieldsJson) {
+					if (!fj.is_object()) continue;
+					std::string fName;
+					if (!SceneJson::Read(fj, "name", fName)) continue;
+
+					int fTypeInt = 0;
+					SceneJson::Read(fj, "type", fTypeInt);
+					GameObject::ScriptSavedFieldValue fVal{};
+					fVal.type = static_cast<ScriptFieldType>(fTypeInt);
+					switch (fVal.type) {
+					case ScriptFieldType::Float:
+						SceneJson::Read(fj, "v0", fVal.floatVal);
+						break;
+					case ScriptFieldType::Int:
+						SceneJson::Read(fj, "v0", fVal.intVal);
+						break;
+					case ScriptFieldType::Bool:
+						SceneJson::Read(fj, "v0", fVal.boolVal);
+						break;
+					case ScriptFieldType::Vec3:
+						SceneJson::Read(fj, "v0", fVal.vec3Val.x);
+						SceneJson::Read(fj, "v1", fVal.vec3Val.y);
+						SceneJson::Read(fj, "v2", fVal.vec3Val.z);
+						break;
+					case ScriptFieldType::CharBuffer:
+						SceneJson::Read(fj, "str", fVal.strVal);
+						break;
+					}
+					sc.savedFields[fName] = fVal;
+				}
+			}
+			obj.scripts.push_back(std::move(sc));
+		}
+	}
+
+	if (!parsedScriptComponents) {
+		const Json* scriptsJson = SceneJson::Find(j, "scripts");
+		if (scriptsJson && scriptsJson->is_array()) {
+			for (const Json& nameJson : *scriptsJson) {
+				if (!nameJson.is_string()) continue;
+				const std::string clsName = nameJson.get<std::string>();
+				if (clsName.empty()) continue;
+				GameObject::ScriptComponent sc(clsName);
+				sc.isMissingScript = !scriptModule_.IsRegistered(clsName);
+				if (sc.isMissingScript) {
+					LogMessage(std::format("[Script] Warning: Missing Script '{}' on GameObject '{}'. Preserving script name on save.", clsName, obj.name), 1);
+				}
+				obj.scripts.push_back(std::move(sc));
+			}
+		} else if (obj.hasScript && !obj.scriptClassName.empty()) {
+			GameObject::ScriptComponent sc(obj.scriptClassName);
+			sc.isMissingScript = !scriptModule_.IsRegistered(obj.scriptClassName);
+			if (sc.isMissingScript) {
+				LogMessage(std::format("[Script] Warning: Missing Script '{}' on GameObject '{}'. Preserving script name on save.", obj.scriptClassName, obj.name), 1);
+			}
+			obj.scripts.push_back(std::move(sc));
+		}
+	}
+	obj.hasScript = !obj.scripts.empty();
+	if (!obj.scripts.empty()) {
+		obj.scriptClassName = obj.scripts.front().className;
+	}
+
+	if (obj.hasParticleSystem) {
+		EnsureParticleQuadInitialized(obj);
+	}
 }
 
 bool EditorSuite::SaveScene(const std::string& filePath)
@@ -793,9 +732,7 @@ bool EditorSuite::LoadScene(const std::string& filePath)
 	currentSceneName_ = SceneNameFromPath(filePath);
 	isSceneDirty_ = false;
 
-	undoStack_.clear();
-	redoStack_.clear();
-	PushUndoSnapshot();
+	ResetUndoHistory();
 	isSceneDirty_ = false;
 
 	LogMessage(std::format("[Scene] Loaded scene from: {} ({} objects)", filePath, gameObjects_.size()), 0);
@@ -809,6 +746,8 @@ void EditorSuite::NewScene()
 	}
 	pendingDeletes_.clear();
 	pendingSpawns_.clear();
+	ResetPrefabPools();
+	UIRenderer::GetInstance()->Clear();
 	pendingDuplicateIndex_ = -1;
 	CollisionManager::GetInstance()->Clear();
 	gameObjects_.clear();
@@ -870,9 +809,7 @@ void EditorSuite::NewScene()
 	}
 
 	selectedObjectIndex_ = 2; // Ground Plane
-	undoStack_.clear();
-	redoStack_.clear();
-	PushUndoSnapshot();
+	ResetUndoHistory();
 	isSceneDirty_ = false;
 
 	LogMessage("[Scene] Created Clean Default Scene (SampleScene).", 0);
@@ -888,18 +825,196 @@ void EditorSuite::DiscardUnsavedChanges()
 	LogMessage("[Scene] Discarded unsaved changes.", 0);
 }
 
+// ---------------------------------------------------------------------------
+// Command-based undo
+// ---------------------------------------------------------------------------
+
+namespace {
+	std::string DumpForUndo(const SceneJson::Json& j)
+	{
+		// Same UTF-8 tolerance as scene files (ANSI paths must not throw)
+		return j.dump(-1, ' ', false, SceneJson::Json::error_handler_t::replace);
+	}
+
+	double NowSeconds()
+	{
+		using namespace std::chrono;
+		return duration<double>(steady_clock::now().time_since_epoch()).count();
+	}
+}
+
+EditorSuite::UndoSceneState EditorSuite::CaptureUndoState() const
+{
+	using SceneJson::Json;
+	UndoSceneState state;
+	state.order.reserve(gameObjects_.size());
+	state.objects.reserve(gameObjects_.size());
+	for (const auto& obj : gameObjects_) {
+		Json o = Json::object();
+		WriteGameObjectJson(obj, &o);
+		state.order.push_back(obj.id);
+		state.objects[obj.id] = DumpForUndo(o);
+	}
+	Json settings = Json::object();
+	WriteSceneSettingsJson(&settings);
+	state.settings = DumpForUndo(settings);
+	return state;
+}
+
 void EditorSuite::PushUndoSnapshot()
 {
-	std::string stateJson = SerializeSceneToString();
-	if (!undoStack_.empty() && undoStack_.back() == stateJson) {
+	undoPushPending_ = false;
+
+	// Play-mode changes are reverted by the play snapshot, so they never enter the history
+	if (sceneState_ != EditorSceneState::Edit || IsStandaloneMode()) {
 		return;
 	}
 
-	undoStack_.push_back(stateJson);
-	if (undoStack_.size() > maxUndoStates_) {
-		undoStack_.erase(undoStack_.begin());
+	UndoSceneState current = CaptureUndoState();
+
+	std::unordered_map<uint32_t, int> indexBefore;
+	std::unordered_map<uint32_t, int> indexAfter;
+	for (size_t i = 0; i < undoBaseline_.order.size(); ++i) indexBefore[undoBaseline_.order[i]] = static_cast<int>(i);
+	for (size_t i = 0; i < current.order.size(); ++i) indexAfter[current.order[i]] = static_cast<int>(i);
+
+	UndoCommand cmd;
+	// Deleted objects
+	for (uint32_t id : undoBaseline_.order) {
+		if (current.objects.count(id) == 0) {
+			cmd.changes.push_back({ id, indexBefore[id], -1, undoBaseline_.objects[id], std::string() });
+		}
 	}
-	redoStack_.clear();
+	// Created / modified / moved objects
+	for (uint32_t id : current.order) {
+		auto it = undoBaseline_.objects.find(id);
+		if (it == undoBaseline_.objects.end()) {
+			cmd.changes.push_back({ id, -1, indexAfter[id], std::string(), current.objects[id] });
+		} else if (it->second != current.objects[id] || indexBefore[id] != indexAfter[id]) {
+			cmd.changes.push_back({ id, indexBefore[id], indexAfter[id], it->second, current.objects[id] });
+		}
+	}
+	if (current.settings != undoBaseline_.settings) {
+		cmd.settingsBefore = undoBaseline_.settings;
+		cmd.settingsAfter = current.settings;
+	}
+	if (cmd.changes.empty() && cmd.settingsBefore.empty()) {
+		return; // nothing changed
+	}
+	cmd.timeSeconds = NowSeconds();
+
+	// Merge continuous edits of the same objects (slider/gizmo drags call this every frame)
+	bool merged = false;
+	if (undoMergeAllowed_ && !undoCommands_.empty()) {
+		UndoCommand& prev = undoCommands_.back();
+		auto onlyModifications = [](const UndoCommand& c) {
+			for (const auto& ch : c.changes) {
+				if (ch.before.empty() || ch.after.empty()) return false;
+			}
+			return true;
+		};
+		bool sameObjects = prev.changes.size() == cmd.changes.size();
+		for (size_t i = 0; sameObjects && i < cmd.changes.size(); ++i) {
+			sameObjects = prev.changes[i].id == cmd.changes[i].id;
+		}
+		const bool sameSettingsShape = prev.settingsBefore.empty() == cmd.settingsBefore.empty();
+		if (sameObjects && sameSettingsShape && onlyModifications(prev) && onlyModifications(cmd) &&
+			cmd.timeSeconds - prev.timeSeconds < kUndoMergeWindowSeconds) {
+			for (size_t i = 0; i < cmd.changes.size(); ++i) {
+				prev.changes[i].after = std::move(cmd.changes[i].after);
+				prev.changes[i].indexAfter = cmd.changes[i].indexAfter;
+			}
+			if (!cmd.settingsAfter.empty()) prev.settingsAfter = std::move(cmd.settingsAfter);
+			prev.timeSeconds = cmd.timeSeconds;
+			merged = true;
+		}
+	}
+	if (!merged) {
+		undoCommands_.push_back(std::move(cmd));
+		if (undoCommands_.size() > kMaxUndoCommands) {
+			undoCommands_.erase(undoCommands_.begin());
+		}
+	}
+
+	redoCommands_.clear();
+	undoBaseline_ = std::move(current);
+	undoMergeAllowed_ = true;
+}
+
+void EditorSuite::ApplyUndoCommand(const UndoCommand& cmd, bool undo)
+{
+	using SceneJson::Json;
+
+	const uint32_t selectedId = (selectedObjectIndex_ >= 0 && selectedObjectIndex_ < static_cast<int>(gameObjects_.size()))
+		? gameObjects_[selectedObjectIndex_].id : 0;
+
+	// Indices queued for deletion/duplication would be stale after the patch
+	pendingDeletes_.clear();
+	pendingDuplicateIndex_ = -1;
+
+	auto findIndex = [&](uint32_t id) -> int {
+		for (size_t i = 0; i < gameObjects_.size(); ++i) {
+			if (gameObjects_[i].id == id) return static_cast<int>(i);
+		}
+		return -1;
+	};
+
+	// 1. Remove every object touched by the command; the ones that exist on the target side are re-inserted below
+	for (const auto& ch : cmd.changes) {
+		const int idx = findIndex(ch.id);
+		if (idx >= 0) {
+			gameObjects_.erase(gameObjects_.begin() + idx);
+		}
+	}
+
+	// 2. Re-insert target-side objects in ascending target index so they land at their recorded positions
+	std::vector<const UndoObjectChange*> inserts;
+	for (const auto& ch : cmd.changes) {
+		if (!(undo ? ch.before : ch.after).empty()) inserts.push_back(&ch);
+	}
+	std::sort(inserts.begin(), inserts.end(), [undo](const UndoObjectChange* a, const UndoObjectChange* b) {
+		return (undo ? a->indexBefore : a->indexAfter) < (undo ? b->indexBefore : b->indexAfter);
+	});
+	for (const UndoObjectChange* ch : inserts) {
+		const std::string& text = undo ? ch->before : ch->after;
+		std::optional<Json> parsed = SceneJson::Parse(text);
+		if (!parsed || !parsed->is_object()) {
+			LogMessage(std::format("[Undo] Could not restore GameObject {} (invalid snapshot).", ch->id), 2);
+			continue;
+		}
+		GameObject obj;
+		obj.id = ch->id;
+		ReadGameObjectJson(&*parsed, obj);
+		obj.id = ch->id;
+		nextObjectId_ = (std::max)(nextObjectId_, ch->id + 1);
+
+		int target = undo ? ch->indexBefore : ch->indexAfter;
+		target = std::clamp(target, 0, static_cast<int>(gameObjects_.size()));
+		gameObjects_.insert(gameObjects_.begin() + target, std::move(obj));
+	}
+
+	// 3. Scene settings
+	const std::string& settingsText = undo ? cmd.settingsBefore : cmd.settingsAfter;
+	if (!settingsText.empty()) {
+		if (std::optional<Json> settings = SceneJson::Parse(settingsText)) {
+			ReadSceneSettingsJson(&*settings);
+		}
+	}
+
+	// 4. Re-derive caches that depend on indices / links
+	RebuildHierarchyLinks();
+	for (auto& obj : gameObjects_) {
+		obj.attachToIndex = (obj.attachedParentId != -1) ? findIndex(static_cast<uint32_t>(obj.attachedParentId)) : -1;
+	}
+	UpdateWorldMatrices();
+	EnsureEditModeScriptInstances();
+	RefreshAllScriptObjectViews();
+
+	selectedObjectIndex_ = selectedId ? findIndex(selectedId) : -1;
+
+	undoBaseline_ = CaptureUndoState();
+	isSceneDirty_ = true;
+	undoMergeAllowed_ = false;
+	undoPushPending_ = false;
 }
 
 void EditorSuite::Undo()
@@ -908,16 +1023,17 @@ void EditorSuite::Undo()
 	ImGuiIO& io = ImGui::GetIO();
 	if (io.WantTextInput) return; // Must not run while text field is active
 #endif
-	if (sceneState_ == EditorSceneState::Play) return; // Disabled in Play mode
+	if (sceneState_ != EditorSceneState::Edit) return; // Disabled in Play / Pause
 
-	if (undoStack_.size() > 1) {
-		redoStack_.push_back(undoStack_.back());
-		undoStack_.pop_back();
+	// Record a pending (not yet pushed) edit first so it can be undone too
+	PushUndoSnapshot();
+	if (undoCommands_.empty()) return;
 
-		DeserializeSceneFromString(undoStack_.back());
-		isSceneDirty_ = true;
-		LogMessage("[Undo] Reverted to previous scene state.", 0);
-	}
+	UndoCommand cmd = std::move(undoCommands_.back());
+	undoCommands_.pop_back();
+	ApplyUndoCommand(cmd, true);
+	LogMessage(std::format("[Undo] Reverted {} object change(s).", cmd.changes.size()), 0);
+	redoCommands_.push_back(std::move(cmd));
 }
 
 void EditorSuite::Redo()
@@ -926,16 +1042,21 @@ void EditorSuite::Redo()
 	ImGuiIO& io = ImGui::GetIO();
 	if (io.WantTextInput) return;
 #endif
-	if (sceneState_ == EditorSceneState::Play) return;
+	if (sceneState_ != EditorSceneState::Edit) return;
+	if (redoCommands_.empty()) return;
 
-	if (!redoStack_.empty()) {
-		std::string nextState = redoStack_.back();
-		redoStack_.pop_back();
-		undoStack_.push_back(nextState);
-
-		DeserializeSceneFromString(nextState);
-		isSceneDirty_ = true;
-		LogMessage("[Redo] Restored undone scene state.", 0);
-	}
+	UndoCommand cmd = std::move(redoCommands_.back());
+	redoCommands_.pop_back();
+	ApplyUndoCommand(cmd, false);
+	LogMessage(std::format("[Redo] Re-applied {} object change(s).", cmd.changes.size()), 0);
+	undoCommands_.push_back(std::move(cmd));
 }
 
+void EditorSuite::ResetUndoHistory()
+{
+	undoCommands_.clear();
+	redoCommands_.clear();
+	undoBaseline_ = CaptureUndoState();
+	undoMergeAllowed_ = false;
+	undoPushPending_ = false;
+}

@@ -1,5 +1,6 @@
 ﻿#include "framework/Framework.h"
 #include "base/RizeEngine.h"
+#include "base/Profiler.h"
 #include <Windows.h>
 #include <algorithm>
 
@@ -21,8 +22,14 @@ void Framework::Run() {
 		lastTime_ = currentTime;
 		deltaTime_ = std::clamp(deltaTime_, 0.0001f, 0.1f);
 
-		Update(deltaTime_);
-		Draw();
+		{
+			RIZE_PROFILE_CPU("Update");
+			Update(deltaTime_);
+		}
+		{
+			RIZE_PROFILE_CPU("Draw");
+			Draw();
+		}
 
 		RizeEngine::EndFrame();
 	}

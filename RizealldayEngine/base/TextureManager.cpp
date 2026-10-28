@@ -16,7 +16,8 @@ TextureManager* TextureManager::GetInstance()
 void TextureManager::Initialize(DirectXCommon* dxCommon)
 {
 	dxCommon_ = dxCommon;
-	nextIndex_ = 1; // 0 reserved for ImGui
+	textureResources_.assign(DirectXCommon::kMaxSrvDescriptors, nullptr);
+	textureMetadatas_.assign(DirectXCommon::kMaxSrvDescriptors, DirectX::TexMetadata{});
 	textureCache_.clear();
 
 	fallbackMetadata_ = {};
@@ -43,7 +44,7 @@ void TextureManager::Initialize(DirectXCommon* dxCommon)
 			uint32_t whitePixel = 0xFFFFFFFF;
 			memcpy(img->pixels, &whitePixel, sizeof(whitePixel));
 
-			uint32_t handle = nextIndex_++;
+			uint32_t handle = dxCommon_->AllocateSrvIndex();
 			defaultWhiteHandle_ = handle;
 
 			Microsoft::WRL::ComPtr<ID3D12Resource> resource = CreateTextureResource(whiteImg.GetMetadata());
@@ -115,11 +116,11 @@ uint32_t TextureManager::LoadTexture(const std::string& filePath)
 		return defaultWhiteHandle_;
 	}
 
-	if (nextIndex_ >= kMaxTextures) {
+	if (!dxCommon_->HasFreeSrvIndex()) {
 		static bool sLoggedLimit = false;
 		if (!sLoggedLimit) {
 			sLoggedLimit = true;
-			Log::GetInstance()->logOutput("[TextureManager] Permanent texture slot limit (128) reached; falling back to transient preview slot.\n");
+			Log::GetInstance()->logOutput("[TextureManager] SRV descriptor heap is full; falling back to transient preview slot.\n");
 		}
 		return LoadPreviewTexture(filePath);
 	}
@@ -162,7 +163,7 @@ uint32_t TextureManager::LoadTexture(const std::string& filePath)
 		}
 	}
 
-	uint32_t candidateHandle = nextIndex_;
+	uint32_t candidateHandle = dxCommon_->PeekSrvIndex();
 	D3D12_CPU_DESCRIPTOR_HANDLE srvCPUHandle = dxCommon_->GetSrvCPUDescriptorHandle(candidateHandle);
 	if (srvCPUHandle.ptr == 0) {
 		return defaultWhiteHandle_;
@@ -196,7 +197,7 @@ uint32_t TextureManager::LoadTexture(const std::string& filePath)
 		return defaultWhiteHandle_;
 	}
 
-	uint32_t handle = nextIndex_++;
+	uint32_t handle = dxCommon_->AllocateSrvIndex();
 
 	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 	srvDesc.Format = metadata.format;
@@ -210,6 +211,62 @@ uint32_t TextureManager::LoadTexture(const std::string& filePath)
 	textureMetadatas_[handle] = metadata;
 	textureCache_[normKey] = handle;
 
+	return handle;
+}
+
+uint32_t TextureManager::CreateTextureFromRGBA(const std::string& cacheKey, const uint8_t* rgba, uint32_t width, uint32_t height)
+{
+	if (!dxCommon_ || dxCommon_->IsDeviceLost() || !rgba || width == 0 || height == 0) {
+		return defaultWhiteHandle_;
+	}
+	const std::string key = "memory:" + cacheKey;
+	if (auto it = textureCache_.find(key); it != textureCache_.end()) {
+		return it->second;
+	}
+
+	DirectX::ScratchImage image;
+	if (FAILED(image.Initialize2D(DXGI_FORMAT_R8G8B8A8_UNORM, width, height, 1, 1))) {
+		return defaultWhiteHandle_;
+	}
+	const DirectX::Image* img = image.GetImage(0, 0, 0);
+	if (!img || !img->pixels) {
+		return defaultWhiteHandle_;
+	}
+	for (uint32_t y = 0; y < height; ++y) {
+		memcpy(img->pixels + y * img->rowPitch, rgba + static_cast<size_t>(y) * width * 4, static_cast<size_t>(width) * 4);
+	}
+
+	Microsoft::WRL::ComPtr<ID3D12Resource> resource = CreateTextureResource(image.GetMetadata());
+	if (!resource) {
+		return defaultWhiteHandle_;
+	}
+	uploadAllocator_->Reset();
+	uploadCommandList_->Reset(uploadAllocator_.Get(), nullptr);
+	Microsoft::WRL::ComPtr<ID3D12Resource> intermediateResource = UploadTextureData(resource.Get(), image);
+	uploadCommandList_->Close();
+	if (!intermediateResource) {
+		return defaultWhiteHandle_;
+	}
+	ID3D12CommandList* commandLists[] = { uploadCommandList_.Get() };
+	dxCommon_->GetCommandQueue()->ExecuteCommandLists(1, commandLists);
+	dxCommon_->SignalAndWaitFence();
+	if (dxCommon_->IsDeviceLost()) {
+		return defaultWhiteHandle_;
+	}
+
+	const uint32_t handle = dxCommon_->AllocateSrvIndex();
+	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+	srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+	srvDesc.Texture2D.MipLevels = 1;
+	D3D12_CPU_DESCRIPTOR_HANDLE srvCPUHandle = dxCommon_->GetSrvDescriptorHeap()->GetCPUDescriptorHandleForHeapStart();
+	srvCPUHandle.ptr += dxCommon_->GetSrvDescriptorSize() * handle;
+	dxCommon_->GetDevice()->CreateShaderResourceView(resource.Get(), &srvDesc, srvCPUHandle);
+
+	textureResources_[handle] = resource;
+	textureMetadatas_[handle] = image.GetMetadata();
+	textureCache_[key] = handle;
 	return handle;
 }
 
@@ -345,7 +402,7 @@ D3D12_GPU_DESCRIPTOR_HANDLE TextureManager::GetGPUHandle(uint32_t textureHandle)
 
 const DirectX::TexMetadata& TextureManager::GetMetaData(uint32_t textureHandle) const
 {
-	if (textureHandle < kMaxTextures && textureResources_[textureHandle] != nullptr) {
+	if (textureHandle < textureResources_.size() && textureResources_[textureHandle] != nullptr) {
 		return textureMetadatas_[textureHandle];
 	}
 	if (textureHandle >= kPreviewSrvBaseIndex &&
@@ -353,7 +410,7 @@ const DirectX::TexMetadata& TextureManager::GetMetaData(uint32_t textureHandle) 
 		previewTextureResource_ != nullptr) {
 		return previewTextureMetadata_;
 	}
-	if (defaultWhiteHandle_ < kMaxTextures && textureResources_[defaultWhiteHandle_] != nullptr) {
+	if (defaultWhiteHandle_ < textureResources_.size() && textureResources_[defaultWhiteHandle_] != nullptr) {
 		return textureMetadatas_[defaultWhiteHandle_];
 	}
 	return fallbackMetadata_;
@@ -389,7 +446,7 @@ uint32_t TextureManager::GetTextureHandleFromGPUDescriptor(D3D12_GPU_DESCRIPTOR_
 		return 0;
 	}
 	uint32_t index = static_cast<uint32_t>(diff / descriptorSize);
-	if (index < kMaxTextures && textureResources_[index] != nullptr) {
+	if (index < textureResources_.size() && textureResources_[index] != nullptr) {
 		return index;
 	}
 	if (index >= kPreviewSrvBaseIndex &&
@@ -512,7 +569,7 @@ uint32_t TextureManager::CreateDefaultCubemapTexture()
 		}
 	}
 
-	uint32_t handle = nextIndex_++;
+	uint32_t handle = dxCommon_->AllocateSrvIndex();
 	defaultCubemapHandle_ = handle;
 
 	Microsoft::WRL::ComPtr<ID3D12Resource> resource = CreateTextureResource(cubeImg.GetMetadata());
@@ -573,7 +630,7 @@ uint32_t TextureManager::LoadCubemapTexture(const std::string& filePath)
 		}
 	}
 
-	if (nextIndex_ >= kMaxTextures) {
+	if (!dxCommon_->HasFreeSrvIndex()) {
 		Log::GetInstance()->logOutput("Texture limit exceeded when loading cubemap\n");
 		return 0;
 	}
@@ -594,7 +651,7 @@ uint32_t TextureManager::LoadCubemapTexture(const std::string& filePath)
 		return 0;
 	}
 
-	uint32_t handle = nextIndex_++;
+	uint32_t handle = dxCommon_->AllocateSrvIndex();
 	Microsoft::WRL::ComPtr<ID3D12Resource> resource = CreateTextureResource(metadata);
 
 	uploadAllocator_->Reset();

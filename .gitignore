@@ -390,3 +390,6 @@ imgui.ini
 !externals/assimp/lib/
 !externals/assimp/lib/**
 
+
+# Self-test report written by RizealldaySandbox.exe --run-tests
+RizealldaySandbox/test_results.txt

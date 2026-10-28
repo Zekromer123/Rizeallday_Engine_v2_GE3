@@ -1,5 +1,6 @@
 ﻿#include "3d/Skybox.h"
 #include "base/DirectXCommon.h"
+#include "base/Profiler.h"
 #include "base/DXCManager.h"
 #include "base/TextureManager.h"
 #include "base/Log.h"
@@ -9,16 +10,10 @@
 
 Skybox::~Skybox()
 {
-	if (constantBuffer_ && mappedData_) {
-		constantBuffer_->Unmap(0, nullptr);
-		mappedData_ = nullptr;
-	}
 	if (dxCommon_) {
-		if (constantBuffer_) dxCommon_->DeferRelease(constantBuffer_);
 		if (pso_) dxCommon_->DeferRelease(pso_);
 		if (rootSignature_) dxCommon_->DeferRelease(rootSignature_);
 	}
-	constantBuffer_.Reset();
 	pso_.Reset();
 	rootSignature_.Reset();
 }
@@ -28,7 +23,6 @@ void Skybox::Initialize(DirectXCommon* dxCommon, DXCManager* dxc)
 	dxCommon_ = dxCommon;
 	CreateRootSignature();
 	CreatePSO(dxc);
-	CreateConstantBuffer();
 
 	// Attempt to load default cubemap if available
 	if (!cubemapPath_.empty()) {
@@ -132,29 +126,6 @@ void Skybox::CreatePSO(DXCManager* dxc)
 	assert(SUCCEEDED(hr));
 }
 
-void Skybox::CreateConstantBuffer()
-{
-	ID3D12Device* device = dxCommon_->GetDevice();
-
-	D3D12_HEAP_PROPERTIES heapProps{};
-	heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
-
-	D3D12_RESOURCE_DESC desc{};
-	desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-	desc.Width = kNumSlots * kSlotSize;
-	desc.Height = 1;
-	desc.DepthOrArraySize = 1;
-	desc.MipLevels = 1;
-	desc.SampleDesc.Count = 1;
-	desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-
-	HRESULT hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&constantBuffer_));
-	assert(SUCCEEDED(hr));
-
-	hr = constantBuffer_->Map(0, nullptr, reinterpret_cast<void**>(&mappedData_));
-	assert(SUCCEEDED(hr));
-}
-
 bool Skybox::LoadCubemap(const std::string& filePath)
 {
 	cubemapPath_ = filePath;
@@ -171,7 +142,7 @@ bool Skybox::LoadCubemap(const std::string& filePath)
 
 void Skybox::Draw(ID3D12GraphicsCommandList* cmdList, const Camera& camera)
 {
-	if (!pso_ || !rootSignature_ || !mappedData_) return;
+	if (!pso_ || !rootSignature_ || !dxCommon_ || dxCommon_->IsDeviceLost()) return;
 
 	// Remove camera translation for skybox view matrix
 	Matrix4x4 cameraWorldRotOnly = Mathematics::MakeAffineMatrix({ 1.0f, 1.0f, 1.0f }, camera.rotation, { 0.0f, 0.0f, 0.0f });
@@ -179,9 +150,8 @@ void Skybox::Draw(ID3D12GraphicsCommandList* cmdList, const Camera& camera)
 	Matrix4x4 viewProjNoTranslation = Mathematics::Multiply(viewRotOnly, camera.GetProjectionMatrix());
 	Matrix4x4 invViewProj = Mathematics::Inverse(viewProjNoTranslation);
 
-	// Ring buffer slot selection
-	currentSlot_ = (currentSlot_ + 1) % kNumSlots;
-	SkyboxConstants* constants = reinterpret_cast<SkyboxConstants*>(mappedData_ + (currentSlot_ * kSlotSize));
+	SkyboxConstants constantsData{};
+	SkyboxConstants* constants = &constantsData;
 
 	constants->invViewProj = invViewProj;
 	constants->topColor = topColor_;
@@ -206,7 +176,8 @@ void Skybox::Draw(ID3D12GraphicsCommandList* cmdList, const Camera& camera)
 	TextureManager::GetInstance()->SetDescriptorHeaps(cmdList);
 
 	// Bind root parameters
-	D3D12_GPU_VIRTUAL_ADDRESS cbvAddr = constantBuffer_->GetGPUVirtualAddress() + (currentSlot_ * kSlotSize);
+	D3D12_GPU_VIRTUAL_ADDRESS cbvAddr = dxCommon_->UploadConstants(constantsData);
+	if (cbvAddr == 0) return;
 	cmdList->SetGraphicsRootConstantBufferView(0, cbvAddr);
 
 	uint32_t texHandle = (hasValidCubemap_ && cubemapTextureHandle_ != 0)
@@ -217,4 +188,5 @@ void Skybox::Draw(ID3D12GraphicsCommandList* cmdList, const Camera& camera)
 	// Draw fullscreen triangle (SV_VertexID generates vertices at far plane)
 	cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	cmdList->DrawInstanced(3, 1, 0, 0);
+	Profiler::GetInstance()->CountDrawCall();
 }

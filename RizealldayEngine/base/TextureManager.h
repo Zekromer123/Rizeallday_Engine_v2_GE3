@@ -3,6 +3,7 @@
 #include <wrl.h>
 #include <string>
 #include <unordered_map>
+#include <vector>
 #include <DirectXTex.h>
 #include "math/Vector2.h"
 
@@ -18,6 +19,10 @@ public:
 	/// Load texture (cached)
 	/// @return Texture handle ID
 	uint32_t LoadTexture(const std::string& filePath);
+
+	/// Create (or return the cached) RGBA8 texture from memory, e.g. a generated font atlas.
+	/// `cacheKey` must be unique and is never a file path. rgba holds width * height * 4 bytes, top row first.
+	uint32_t CreateTextureFromRGBA(const std::string& cacheKey, const uint8_t* rgba, uint32_t width, uint32_t height);
 
 	/// Get GPU descriptor handle
 	D3D12_GPU_DESCRIPTOR_HANDLE GetGPUHandle(uint32_t textureHandle);
@@ -67,18 +72,17 @@ private:
 	Microsoft::WRL::ComPtr<ID3D12Resource> CreateTextureResource(const DirectX::TexMetadata& metadata);
 	[[nodiscard]] Microsoft::WRL::ComPtr<ID3D12Resource> UploadTextureData(ID3D12Resource* texture, const DirectX::ScratchImage& mipImages);
 
-	static const uint32_t kMaxTextures = 128;
+	// Texture handle == SRV descriptor index, allocated from DirectXCommon's free-list
 	static const uint32_t kPreviewSrvBaseIndex = 133;
 	static const uint32_t kPreviewSrvSlotCount = 4;
 	DirectXCommon* dxCommon_ = nullptr;
-	uint32_t nextIndex_ = 1;  // 0 reserved for ImGui
 	uint32_t defaultWhiteHandle_ = 0;
 	uint32_t defaultCubemapHandle_ = 0;
 	uint32_t previewSrvRingOffset_ = 0;
 	uint32_t currentPreviewSrvIndex_ = kPreviewSrvBaseIndex;
 	std::unordered_map<std::string, uint32_t> textureCache_;
-	Microsoft::WRL::ComPtr<ID3D12Resource> textureResources_[kMaxTextures];
-	DirectX::TexMetadata textureMetadatas_[kMaxTextures]{};
+	std::vector<Microsoft::WRL::ComPtr<ID3D12Resource>> textureResources_;
+	std::vector<DirectX::TexMetadata> textureMetadatas_;
 	Microsoft::WRL::ComPtr<ID3D12Resource> previewTextureResource_;
 	DirectX::TexMetadata previewTextureMetadata_{};
 	DirectX::TexMetadata fallbackMetadata_{};

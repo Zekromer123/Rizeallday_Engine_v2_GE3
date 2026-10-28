@@ -11,6 +11,8 @@ GameObject::GameObject(const GameObject& other) {
 	tag = other.tag;
 	layer = other.layer;
 	collisionMask = other.collisionMask;
+	prefabSource = other.prefabSource;
+	prefabNodeIndex = other.prefabNodeIndex;
 	type = other.type;
 	parentIndex = other.parentIndex;
 	parentId = other.parentId;
@@ -19,6 +21,7 @@ GameObject::GameObject(const GameObject& other) {
 	rotation = other.rotation;
 	scale = other.scale;
 	rotationQuat = other.rotationQuat;
+	worldMatrix = other.worldMatrix;
 	hasMesh = other.hasMesh;
 	meshEnabled = other.meshEnabled;
 	meshType = other.meshType;
@@ -135,6 +138,8 @@ GameObject& GameObject::operator=(const GameObject& other) {
 		tag = other.tag;
 		layer = other.layer;
 		collisionMask = other.collisionMask;
+		prefabSource = other.prefabSource;
+		prefabNodeIndex = other.prefabNodeIndex;
 		type = other.type;
 		parentIndex = other.parentIndex;
 		parentId = other.parentId;
@@ -143,6 +148,7 @@ GameObject& GameObject::operator=(const GameObject& other) {
 		rotation = other.rotation;
 		scale = other.scale;
 		rotationQuat = other.rotationQuat;
+		worldMatrix = other.worldMatrix;
 		hasMesh = other.hasMesh;
 		meshEnabled = other.meshEnabled;
 		meshType = other.meshType;
@@ -259,8 +265,31 @@ GameObject& GameObject::operator=(GameObject&& other) noexcept = default;
 
 EditorSuite::EditorSuite() = default;
 
+std::filesystem::path EditorSuite::GetExecutableDirectory()
+{
+	char exePathBuf[MAX_PATH] = {};
+	if (GetModuleFileNameA(NULL, exePathBuf, MAX_PATH) == 0) {
+		return {};
+	}
+	return std::filesystem::path(exePathBuf).parent_path();
+}
+
+bool EditorSuite::IsExportedGameFolder(const std::filesystem::path& dir)
+{
+	std::error_code ec;
+	return !dir.empty() && std::filesystem::is_regular_file(dir / kExportedGameConfigFile, ec);
+}
+
+bool EditorSuite::IsExportedGameLaunch()
+{
+	return IsExportedGameFolder(".") || IsExportedGameFolder(GetExecutableDirectory());
+}
+
 EditorSuite::~EditorSuite()
 {
+	// The handler captures `this`; the splash screen (TitleScene) can close without asking
+	WinApp::GetInstance()->SetCloseRequestHandler(nullptr);
+
 	if (scriptBuildThread_.joinable()) {
 		scriptBuildThread_.join();
 	}
@@ -287,13 +316,10 @@ void EditorSuite::Initialize(
 
 	// If launched from an exported standalone game directory containing game_build.cfg, align working directory
 	{
-		char exePathBuf[MAX_PATH] = {};
-		if (GetModuleFileNameA(NULL, exePathBuf, MAX_PATH) > 0) {
-			std::filesystem::path exeDir = std::filesystem::path(exePathBuf).parent_path();
-			if (!std::filesystem::exists("game_build.cfg") && std::filesystem::exists(exeDir / "game_build.cfg")) {
-				std::error_code ec;
-				std::filesystem::current_path(exeDir, ec);
-			}
+		const std::filesystem::path exeDir = GetExecutableDirectory();
+		if (!IsExportedGameFolder(".") && IsExportedGameFolder(exeDir)) {
+			std::error_code ec;
+			std::filesystem::current_path(exeDir, ec);
 		}
 	}
 
@@ -395,6 +421,9 @@ void EditorSuite::Initialize(
 	// Initialize GameScripts DLL hot-reload module and EngineAPI table
 	SetupEngineAPI();
 	scriptModule_.Initialize(&engineApi_);
+	if (!scriptModule_.GetLastLoadError().empty()) {
+		LogMessage("[Scripts] " + scriptModule_.GetLastLoadError(), 2);
+	}
 	{
 		std::filesystem::path scriptsFolder = ResolveGameScriptsDir() / "Scripts";
 		strncpy_s(scriptOutputDirBuf_, scriptsFolder.generic_string().c_str(), sizeof(scriptOutputDirBuf_) - 1);
@@ -416,7 +445,25 @@ void EditorSuite::Initialize(
 				scenePath = scenePath.substr(0, scenePath.find(' '));
 			}
 			if (!scenePath.empty() && std::filesystem::exists(scenePath)) {
+				// Without an open project, use the folder that contains the scene's "Assets" directory
+				// so prefabs, textures and save data resolve like they do inside the project
+				if (currentProjectRoot_.empty()) {
+					for (std::filesystem::path dir = std::filesystem::absolute(scenePath).parent_path(); dir.has_relative_path(); dir = dir.parent_path()) {
+						if (dir.filename() == "Assets") {
+							currentProjectRoot_ = dir.parent_path();
+							break;
+						}
+					}
+				}
 				LoadScene(scenePath);
+				// `--play`: enter Play mode right away (automated visual checks of gameplay / game UI)
+				if (cmdLine.find("--play") != std::string::npos) {
+#ifdef USE_IMGUI
+					ToggleStandalonePreview(); // starts Play in the full-window Game view, like F11
+#else
+					StartPlayMode();
+#endif
+				}
 			} else {
 				LogMessage(std::format("[EditorSuite] --scene: file not found: {}", scenePath), 1);
 			}
@@ -425,11 +472,31 @@ void EditorSuite::Initialize(
 
 #ifdef USE_IMGUI
 	ApplyUnity6DarkTheme();
+
+	// Optional: `--run-tests [filter]` runs the headless self-tests, then quits with the result as exit code
+	{
+		const std::string cmdLine = GetCommandLineA();
+		const size_t argPos = cmdLine.find("--run-tests");
+		if (argPos != std::string::npos) {
+			std::string filter = cmdLine.substr(argPos + std::strlen("--run-tests"));
+			filter.erase(0, filter.find_first_not_of(' '));
+			if (!filter.empty() && filter.front() == '"') {
+				const size_t closeQuote = filter.find('"', 1);
+				filter = filter.substr(1, closeQuote == std::string::npos ? std::string::npos : closeQuote - 1);
+			} else if (filter.rfind("--", 0) == 0) {
+				filter.clear();
+			} else {
+				filter = filter.substr(0, filter.find(' '));
+			}
+			sSelfTestExitCode = (RunSelfTests(filter) == 0) ? 0 : 1;
+			PostQuitMessage(0);
+		}
+	}
 #endif
 
 	// Check if running as a standalone build export via game_build.cfg
-	if (std::filesystem::exists("game_build.cfg")) {
-		std::ifstream cfg("game_build.cfg");
+	if (IsExportedGameFolder(".")) {
+		std::ifstream cfg(kExportedGameConfigFile);
 		std::string line;
 		std::string startupScene = "";
 		std::string gameTitle = "";
@@ -481,7 +548,10 @@ void EditorSuite::Initialize(
 	{
 		const std::string cmdLine = GetCommandLineA();
 		const bool sceneFromCommandLine = cmdLine.find("--scene ") != std::string::npos;
-		const bool automatedRun = cmdLine.find("--test-scene-transitions") != std::string::npos;
+		bool automatedRun = cmdLine.find("--test-scene-transitions") != std::string::npos;
+#ifdef USE_IMGUI
+		automatedRun = automatedRun || cmdLine.find("--run-tests") != std::string::npos;
+#endif
 		if (!sSessionProjectRoot_.empty() && std::filesystem::exists(sSessionProjectRoot_)) {
 			OpenProject(sSessionProjectRoot_.string());
 		} else if (!sceneFromCommandLine && !automatedRun) {
@@ -490,14 +560,24 @@ void EditorSuite::Initialize(
 		}
 	}
 
+	// Ask before closing the window while the scene has unsaved changes
+	WinApp::GetInstance()->SetCloseRequestHandler([this]() { return OnCloseRequested(); });
+
 	LogMessage("[EditorSuite] Initialized Unity 6 Dark Workspace & 5-Region Layout.", 0);
 	LogMessage("[EditorSuite] Viewports Ready: # Scene (SRV #128) & Game (SRV #129).", 0);
 }
 
 void EditorSuite::Update(float deltaTime, Input* input)
 {
+	RIZE_PROFILE_CPU("Editor Update");
 	currentInput_ = input;
 	currentDeltaTime_ = deltaTime;
+	unscaledDeltaTime_ = deltaTime;
+
+	// Record edits deferred during the previous frame (e.g. object creation) as one undo command
+	if (undoPushPending_) {
+		PushUndoSnapshot();
+	}
 
 	// Drain any MSBuild output lines produced by background script compilation
 	DrainScriptBuildLogs();
@@ -525,6 +605,11 @@ void EditorSuite::Update(float deltaTime, Input* input)
 		}
 		if (isStandalonePreview_ && ImGui::IsKeyPressed(ImGuiKey_Escape)) {
 			ToggleStandalonePreview();
+		}
+
+		// Ctrl+P: toggle the Profiler window
+		if (!IsStandaloneMode() && io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_P, false)) {
+			showProfiler_ = !showProfiler_;
 		}
 
 		// Ctrl+Shift+B: Build Scripts (only when !io.WantTextInput)
@@ -582,12 +667,16 @@ void EditorSuite::Update(float deltaTime, Input* input)
 				}
 			}
 			EnsureParticleQuadInitialized(obj);
+			// Emit from the world position (hierarchy children: translation is local to the parent)
+			const Vector3 emitterPos = (obj.parentId != -1)
+				? Vector3{ obj.worldMatrix.m[3][0], obj.worldMatrix.m[3][1], obj.worldMatrix.m[3][2] }
+				: obj.translation;
 			if (obj.particleQuad) {
-				obj.particleQuad->emitter.translate = obj.translation;
+				obj.particleQuad->emitter.translate = emitterPos;
 				obj.particleQuad->Simulate(deltaTime);
 			}
 			if (particleSystem_) {
-				particleSystem_->emitter.translate = obj.translation;
+				particleSystem_->emitter.translate = emitterPos;
 			}
 		}
 	}
@@ -597,12 +686,20 @@ void EditorSuite::Update(float deltaTime, Input* input)
 		UpdateTetrisGame(deltaTime, input);
 	}
 
+	// World matrices must be current before the camera / light sync below
+	UpdateWorldMatrices();
+
 	// 3. Authoritative Main Camera Sync to gameCamera_
 	for (const auto& obj : gameObjects_) {
 		if (obj.isActive && (obj.hasCamera || obj.type == GameObjectType::Camera)) {
 			if (gameCamera_) {
-				gameCamera_->translation = obj.translation;
-				gameCamera_->rotation = obj.rotation;
+				Vector3 worldPos{};
+				Quaternion worldRot = Quaternion::Identity();
+				Vector3 worldScale{};
+				GetWorldTRS(obj, worldPos, worldRot, worldScale);
+				gameCamera_->translation = worldPos;
+				// Roots keep their exact Euler angles; children derive Euler from the world rotation
+				gameCamera_->rotation = (obj.parentId == -1) ? obj.rotation : worldRot.ToEuler();
 				gameCamera_->fovY = obj.fov * 3.14159265f / 180.0f;
 				gameCamera_->nearClip = obj.nearClip;
 				gameCamera_->farClip = obj.farClip;
@@ -616,20 +713,39 @@ void EditorSuite::Update(float deltaTime, Input* input)
 	if (lights_) {
 		int ptCount = 0;
 		int spCount = 0;
+		bool hasDirectional = false;
+		// Every light slot starts disabled each frame; only lights that exist in the scene re-enable one.
+		// (The directional light used to stay on after its object was switched to Point/Spot, so the
+		// sphere received a second highlight from the stale directional light.)
+		lights_->GetDirectionalLight().active = 0;
+		lights_->SetShadowActive(0);
 		for (int i = 0; i < LightGroup::MaxPointLights; ++i) lights_->GetPointLight(i).active = 0;
 		for (int i = 0; i < LightGroup::MaxSpotLights; ++i) lights_->GetSpotLight(i).active = 0;
+
+		// Forward (+Z) of the object's world rotation: the same rotation the object/gizmo is drawn with.
+		// (Building it from Euler X*Y*Z disagreed with Quaternion::FromEuler's Z-X-Y order when Z != 0.)
+		auto worldForward = [](const GameObject& o) {
+			Vector3 d = TransformUtil::TransformDirection({ 0.0f, 0.0f, 1.0f }, o.worldMatrix);
+			const float len = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+			if (len > 0.0001f) { d.x /= len; d.y /= len; d.z /= len; }
+			return d;
+		};
 
 		for (const auto& obj : gameObjects_) {
 			if (!obj.isActive || !obj.hasLight) continue;
 
+			Vector3 worldPos{};
+			Quaternion worldRot = Quaternion::Identity();
+			Vector3 worldScale{};
+			GetWorldTRS(obj, worldPos, worldRot, worldScale);
+
 			if (obj.lightType == GameObject::LightType::Directional) {
-				// Sync direction with Transform rotation (local forward is +Z) so rotating Directional Light in Scene/Inspector rotates illumination
-				Matrix4x4 rotMat = Mathematics::Multiply(Mathematics::MakeRotateXMatrix(obj.rotation.x),
-				                   Mathematics::Multiply(Mathematics::MakeRotateYMatrix(obj.rotation.y),
-				                                         Mathematics::MakeRotateZMatrix(obj.rotation.z)));
-				Vector3 dir = Mathematics::Transform({ 0.0f, 0.0f, 1.0f }, rotMat);
-				float len = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
-				if (len > 0.0001f) { dir.x /= len; dir.y /= len; dir.z /= len; }
+				// One directional light (the first one in the hierarchy) drives the sun and the shadow map
+				if (hasDirectional) continue;
+				hasDirectional = true;
+
+				// Direction follows the Transform rotation; the position of a directional light has no effect
+				const Vector3 dir = worldForward(obj);
 				const_cast<GameObject&>(obj).lightDirection = dir;
 				lights_->GetDirectionalLight().direction = dir;
 				lights_->GetDirectionalLight().color = { obj.lightColor.x, obj.lightColor.y, obj.lightColor.z, 1.0f };
@@ -641,7 +757,7 @@ void EditorSuite::Update(float deltaTime, Input* input)
 				lights_->SetShadowNormalBias(obj.lightShadowNormalBias);
 			} else if (obj.lightType == GameObject::LightType::Point && ptCount < LightGroup::MaxPointLights) {
 				auto& pl = lights_->GetPointLight(ptCount++);
-				pl.position = obj.translation;
+				pl.position = worldPos;
 				pl.color = { obj.lightColor.x, obj.lightColor.y, obj.lightColor.z, 1.0f };
 				pl.intensity = obj.lightIntensity;
 				pl.radius = obj.lightRange;
@@ -649,15 +765,10 @@ void EditorSuite::Update(float deltaTime, Input* input)
 				pl.active = obj.lightEnabled ? 1 : 0;
 			} else if (obj.lightType == GameObject::LightType::Spot && spCount < LightGroup::MaxSpotLights) {
 				auto& sl = lights_->GetSpotLight(spCount++);
-				sl.position = obj.translation;
+				sl.position = worldPos;
 
-				// Sync direction with Transform rotation (local forward is +Z)
-				Matrix4x4 rotMat = Mathematics::Multiply(Mathematics::MakeRotateXMatrix(obj.rotation.x),
-				                   Mathematics::Multiply(Mathematics::MakeRotateYMatrix(obj.rotation.y),
-				                                         Mathematics::MakeRotateZMatrix(obj.rotation.z)));
-				Vector3 fwd = Mathematics::Transform({ 0.0f, 0.0f, 1.0f }, rotMat);
-				float len = std::sqrt(fwd.x * fwd.x + fwd.y * fwd.y + fwd.z * fwd.z);
-				if (len > 0.0001f) { fwd.x /= len; fwd.y /= len; fwd.z /= len; }
+				// Cone direction follows the Transform rotation (local forward is +Z)
+				const Vector3 fwd = worldForward(obj);
 				sl.direction = fwd;
 				const_cast<GameObject&>(obj).lightDirection = fwd;
 
@@ -684,12 +795,18 @@ void EditorSuite::Update(float deltaTime, Input* input)
 		IsStandaloneMode();
 	stepSingleFrame_ = false;
 
+	// Game time: scripts, physics and animations see deltaTime * timeScale (0 = paused, e.g. a level-up menu)
+	const float gameDeltaTime = advancePlayFrame ? deltaTime * timeScale_ : deltaTime;
 	if (advancePlayFrame) {
-		UpdateScripts(deltaTime);
+		currentDeltaTime_ = gameDeltaTime;
+		gameTime_ += gameDeltaTime;
+		RIZE_PROFILE_CPU("Scripts");
+		UpdateScripts(gameDeltaTime);
 	}
 
 	if (advancePlayFrame || (sceneState_ == EditorSceneState::Edit && simulatePhysicsInEditMode_)) {
-		UpdatePhysics(deltaTime);
+		RIZE_PROFILE_CPU("Physics");
+		UpdatePhysics(gameDeltaTime);
 	}
 
 	// Process any deferred GameObject spawns/deletions requested by scripts during Update/OnCollision
@@ -697,6 +814,9 @@ void EditorSuite::Update(float deltaTime, Input* input)
 	if (!pendingDeletes_.empty()) {
 		ProcessPendingDeletes();
 	}
+
+	// LoadScene() from a script: swap scenes between frames, never inside a script callback
+	ProcessPendingSceneLoad();
 }
 
 void EditorSuite::LogMessage(const std::string& msg, int logType)
@@ -740,7 +860,9 @@ bool EditorSuite::HasActiveParticleSystem(Vector3* outEmitterPos) const
 	for (const auto& obj : gameObjects_) {
 		if (obj.isActive && obj.hasParticleSystem) {
 			if (outEmitterPos) {
-				*outEmitterPos = obj.translation;
+				*outEmitterPos = (obj.parentId != -1)
+					? Vector3{ obj.worldMatrix.m[3][0], obj.worldMatrix.m[3][1], obj.worldMatrix.m[3][2] }
+					: obj.translation;
 			}
 			return true;
 		}

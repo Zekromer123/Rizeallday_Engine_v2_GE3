@@ -162,14 +162,20 @@ void EditorSuite::DrawTransformGizmo(const ImVec2& vpPos, const ImVec2& vpSize)
 	auto& sel = gameObjects_[selectedObjectIndex_];
 
 	ImVec2 originScreen; float originDepth;
-	if (!WorldToScreen(sel.translation, editorCamera_, vpPos, vpSize, originScreen, originDepth)) return;
+	Vector3 selWorldPos{};
+	{
+		Quaternion selWorldRot = Quaternion::Identity();
+		Vector3 selWorldScale{};
+		GetWorldTRS(sel, selWorldPos, selWorldRot, selWorldScale);
+	}
+	if (!WorldToScreen(selWorldPos, editorCamera_, vpPos, vpSize, originScreen, originDepth)) return;
 
 	ImDrawList* drawList = ImGui::GetWindowDrawList();
 	float axisLength = 55.0f;
 
-	Vector3 xTarget = sel.translation + Vector3{ 1.0f, 0.0f, 0.0f };
-	Vector3 yTarget = sel.translation + Vector3{ 0.0f, 1.0f, 0.0f };
-	Vector3 zTarget = sel.translation + Vector3{ 0.0f, 0.0f, 1.0f };
+	Vector3 xTarget = selWorldPos + Vector3{ 1.0f, 0.0f, 0.0f };
+	Vector3 yTarget = selWorldPos + Vector3{ 0.0f, 1.0f, 0.0f };
+	Vector3 zTarget = selWorldPos + Vector3{ 0.0f, 0.0f, 1.0f };
 
 	ImVec2 xScreen, yScreen, zScreen; float xd, yd, zd;
 	if (!WorldToScreen(xTarget, editorCamera_, vpPos, vpSize, xScreen, xd)) return;
@@ -243,10 +249,23 @@ void EditorSuite::DrawTransformGizmo(const ImVec2& vpPos, const ImVec2& vpSize)
 						else if (activeGizmoAxis_ == GizmoAxis::Y) sel.translation.y = gizmoStartTranslation_.y + dy;
 						else if (activeGizmoAxis_ == GizmoAxis::Z) sel.translation.z = gizmoStartTranslation_.z + dx;
 					}
-				} else {
+				} else if (sel.parentId == -1) {
 					if (activeGizmoAxis_ == GizmoAxis::X) sel.translation.x = gizmoStartTranslation_.x + dx;
 					else if (activeGizmoAxis_ == GizmoAxis::Y) sel.translation.y = gizmoStartTranslation_.y + dy;
 					else if (activeGizmoAxis_ == GizmoAxis::Z) sel.translation.z = gizmoStartTranslation_.z + dx;
+				} else {
+					// The drag is a world-space delta; convert it to the parent's local space before applying
+					Vector3 worldDelta = { 0.0f, 0.0f, 0.0f };
+					if (activeGizmoAxis_ == GizmoAxis::X) worldDelta.x = dx;
+					else if (activeGizmoAxis_ == GizmoAxis::Y) worldDelta.y = dy;
+					else if (activeGizmoAxis_ == GizmoAxis::Z) worldDelta.z = dx;
+
+					Matrix4x4 parentWorld = Mathematics::MakeIdentity4x4();
+					if (const GameObject* parentObj = FindGameObjectById(static_cast<uint32_t>(sel.parentId), false)) {
+						parentWorld = parentObj->worldMatrix;
+					}
+					const Vector3 localDelta = TransformUtil::TransformDirection(worldDelta, Mathematics::Inverse(parentWorld));
+					sel.translation = gizmoStartTranslation_ + localDelta;
 				}
 			} else if (currentGizmo_ == GizmoType::Rotate) {
 				if (activeGizmoAxis_ == GizmoAxis::X) sel.rotation.x = gizmoStartRotation_.x + dy;
@@ -291,9 +310,15 @@ void EditorSuite::DrawColliderWireframes(const ImVec2& vpPos, const ImVec2& vpSi
 	for (const auto& obj : gameObjects_) {
 		if (!obj.isActive || !obj.hasBoxCollider || !obj.boxColliderEnabled) continue;
 
-		Vector3 halfSize = { obj.boxSize.x * obj.scale.x * 0.5f, obj.boxSize.y * obj.scale.y * 0.5f, obj.boxSize.z * obj.scale.z * 0.5f };
-		Vector3 minP = obj.translation + obj.boxCenter - halfSize;
-		Vector3 maxP = obj.translation + obj.boxCenter + halfSize;
+		Vector3 wPos{};
+		Quaternion wRot = Quaternion::Identity();
+		Vector3 wScale{};
+		GetWorldTRS(obj, wPos, wRot, wScale);
+		// Same world-space AABB as the physics pass (roots: translation + center; children: through the world matrix)
+		const Vector3 boxWorldCenter = (obj.parentId == -1) ? (wPos + obj.boxCenter) : TransformUtil::TransformPoint(obj.boxCenter, obj.worldMatrix);
+		Vector3 halfSize = { obj.boxSize.x * wScale.x * 0.5f, obj.boxSize.y * wScale.y * 0.5f, obj.boxSize.z * wScale.z * 0.5f };
+		Vector3 minP = boxWorldCenter - halfSize;
+		Vector3 maxP = boxWorldCenter + halfSize;
 
 		Vector3 corners[8] = {
 			{ minP.x, minP.y, minP.z }, { maxP.x, minP.y, minP.z },
@@ -327,17 +352,23 @@ void EditorSuite::DrawCameraFrustum(const ImVec2& vpPos, const ImVec2& vpSize, c
 #ifdef USE_IMGUI
 	ImDrawList* drawList = ImGui::GetWindowDrawList();
 	ImVec2 camPos; float camDepth;
-	if (!WorldToScreen(camObj.translation, editorCamera_, vpPos, vpSize, camPos, camDepth)) return;
+	Vector3 camWorldPos{};
+	Quaternion camWorldRot = Quaternion::Identity();
+	Vector3 camWorldScale{};
+	GetWorldTRS(camObj, camWorldPos, camWorldRot, camWorldScale);
+	// Roots keep their exact Euler angles; children derive Euler from the world rotation
+	const Vector3 camEuler = (camObj.parentId == -1) ? camObj.rotation : camWorldRot.ToEuler();
+	if (!WorldToScreen(camWorldPos, editorCamera_, vpPos, vpSize, camPos, camDepth)) return;
 
-	Vector3 forward = { std::sin(camObj.rotation.y), -std::sin(camObj.rotation.x), std::cos(camObj.rotation.y) };
-	Vector3 right = { std::cos(camObj.rotation.y), 0.0f, -std::sin(camObj.rotation.y) };
+	Vector3 forward = { std::sin(camEuler.y), -std::sin(camEuler.x), std::cos(camEuler.y) };
+	Vector3 right = { std::cos(camEuler.y), 0.0f, -std::sin(camEuler.y) };
 	Vector3 up = { 0.0f, 1.0f, 0.0f };
 
 	float dist = 4.0f;
 	float halfH = dist * std::tan(camObj.fov * 0.5f * 3.14159265f / 180.0f);
 	float halfW = halfH * (16.0f / 9.0f);
 
-	Vector3 center = camObj.translation + (forward * dist);
+	Vector3 center = camWorldPos + (forward * dist);
 	Vector3 fCorners[4] = {
 		center + (right * -halfW) + (up *  halfH),
 		center + (right *  halfW) + (up *  halfH),
@@ -362,7 +393,13 @@ void EditorSuite::DrawLightGizmo(const ImVec2& vpPos, const ImVec2& vpSize, cons
 #ifdef USE_IMGUI
 	ImDrawList* drawList = ImGui::GetWindowDrawList();
 	ImVec2 lPos; float lDepth;
-	if (!WorldToScreen(lightObj.translation, editorCamera_, vpPos, vpSize, lPos, lDepth)) return;
+	Vector3 lightWorldPos{};
+	{
+		Quaternion lightWorldRot = Quaternion::Identity();
+		Vector3 lightWorldScale{};
+		GetWorldTRS(lightObj, lightWorldPos, lightWorldRot, lightWorldScale);
+	}
+	if (!WorldToScreen(lightWorldPos, editorCamera_, vpPos, vpSize, lPos, lDepth)) return;
 
 	ImU32 lightCol = IM_COL32(255, 220, 80, 240);
 	drawList->AddCircleFilled(lPos, 6.0f, lightCol);
@@ -400,7 +437,7 @@ void EditorSuite::DrawLightGizmo(const ImVec2& vpPos, const ImVec2& vpSize, cons
 		};
 
 		for (int i = 0; i < 5; ++i) {
-			Vector3 rStart = lightObj.translation + offsets[i];
+			Vector3 rStart = lightWorldPos + offsets[i];
 			Vector3 rEnd = rStart + (dir * 3.5f);
 			ImVec2 s0, s1; float d0, d1;
 			if (WorldToScreen(rStart, editorCamera_, vpPos, vpSize, s0, d0) &&
@@ -412,7 +449,7 @@ void EditorSuite::DrawLightGizmo(const ImVec2& vpPos, const ImVec2& vpSize, cons
 		// Wireframe radius sphere (XZ, XY, YZ orthogonal circles)
 		const int segs = 32;
 		float r = (std::max)(0.1f, lightObj.lightRange);
-		Vector3 center = lightObj.translation;
+		Vector3 center = lightWorldPos;
 		ImU32 sphereCol = IM_COL32(255, 220, 80, 180);
 
 		// 1. Equator circle (XZ plane)
@@ -467,7 +504,7 @@ void EditorSuite::DrawLightGizmo(const ImVec2& vpPos, const ImVec2& vpSize, cons
 		float vlen = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
 		if (vlen > 0.0001f) { v.x /= vlen; v.y /= vlen; v.z /= vlen; }
 
-		Vector3 apex = lightObj.translation;
+		Vector3 apex = lightWorldPos;
 		Vector3 baseCenter = apex + (dir * dist);
 		const int segs = 32;
 		ImU32 coneCol = IM_COL32(255, 220, 80, 200);

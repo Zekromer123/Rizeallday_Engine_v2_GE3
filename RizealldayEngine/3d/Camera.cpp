@@ -3,87 +3,57 @@
 #include "base/DirectXCommon.h"
 
 DirectXCommon* Camera::sDxCommon_ = nullptr;
-Microsoft::WRL::ComPtr<ID3D12Resource> Camera::sDefaultCameraResource_;
-CameraForGPU* Camera::sDefaultMappedData_ = nullptr;
+CameraForGPU Camera::sDefaultData_ = { { 0.0f, 0.0f, -10.0f }, 0.0f };
+uint64_t Camera::sDefaultUploadFrame_ = UINT64_MAX;
+D3D12_GPU_VIRTUAL_ADDRESS Camera::sDefaultUploadAddress_ = 0;
 
 void Camera::StaticInitialize(DirectXCommon* dxCommon) {
     sDxCommon_ = dxCommon;
-    if (sDxCommon_ && !sDefaultCameraResource_) {
-        D3D12_HEAP_PROPERTIES heapProps{};
-        heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
-        D3D12_RESOURCE_DESC desc{};
-        desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-        desc.Width = (sizeof(CameraForGPU) + 255) & ~255;
-        desc.Height = 1; desc.DepthOrArraySize = 1; desc.MipLevels = 1;
-        desc.SampleDesc.Count = 1; desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-        sDxCommon_->GetDevice()->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&sDefaultCameraResource_));
-        if (sDefaultCameraResource_) {
-            sDefaultCameraResource_->Map(0, nullptr, reinterpret_cast<void**>(&sDefaultMappedData_));
-            if (sDefaultMappedData_) {
-                sDefaultMappedData_->worldPosition = { 0.0f, 0.0f, -10.0f };
-                sDefaultMappedData_->pad = 0.0f;
-            }
-        }
-    }
+    sDefaultUploadFrame_ = UINT64_MAX;
+    sDefaultUploadAddress_ = 0;
 }
 
 D3D12_GPU_VIRTUAL_ADDRESS Camera::GetDefaultGPUVirtualAddress() {
-    return sDefaultCameraResource_ ? sDefaultCameraResource_->GetGPUVirtualAddress() : 0;
-}
-
-Camera::~Camera() {
-    if (cameraResource_) {
-        cameraResource_->Unmap(0, nullptr);
-        mappedCameraData_ = nullptr;
-        if (sDxCommon_) {
-            sDxCommon_->DeferRelease(cameraResource_);
-        }
-        cameraResource_.Reset();
+    if (!sDxCommon_ || sDxCommon_->IsDeviceLost()) {
+        return 0;
     }
-}
-
-void Camera::CreateBufferIfNeeded() {
-    if (!cameraResource_ && sDxCommon_) {
-        D3D12_HEAP_PROPERTIES heapProps{};
-        heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
-        D3D12_RESOURCE_DESC desc{};
-        desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-        desc.Width = (sizeof(CameraForGPU) + 255) & ~255;
-        desc.Height = 1; desc.DepthOrArraySize = 1; desc.MipLevels = 1;
-        desc.SampleDesc.Count = 1; desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-        sDxCommon_->GetDevice()->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&cameraResource_));
-        if (cameraResource_) {
-            cameraResource_->Map(0, nullptr, reinterpret_cast<void**>(&mappedCameraData_));
-        }
+    // The default data never changes, so one upload per frame is enough
+    const uint64_t frame = sDxCommon_->GetFrameIndex();
+    if (sDefaultUploadFrame_ != frame || sDefaultUploadAddress_ == 0) {
+        sDefaultUploadAddress_ = sDxCommon_->UploadConstants(sDefaultData_);
+        sDefaultUploadFrame_ = frame;
     }
+    return sDefaultUploadAddress_;
 }
 
 D3D12_GPU_VIRTUAL_ADDRESS Camera::GetGPUVirtualAddress() const {
-    if (cameraResource_) {
-        return cameraResource_->GetGPUVirtualAddress();
+    if (!sDxCommon_ || sDxCommon_->IsDeviceLost()) {
+        return 0;
     }
-    return GetDefaultGPUVirtualAddress();
+    const uint64_t frame = sDxCommon_->GetFrameIndex();
+    if (uploadFrame_ != frame || uploadedVersion_ != version_ || uploadedAddress_ == 0) {
+        uploadedAddress_ = sDxCommon_->UploadConstants(data_);
+        uploadFrame_ = frame;
+        uploadedVersion_ = version_;
+    }
+    return uploadedAddress_;
 }
 
 void Camera::Initialize() {
-    CreateBufferIfNeeded();
     matView_ = Mathematics::MakeIdentity4x4();
     matProjection_ = Mathematics::MakePerspectiveFovMatrix(fovY, aspectRatio, nearClip, farClip);
     matViewProjection_ = Mathematics::Multiply(matView_, matProjection_);
-    if (mappedCameraData_) {
-        mappedCameraData_->worldPosition = translation;
-        mappedCameraData_->pad = 0.0f;
-    }
+    data_.worldPosition = translation;
+    data_.pad = 0.0f;
+    ++version_;
 }
 
 void Camera::Update() {
-    CreateBufferIfNeeded();
     Matrix4x4 cameraWorldMatrix = Mathematics::MakeAffineMatrix({1.0f, 1.0f, 1.0f}, rotation, translation);
     matView_ = Mathematics::Inverse(cameraWorldMatrix);
     matProjection_ = Mathematics::MakePerspectiveFovMatrix(fovY, aspectRatio, nearClip, farClip);
     matViewProjection_ = Mathematics::Multiply(matView_, matProjection_);
-    if (mappedCameraData_) {
-        mappedCameraData_->worldPosition = translation;
-        mappedCameraData_->pad = 0.0f;
-    }
+    data_.worldPosition = translation;
+    data_.pad = 0.0f;
+    ++version_;
 }

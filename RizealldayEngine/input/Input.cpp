@@ -1,4 +1,5 @@
 ﻿#include "input/Input.h"
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 
@@ -76,49 +77,62 @@ bool Input::IsGamepadConnected(int padIndex) const
 
 bool Input::PushGamepadButton(WORD button, int padIndex) const
 {
-	if (!gamepadConnected_[padIndex]) return false;
+	if (!IsGamepadConnected(padIndex)) return false;
 	return (gamepadState_[padIndex].Gamepad.wButtons & button) != 0;
 }
 
 bool Input::TriggerGamepadButton(WORD button, int padIndex) const
 {
-	if (!gamepadConnected_[padIndex]) return false;
+	if (!IsGamepadConnected(padIndex)) return false;
 	return (gamepadState_[padIndex].Gamepad.wButtons & button) &&
 		   !(preGamepadState_[padIndex].Gamepad.wButtons & button);
 }
 
 float Input::GetLeftStickX(int padIndex) const
 {
-	if (!gamepadConnected_[padIndex]) return 0.0f;
+	if (!IsGamepadConnected(padIndex)) return 0.0f;
 	float val = static_cast<float>(gamepadState_[padIndex].Gamepad.sThumbLX) / 32767.0f;
 	return (std::fabsf(val) < deadZone_) ? 0.0f : val;
 }
 
 float Input::GetLeftStickY(int padIndex) const
 {
-	if (!gamepadConnected_[padIndex]) return 0.0f;
+	if (!IsGamepadConnected(padIndex)) return 0.0f;
 	float val = static_cast<float>(gamepadState_[padIndex].Gamepad.sThumbLY) / 32767.0f;
 	return (std::fabsf(val) < deadZone_) ? 0.0f : val;
 }
 
 float Input::GetRightStickX(int padIndex) const
 {
-	if (!gamepadConnected_[padIndex]) return 0.0f;
+	if (!IsGamepadConnected(padIndex)) return 0.0f;
 	float val = static_cast<float>(gamepadState_[padIndex].Gamepad.sThumbRX) / 32767.0f;
 	return (std::fabsf(val) < deadZone_) ? 0.0f : val;
 }
 
 float Input::GetRightStickY(int padIndex) const
 {
-	if (!gamepadConnected_[padIndex]) return 0.0f;
+	if (!IsGamepadConnected(padIndex)) return 0.0f;
 	float val = static_cast<float>(gamepadState_[padIndex].Gamepad.sThumbRY) / 32767.0f;
 	return (std::fabsf(val) < deadZone_) ? 0.0f : val;
 }
 
+float Input::GetLeftTrigger(int padIndex) const
+{
+	if (!IsGamepadConnected(padIndex)) return 0.0f;
+	return static_cast<float>(gamepadState_[padIndex].Gamepad.bLeftTrigger) / 255.0f;
+}
+
+float Input::GetRightTrigger(int padIndex) const
+{
+	if (!IsGamepadConnected(padIndex)) return 0.0f;
+	return static_cast<float>(gamepadState_[padIndex].Gamepad.bRightTrigger) / 255.0f;
+}
+
 void Input::SetVibration(int padIndex, float leftMotor, float rightMotor)
 {
+	if (!IsGamepadConnected(padIndex)) return;
 	XINPUT_VIBRATION vibration{};
-	vibration.wLeftMotorSpeed = static_cast<WORD>(leftMotor * 65535.0f);
-	vibration.wRightMotorSpeed = static_cast<WORD>(rightMotor * 65535.0f);
-	XInputSetState(padIndex, &vibration);
+	vibration.wLeftMotorSpeed = static_cast<WORD>(std::clamp(leftMotor, 0.0f, 1.0f) * 65535.0f);
+	vibration.wRightMotorSpeed = static_cast<WORD>(std::clamp(rightMotor, 0.0f, 1.0f) * 65535.0f);
+	XInputSetState(static_cast<DWORD>(padIndex), &vibration);
 }

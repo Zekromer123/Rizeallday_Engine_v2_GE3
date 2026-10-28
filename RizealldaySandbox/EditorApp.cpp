@@ -1,6 +1,7 @@
-#include "EditorApp.h"
+﻿#include "EditorApp.h"
 #include "scene/EditorScene.h"
 #include "scene/TitleScene.h"
+#include "EditorSuite.h"
 #include <cstring>
 #include <filesystem>
 #include <format>
@@ -23,13 +24,24 @@ void EditorApp::Initialize() {
 	// 2. Queue the initial application scene:
 	//    - If standalone exported game config exists or running automated scene transition test, open EditorScene directly.
 	//    - Otherwise start with TitleScene (3.2s Rizeallday Engine splash screen -> transitions to EditorScene).
-	bool isExportedGame = std::filesystem::exists("BuildConfig.json") ||
+	// The exporter writes game_build.cfg next to the exe (this used to look for "BuildConfig.json", which no
+	// exporter ever wrote, so exported games still showed the editor splash)
+	bool isExportedGame = EditorSuite::IsExportedGameLaunch() ||
 	                      (std::strstr(GetCommandLineA(), "--standalone") != nullptr);
-	if (testMode_ || isExportedGame) {
+	// Headless self-tests (EditorSuite_Tests.cpp) are only compiled into editor builds
+	bool runSelfTests = false;
+#ifdef USE_IMGUI
+	runSelfTests = std::strstr(GetCommandLineA(), "--run-tests") != nullptr;
+#endif
+	if (testMode_ || runSelfTests || isExportedGame) {
 		sceneManager_.ChangeScene(std::make_unique<EditorScene>());
 	} else {
 		sceneManager_.ChangeScene(std::make_unique<TitleScene>());
 	}
+}
+
+int EditorApp::GetExitCode() {
+	return EditorSuite::sSelfTestExitCode;
 }
 
 void EditorApp::Update(float deltaTime) {

@@ -1,4 +1,5 @@
 ﻿#include "EditorSuiteInternal.h"
+#include "SceneJson.h"
 
 void EditorSuite::UpdateScripts(float deltaTime)
 {
@@ -6,6 +7,8 @@ void EditorSuite::UpdateScripts(float deltaTime)
 		return;
 	}
 
+	// Scripts rebuild the game UI every frame they run (the last frame stays visible while paused)
+	UIRenderer::GetInstance()->Clear();
 	RefreshAllScriptObjectViews();
 
 	// Instantiate/Destroy from scripts are deferred, so gameObjects_ does not change size inside this loop.
@@ -203,6 +206,197 @@ void EditorSuite::SetupEngineAPI()
 		if (!ctx) return nullptr;
 		return static_cast<EditorSuite*>(ctx)->QueueScriptSpawn(name, primitiveType, position);
 	};
+
+	// Mouse buttons only count while the cursor is over the Game view (clicks on editor panels are ignored)
+	engineApi_.isMouseDown = [](void* ctx, int button) -> bool {
+		auto* self = static_cast<EditorSuite*>(ctx);
+		float x = 0.0f, y = 0.0f, w = 0.0f, h = 0.0f;
+		return self && self->currentInput_ && self->GetGameViewMousePosition(x, y, w, h) && self->currentInput_->IsPressMouse(button);
+	};
+	engineApi_.isMouseTriggered = [](void* ctx, int button) -> bool {
+		auto* self = static_cast<EditorSuite*>(ctx);
+		float x = 0.0f, y = 0.0f, w = 0.0f, h = 0.0f;
+		return self && self->currentInput_ && self->GetGameViewMousePosition(x, y, w, h) && self->currentInput_->IsTriggerMouse(button);
+	};
+	engineApi_.getMousePosition = [](void* ctx, Vector2* outPixels, Vector2* outViewSize) -> bool {
+		auto* self = static_cast<EditorSuite*>(ctx);
+		float x = 0.0f, y = 0.0f, w = 0.0f, h = 0.0f;
+		const bool inside = self && self->GetGameViewMousePosition(x, y, w, h);
+		if (outPixels) *outPixels = { x, y };
+		if (outViewSize) *outViewSize = { w, h };
+		return inside;
+	};
+	engineApi_.getMouseWorldOnPlane = [](void* ctx, float planeY, Vector3* outPoint) -> bool {
+		auto* self = static_cast<EditorSuite*>(ctx);
+		Vector3 p{};
+		if (!self || !outPoint || !self->GetMouseWorldOnPlane(planeY, p)) return false;
+		*outPoint = p;
+		return true;
+	};
+
+	engineApi_.isPadConnected = [](void* ctx, int pad) -> bool {
+		auto* self = static_cast<EditorSuite*>(ctx);
+		return self && self->currentInput_ && self->currentInput_->IsGamepadConnected(pad);
+	};
+	engineApi_.isPadButtonDown = [](void* ctx, int button, int pad) -> bool {
+		auto* self = static_cast<EditorSuite*>(ctx);
+		return self && self->currentInput_ && self->currentInput_->PushGamepadButton(static_cast<WORD>(button & 0xFFFF), pad);
+	};
+	engineApi_.isPadButtonTriggered = [](void* ctx, int button, int pad) -> bool {
+		auto* self = static_cast<EditorSuite*>(ctx);
+		return self && self->currentInput_ && self->currentInput_->TriggerGamepadButton(static_cast<WORD>(button & 0xFFFF), pad);
+	};
+	engineApi_.getPadStick = [](void* ctx, int stick, int pad) -> Vector2 {
+		auto* self = static_cast<EditorSuite*>(ctx);
+		if (!self || !self->currentInput_) return {};
+		Input* in = self->currentInput_;
+		return (stick == 0) ? Vector2{ in->GetLeftStickX(pad), in->GetLeftStickY(pad) }
+			: Vector2{ in->GetRightStickX(pad), in->GetRightStickY(pad) };
+	};
+	engineApi_.getPadTrigger = [](void* ctx, int side, int pad) -> float {
+		auto* self = static_cast<EditorSuite*>(ctx);
+		if (!self || !self->currentInput_) return 0.0f;
+		return (side == 0) ? self->currentInput_->GetLeftTrigger(pad) : self->currentInput_->GetRightTrigger(pad);
+	};
+	engineApi_.setPadVibration = [](void* ctx, int pad, float left, float right) {
+		auto* self = static_cast<EditorSuite*>(ctx);
+		if (self && self->currentInput_) self->currentInput_->SetVibration(pad, left, right);
+	};
+
+	engineApi_.getUnscaledDeltaTime = [](void* ctx) -> float {
+		auto* self = static_cast<EditorSuite*>(ctx);
+		return self ? self->unscaledDeltaTime_ : 0.016f;
+	};
+	engineApi_.getTime = [](void* ctx) -> float {
+		auto* self = static_cast<EditorSuite*>(ctx);
+		return self ? static_cast<float>(self->gameTime_) : 0.0f;
+	};
+	engineApi_.getTimeScale = [](void* ctx) -> float {
+		auto* self = static_cast<EditorSuite*>(ctx);
+		return self ? self->timeScale_ : 1.0f;
+	};
+	engineApi_.setTimeScale = [](void* ctx, float scale) {
+		auto* self = static_cast<EditorSuite*>(ctx);
+		if (self) self->timeScale_ = std::isfinite(scale) ? std::clamp(scale, 0.0f, 10.0f) : 1.0f;
+	};
+
+	engineApi_.instantiatePrefab = [](void* ctx, const char* prefabName, Vector3 position) -> ScriptGameObjectView* {
+		return ctx ? static_cast<EditorSuite*>(ctx)->QueuePrefabSpawn(prefabName, position) : nullptr;
+	};
+	engineApi_.despawn = [](void* ctx, uint32_t id) {
+		if (ctx) static_cast<EditorSuite*>(ctx)->QueueDespawn(id);
+	};
+
+	engineApi_.uiRect = [](void*, float x, float y, float w, float h, Vector4 color) {
+		UIRenderer::GetInstance()->DrawRect(x, y, w, h, color);
+	};
+	engineApi_.uiText = [](void*, const char* text, float x, float y, float size, Vector4 color, int align) {
+		UIRenderer::GetInstance()->DrawString(text, x, y, size, color, static_cast<UIRenderer::Align>(std::clamp(align, 0, 2)));
+	};
+	engineApi_.uiImage = [](void* ctx, const char* texturePath, float x, float y, float w, float h, Vector4 color) {
+		auto* self = static_cast<EditorSuite*>(ctx);
+		if (!self || !texturePath || texturePath[0] == '\0') return;
+		// LoadTexture caches by path, so only the first call per texture touches the disk
+		const uint32_t texture = TextureManager::GetInstance()->LoadTexture(self->ResolveAssetPath(texturePath));
+		UIRenderer::GetInstance()->DrawImage(texture, x, y, w, h, color);
+	};
+	engineApi_.uiMeasureText = [](void*, const char* text, float size) -> float {
+		return UIRenderer::GetInstance()->MeasureText(text, size);
+	};
+
+	engineApi_.loadScene = [](void* ctx, const char* sceneNameOrPath) {
+		if (ctx && sceneNameOrPath) static_cast<EditorSuite*>(ctx)->RequestSceneLoad(sceneNameOrPath);
+	};
+	engineApi_.getSceneName = [](void* ctx, char* out, int outSize) -> int {
+		if (!ctx || !out || outSize <= 0) return 0;
+		const std::string& name = static_cast<EditorSuite*>(ctx)->currentSceneName_;
+		strncpy_s(out, static_cast<size_t>(outSize), name.c_str(), _TRUNCATE);
+		return static_cast<int>(strlen(out));
+	};
+	engineApi_.saveSetNumber = [](void* ctx, const char* key, double value) {
+		if (ctx && key) static_cast<EditorSuite*>(ctx)->SetSaveNumber(key, value);
+	};
+	engineApi_.saveGetNumber = [](void* ctx, const char* key, double fallback) -> double {
+		return (ctx && key) ? static_cast<EditorSuite*>(ctx)->GetSaveNumber(key, fallback) : fallback;
+	};
+	engineApi_.saveSetString = [](void* ctx, const char* key, const char* value) {
+		if (ctx && key && value) static_cast<EditorSuite*>(ctx)->SetSaveString(key, value);
+	};
+	engineApi_.saveGetString = [](void* ctx, const char* key, char* out, int outSize) -> bool {
+		if (!ctx || !key || !out || outSize <= 0) return false;
+		std::string value;
+		if (!static_cast<EditorSuite*>(ctx)->GetSaveString(key, value)) return false;
+		strncpy_s(out, static_cast<size_t>(outSize), value.c_str(), _TRUNCATE);
+		return true;
+	};
+	engineApi_.saveHasKey = [](void* ctx, const char* key) -> bool {
+		return ctx && key && static_cast<EditorSuite*>(ctx)->HasSaveKey(key);
+	};
+	engineApi_.saveDeleteAll = [](void* ctx) {
+		if (ctx) static_cast<EditorSuite*>(ctx)->DeleteAllSaveData();
+	};
+}
+
+bool EditorSuite::GetGameViewMousePosition(float& outX, float& outY, float& outW, float& outH) const
+{
+	float rect[4] = { gameViewRect_[0], gameViewRect_[1], gameViewRect_[2], gameViewRect_[3] };
+	float mouseX = 0.0f;
+	float mouseY = 0.0f;
+#ifdef USE_IMGUI
+	if (ImGui::GetCurrentContext() == nullptr) return false;
+	const ImVec2 mp = ImGui::GetIO().MousePos;
+	mouseX = mp.x;
+	mouseY = mp.y;
+#else
+	// Release has no ImGui: the game fills the client area
+	HWND hwnd = WinApp::GetInstance()->GetHWND();
+	POINT pt{};
+	RECT client{};
+	if (!hwnd || !GetCursorPos(&pt) || !ScreenToClient(hwnd, &pt) || !GetClientRect(hwnd, &client)) return false;
+	rect[0] = 0.0f;
+	rect[1] = 0.0f;
+	rect[2] = static_cast<float>(client.right - client.left);
+	rect[3] = static_cast<float>(client.bottom - client.top);
+	mouseX = static_cast<float>(pt.x);
+	mouseY = static_cast<float>(pt.y);
+#endif
+	if (rect[2] <= 0.0f || rect[3] <= 0.0f) return false;
+	outX = mouseX - rect[0];
+	outY = mouseY - rect[1];
+	outW = rect[2];
+	outH = rect[3];
+	return outX >= 0.0f && outY >= 0.0f && outX < outW && outY < outH;
+}
+
+bool EditorSuite::ScreenRayToPlaneY(const Matrix4x4& viewProjection, float ndcX, float ndcY, float planeY, Vector3& outPoint)
+{
+	// Unproject the near (z = 0) and far (z = 1) points; row-vector convention, so p * inverse(VP)
+	const Matrix4x4 inv = Mathematics::Inverse(viewProjection);
+	auto unproject = [&inv](float x, float y, float z) {
+		const float px = x * inv.m[0][0] + y * inv.m[1][0] + z * inv.m[2][0] + inv.m[3][0];
+		const float py = x * inv.m[0][1] + y * inv.m[1][1] + z * inv.m[2][1] + inv.m[3][1];
+		const float pz = x * inv.m[0][2] + y * inv.m[1][2] + z * inv.m[2][2] + inv.m[3][2];
+		const float pw = x * inv.m[0][3] + y * inv.m[1][3] + z * inv.m[2][3] + inv.m[3][3];
+		const float invW = (std::abs(pw) > 1e-12f) ? 1.0f / pw : 0.0f;
+		return Vector3{ px * invW, py * invW, pz * invW };
+	};
+	const Vector3 nearP = unproject(ndcX, ndcY, 0.0f);
+	const Vector3 farP = unproject(ndcX, ndcY, 1.0f);
+	const float dirY = farP.y - nearP.y;
+	if (std::abs(dirY) < 1e-8f) return false; // ray parallel to the plane
+	const float t = (planeY - nearP.y) / dirY;
+	if (t < 0.0f || !std::isfinite(t)) return false; // plane is behind the camera
+	outPoint = { nearP.x + (farP.x - nearP.x) * t, planeY, nearP.z + (farP.z - nearP.z) * t };
+	return true;
+}
+
+bool EditorSuite::GetMouseWorldOnPlane(float planeY, Vector3& outPoint) const
+{
+	float x = 0.0f, y = 0.0f, w = 0.0f, h = 0.0f;
+	if (!gameCamera_ || !GetGameViewMousePosition(x, y, w, h)) return false;
+	const float ndcX = (x / w) * 2.0f - 1.0f;
+	const float ndcY = 1.0f - (y / h) * 2.0f;
+	return ScreenRayToPlaneY(gameCamera_->GetViewProjectionMatrix(), ndcX, ndcY, planeY, outPoint);
 }
 
 void EditorSuite::SyncGameObjectToView(const GameObject& src, ScriptGameObjectView& dst)
@@ -213,6 +407,7 @@ void EditorSuite::SyncGameObjectToView(const GameObject& src, ScriptGameObjectVi
 	dst.isActive = src.isActive;
 	dst.isStatic = src.isStatic;
 	dst.layer = src.layer;
+	dst.collisionMask = src.collisionMask;
 	dst.translation = src.translation;
 	dst.rotation = src.rotation;
 	dst.scale = src.scale;
@@ -227,7 +422,8 @@ void EditorSuite::SyncViewToGameObject(const ScriptGameObjectView& src, GameObje
 {
 	dst.isActive = src.isActive;
 	dst.isStatic = src.isStatic;
-	dst.layer = src.layer;
+	dst.layer = src.layer & 31u;
+	dst.collisionMask = src.collisionMask;
 	dst.translation = src.translation;
 	dst.rotation = src.rotation;
 	dst.scale = src.scale;
@@ -266,15 +462,13 @@ void EditorSuite::RefreshAllScriptObjectViews()
 
 ScriptGameObjectView* EditorSuite::GetOrUpdateScriptViewById(uint32_t id)
 {
-	for (const auto& obj : gameObjects_) {
-		if (obj.id == id) {
-			auto& view = scriptObjectViews_[id];
-			if (!view) {
-				view = std::make_unique<ScriptGameObjectView>();
-			}
-			SyncGameObjectToView(obj, *view);
-			return view.get();
+	if (const GameObject* obj = FindGameObjectById(id, false)) {
+		auto& view = scriptObjectViews_[id];
+		if (!view) {
+			view = std::make_unique<ScriptGameObjectView>();
 		}
+		SyncGameObjectToView(*obj, *view);
+		return view.get();
 	}
 	return FindPendingSpawnView(id);
 }
@@ -318,6 +512,15 @@ bool EditorSuite::CancelPendingSpawn(uint32_t id)
 	if (it == pendingSpawns_.end()) {
 		return false;
 	}
+	if (it->reusePooled) {
+		// The object exists (hidden in its pool): put it back instead of retiring its view
+		prefabPools_[it->prefabName].push_back(id);
+		pendingSpawns_.erase(it);
+		if (auto viewIt = scriptObjectViews_.find(id); viewIt != scriptObjectViews_.end() && viewIt->second) {
+			viewIt->second->isActive = false;
+		}
+		return true;
+	}
 	pendingSpawns_.erase(it);
 	RetireScriptView(id);
 	return true;
@@ -325,6 +528,9 @@ bool EditorSuite::CancelPendingSpawn(uint32_t id)
 
 void EditorSuite::ProcessPendingSpawns()
 {
+	// Despawns first, so a prefab instance returned to its pool this frame is hidden before anything else runs
+	ProcessPendingDespawns();
+
 	if (pendingSpawns_.empty()) {
 		return;
 	}
@@ -338,6 +544,15 @@ void EditorSuite::ProcessPendingSpawns()
 		auto viewIt = scriptObjectViews_.find(spawn.id);
 		ScriptGameObjectView* view = (viewIt != scriptObjectViews_.end()) ? viewIt->second.get() : nullptr;
 		const Vector3 position = view ? view->translation : Vector3{ 0.0f, 0.0f, 0.0f };
+
+		if (!spawn.prefabName.empty()) {
+			if (spawn.reusePooled) {
+				ResetPooledPrefabInstance(spawn.id, view);
+			} else if (InstantiatePrefabNow(spawn.prefabName, position, spawn.id, view) == 0) {
+				RetireScriptView(spawn.id); // prefab vanished from disk since the spawn was queued
+			}
+			continue;
+		}
 
 		GameObject* created = nullptr;
 		switch (spawn.primitiveType) {
@@ -454,47 +669,54 @@ void EditorSuite::ApplySavedFieldsToScript(GameObject::ScriptComponent& sc)
 
 std::string EditorSuite::SerializeAllScriptFieldsToJson()
 {
-	std::ostringstream ss;
-	ss << "{\n  \"scriptComponents\": [\n";
-	bool firstEntry = true;
+	using SceneJson::Json;
+	using SceneJson::Num;
+
+	Json components = Json::array();
 	for (auto& obj : gameObjects_) {
 		for (size_t s = 0; s < obj.scripts.size(); ++s) {
 			auto& sc = obj.scripts[s];
 			CaptureScriptFieldsToSaved(sc);
-			if (!firstEntry) ss << ",\n";
-			firstEntry = false;
-			ss << "    { \"objectId\": " << obj.id
-			   << ", \"componentIndex\": " << s
-			   << ", \"className\": \"" << sc.className << "\""
-			   << ", \"fields\": [";
-			bool firstField = true;
+
+			Json fields = Json::array();
 			for (const auto& [fName, fVal] : sc.savedFields) {
-				if (!firstField) ss << ", ";
-				firstField = false;
-				ss << "{ \"name\": \"" << fName << "\", \"type\": " << static_cast<int>(fVal.type);
+				Json f = Json::object();
+				f["name"] = fName;
+				f["type"] = static_cast<int>(fVal.type);
 				switch (fVal.type) {
 				case ScriptFieldType::Float:
-					ss << ", \"v0\": " << fVal.floatVal << " }";
+					f["v0"] = Num(fVal.floatVal);
 					break;
 				case ScriptFieldType::Int:
-					ss << ", \"v0\": " << fVal.intVal << " }";
+					f["v0"] = fVal.intVal;
 					break;
 				case ScriptFieldType::Bool:
-					ss << ", \"v0\": " << (fVal.boolVal ? 1 : 0) << " }";
+					f["v0"] = fVal.boolVal ? 1 : 0;
 					break;
 				case ScriptFieldType::Vec3:
-					ss << ", \"v0\": " << fVal.vec3Val.x << ", \"v1\": " << fVal.vec3Val.y << ", \"v2\": " << fVal.vec3Val.z << " }";
+					f["v0"] = Num(fVal.vec3Val.x);
+					f["v1"] = Num(fVal.vec3Val.y);
+					f["v2"] = Num(fVal.vec3Val.z);
 					break;
 				case ScriptFieldType::CharBuffer:
-					ss << ", \"str\": \"" << fVal.strVal << "\" }";
+					f["str"] = fVal.strVal;
 					break;
 				}
+				fields.push_back(std::move(f));
 			}
-			ss << "] }";
+
+			Json entry = Json::object();
+			entry["objectId"] = obj.id;
+			entry["componentIndex"] = s;
+			entry["className"] = sc.className;
+			entry["fields"] = std::move(fields);
+			components.push_back(std::move(entry));
 		}
 	}
-	ss << "\n  ]\n}\n";
-	return ss.str();
+
+	Json root = Json::object();
+	root["scriptComponents"] = std::move(components);
+	return SceneJson::DumpCompact(root);
 }
 
 void EditorSuite::DeserializeAllScriptFieldsFromJson(const std::string& json)

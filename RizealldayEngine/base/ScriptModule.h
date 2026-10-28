@@ -54,6 +54,8 @@ public:
 	bool GetFieldInfo(ScriptBase* instance, int index, ScriptFieldInfo& outInfo) const;
 
 	bool IsLoaded() const { return dllHandle_ != nullptr; }
+	/// Why the startup load failed (empty when it succeeded or no DLL exists yet)
+	const std::string& GetLastLoadError() const { return lastLoadError_; }
 	uint32_t GetReloadCount() const { return shadowGeneration_; }
 	const std::filesystem::path& GetDllSourcePath() const { return dllSourcePath_; }
 	const std::filesystem::path& GetActiveShadowPath() const { return activeShadowPath_; }
@@ -86,6 +88,7 @@ private:
 	FnGetScriptFieldData  fnGetFieldData_   = nullptr;
 
 	std::vector<std::string> registeredNames_;
+	std::string lastLoadError_;
 	std::filesystem::path dllSourcePath_;
 	std::filesystem::path activeShadowPath_;
 	std::filesystem::file_time_type lastLoadedWriteTime_{};

@@ -37,6 +37,11 @@ GAMESCRIPTS_API void GameScripts_Init(const EngineAPI* api) {
 	g_engineApi = api;
 }
 
+// Lets the engine refuse a DLL that was built against a different ScriptAPI.h
+GAMESCRIPTS_API uint32_t GameScripts_GetApiFingerprint() {
+	return ScriptApiFingerprint();
+}
+
 GAMESCRIPTS_API ScriptBase* CreateScript(const char* name) {
 	if (!name) return nullptr;
 	for (int i = 0; i < g_registeredScriptCount; ++i) {

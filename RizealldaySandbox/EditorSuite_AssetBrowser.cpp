@@ -192,6 +192,9 @@ void EditorSuite::DrawProjectAndConsolePanel()
 							} else if (ext == ".obj" || ext == ".fbx" || ext == ".gltf" || ext == ".glb") {
 								badge = "[3D]";
 								badgeCol = ImVec4(0.3f, 0.8f, 0.9f, 1.0f);
+							} else if (filename.ends_with(".prefab.json")) {
+								badge = "[PREFAB]";
+								badgeCol = ImVec4(0.4f, 0.65f, 1.0f, 1.0f);
 							} else if (filename.find(".scene.json") != std::string::npos || ext == ".json") {
 								badge = "[SCENE]";
 								badgeCol = ImVec4(0.9f, 0.5f, 0.2f, 1.0f);
@@ -201,7 +204,7 @@ void EditorSuite::DrawProjectAndConsolePanel()
 							} else if (ext == ".hlsl" || ext == ".hlsli") {
 								badge = "[HLSL]";
 								badgeCol = ImVec4(0.7f, 0.5f, 0.95f, 1.0f);
-							} else if (ext == ".wav" || ext == ".mp3" || ext == ".ogg") {
+							} else if (ext == ".wav" || ext == ".mp3" || ext == ".ogg" || ext == ".m4a" || ext == ".wma") {
 								badge = "[AUDIO]";
 								badgeCol = ImVec4(0.4f, 0.9f, 0.7f, 1.0f);
 							} else if (ext == ".cpp") {
@@ -224,7 +227,19 @@ void EditorSuite::DrawProjectAndConsolePanel()
 										LoadScene(entry.path().string());
 									} else if (ext == ".cpp" || ext == ".h" || ext == ".hpp") {
 										OpenFileInVisualStudio(entry.path());
+									} else if (filename.ends_with(".prefab.json")) {
+										// Double-click: place one instance at the origin
+										const std::string prefabName = filename.substr(0, filename.size() - std::string_view(".prefab.json").size());
+										if (const uint32_t newId = InstantiatePrefabNow(prefabName, { 0.0f, 0.0f, 0.0f }); newId != 0) {
+											selectedObjectIndex_ = FindGameObjectIndexById(newId);
+											isSceneDirty_ = true;
+											if (sceneState_ == EditorSceneState::Edit) PushUndoSnapshot();
+										}
 									}
+								}
+								if (filename.ends_with(".prefab.json")) {
+									ImGui::SetItemTooltip("Double-click to place in the scene. Scripts: InstantiatePrefab(\"%s\")",
+										filename.substr(0, filename.size() - 12).c_str());
 								}
 							}
 						}

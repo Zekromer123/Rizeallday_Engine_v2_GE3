@@ -1,12 +1,14 @@
-name: Build
+name: Build & Test
 
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
-  build:
+  build-and-test:
     runs-on: windows-latest
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
@@ -26,6 +28,7 @@ jobs:
             "externals/assimp/bin/assimp-vc143-mt.dll",
             "externals/DirectXTex/DirectXTex/DirectXTex_Desktop_2022_Win10.vcxproj",
             "externals/DirectXTex/DirectXTex/DirectXTex.h",
+            "externals/nlohmann/json.hpp",
             "RizealldaySandbox/dxcompiler.dll",
             "RizealldaySandbox/dxil.dll",
             "GameScripts/GameScripts.vcxproj",
@@ -47,14 +50,13 @@ jobs:
             throw "Build halted: $($missing.Count) required dependency file(s) missing: $($missing -join ', ')"
           }
 
-      - name: Build Solution (Development|x64)
+      - name: Build Development and Release (0 warnings required)
         shell: pwsh
         run: |
-          $msbuildVerOutput = & msbuild -version -nologo
-          $ver = [version]($msbuildVerOutput | Select-Object -Last 1).Trim()
+          $ver = [version]((& msbuild -version -nologo | Select-Object -Last 1).Trim())
           Write-Host "Detected MSBuild version: $ver"
 
-          # Determine if v145 toolset is installed on the runner; fallback to v143 on VS 2022 runners
+          # The project targets the v145 toolset (VS 2026); VS 2022 runners only have v143
           $v145Props = Get-ChildItem -Path "${env:ProgramFiles}\Microsoft Visual Studio\*\*\MSBuild\Microsoft\VC\v*\Platforms\x64\PlatformToolsets\v145\Toolset.props" -ErrorAction SilentlyContinue
           $toolsetArg = @()
           if (-not $v145Props) {
@@ -62,19 +64,67 @@ jobs:
             $toolsetArg = @("/p:PlatformToolset=v143")
           }
 
-          # MSBuild 17.13+ supports .slnx natively; older MSBuild builds .vcxproj in dependency order
-          if ($ver -ge [version]"17.13.0.0") {
-            & msbuild Rizeallday_Engine_v2_GE3.slnx /p:Configuration=Development /p:Platform=x64 /m @toolsetArg
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          } else {
-            $projects = @(
-              "externals/DirectXTex/DirectXTex/DirectXTex_Desktop_2022_Win10.vcxproj",
-              "RizealldayEngine/RizealldayEngine.vcxproj",
-              "GameScripts/GameScripts.vcxproj",
-              "RizealldaySandbox/RizealldaySandbox.vcxproj"
-            )
-            foreach ($proj in $projects) {
-              & msbuild $proj /p:Configuration=Development /p:Platform=x64 /m @toolsetArg
-              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          function Invoke-Build([string]$config) {
+            $warnLog = "msbuild-$config-warnings.log"
+            $logArgs = @("/flp1:warningsonly;logfile=$warnLog")
+            # MSBuild 17.13+ builds .slnx natively; older MSBuild builds the projects in dependency order
+            if ($ver -ge [version]"17.13.0.0") {
+              & msbuild Rizeallday_Engine_v2_GE3.slnx /p:Configuration=$config /p:Platform=x64 /m /nologo @toolsetArg @logArgs
+              if ($LASTEXITCODE -ne 0) { throw "$config build failed" }
+            } else {
+              $projects = @(
+                "externals/DirectXTex/DirectXTex/DirectXTex_Desktop_2022_Win10.vcxproj",
+                "RizealldayEngine/RizealldayEngine.vcxproj",
+                "GameScripts/GameScripts.vcxproj",
+                "RizealldaySandbox/RizealldaySandbox.vcxproj"
+              )
+              foreach ($proj in $projects) {
+                & msbuild $proj /p:Configuration=$config /p:Platform=x64 /m /nologo @toolsetArg "/flp1:warningsonly;logfile=$warnLog;append"
+                if ($LASTEXITCODE -ne 0) { throw "$config build failed ($proj)" }
+              }
             }
+
+            # Project rule: 0 warnings in our own code (third-party code under externals/ is not ours to fix)
+            $warnings = @()
+            if (Test-Path $warnLog) {
+              $warnings = Get-Content $warnLog | Where-Object { $_ -match "warning" -and $_ -notmatch "[\\/]externals[\\/]" } | Sort-Object -Unique
+            }
+            if ($warnings.Count -gt 0) {
+              $warnings | ForEach-Object { Write-Host "::warning::$_" }
+              throw "$config build produced $($warnings.Count) warning(s) in project code"
+            }
+            Write-Host "$config build: 0 warnings in project code"
           }
+
+          Invoke-Build "Development"
+          Invoke-Build "Release"
+
+      - name: Run self-tests (Development, WARP software rendering)
+        shell: pwsh
+        run: |
+          # The runner has no GPU and no audio device: --warp selects the D3D12 software rasterizer,
+          # and the engine disables audio when no output device exists.
+          $exe = "bin/Development/RizealldaySandbox.exe"
+          if (-not (Test-Path $exe)) { throw "Missing $exe" }
+          $p = Start-Process -FilePath (Resolve-Path $exe).Path -WorkingDirectory (Resolve-Path "RizealldaySandbox").Path `
+                             -ArgumentList "--run-tests --warp" -PassThru
+          $null = $p.Handle  # keep the handle so ExitCode is available after WaitForExit
+          if (-not $p.WaitForExit(600000)) {
+            Stop-Process -Id $p.Id -Force
+            throw "Self-tests timed out after 10 minutes"
+          }
+          $report = "RizealldaySandbox/test_results.txt"
+          if (Test-Path $report) { Get-Content $report } else { Write-Host "::error::No test report was written" }
+          if ($p.ExitCode -ne 0) { throw "Self-tests failed (exit code $($p.ExitCode))" }
+
+      - name: Upload test report and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            RizealldaySandbox/test_results.txt
+            RizealldaySandbox/logs/
+            RizealldaySandbox/Dumps/
+            msbuild-*-warnings.log
+          if-no-files-found: ignore

@@ -1,5 +1,9 @@
 # Roadmap Rizeallday Engine v2
 
+> [!WARNING]
+> **Diarsipkan (2026-10-28).** Roadmap aktif ada di [`ROADMAP.md`](ROADMAP.md). Dokumen ini disimpan hanya sebagai riwayat;
+> item yang sudah selesai atau digabung tercatat di sana.
+
 Roadmap ini disusun dari kondisi kode engine saat ini (DirectX 12, Editor Suite ImGui, C++ Script Hot-Reload, Shadow Map, FBX Animation, Frustum Culling, Audio Media Foundation). Urutannya dari yang **paling berdampak & paling murah** sampai yang **paling ambisius** (arah Hikari Engine).
 
 Kesulitan: ⭐ Mudah · ⭐⭐ Sedang · ⭐⭐⭐ Sulit · ⭐⭐⭐⭐ Sangat sulit

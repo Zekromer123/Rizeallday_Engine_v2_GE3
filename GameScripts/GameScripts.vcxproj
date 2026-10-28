@@ -145,12 +145,23 @@
     <ClCompile Include="Scripts\OscillateScript.cpp" />
     <ClCompile Include="Scripts\RotateScript.cpp" />
     <ClCompile Include="Scripts\SpawnStressTest.cpp" />
+    <ClCompile Include="Scripts\SurvivorsBullet.cpp" />
+    <ClCompile Include="Scripts\SurvivorsCamera.cpp" />
+    <ClCompile Include="Scripts\SurvivorsEnemy.cpp" />
+    <ClCompile Include="Scripts\SurvivorsGameManager.cpp" />
+    <ClCompile Include="Scripts\SurvivorsPlayer.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Scripts\OscillateScript.h" />
     <ClInclude Include="Scripts\RotateScript.h" />
     <ClInclude Include="Scripts\PlayerController.h" />
     <ClInclude Include="Scripts\SpawnStressTest.h" />
+    <ClInclude Include="Scripts\SurvivorsBullet.h" />
+    <ClInclude Include="Scripts\SurvivorsCamera.h" />
+    <ClInclude Include="Scripts\SurvivorsEnemy.h" />
+    <ClInclude Include="Scripts\SurvivorsGameManager.h" />
+    <ClInclude Include="Scripts\SurvivorsPlayer.h" />
+    <ClInclude Include="Scripts\SurvivorsShared.h" />
     <ClInclude Include="..\RizealldayEngine\base\ScriptAPI.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

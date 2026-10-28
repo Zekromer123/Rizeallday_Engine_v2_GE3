@@ -37,7 +37,7 @@ public:
     static std::unique_ptr<LightGroup> Create();
 
     explicit LightGroup(PrivateTag) {}
-    ~LightGroup();
+    ~LightGroup() = default;
 
     void Initialize();
     void Update();
@@ -63,8 +63,12 @@ private:
     LightGroup() = default;
     static DirectXCommon* sDxCommon_;
 
-    Microsoft::WRL::ComPtr<ID3D12Resource> constBuffer_;
-    LightGroupGPU* mappedData_ = nullptr;
+    // CPU copy of the light CB; uploaded to the per-frame upload allocator at bind time
+    LightGroupGPU data_ = {};
+    uint64_t uploadFrame_ = UINT64_MAX;
+    uint64_t version_ = 0;
+    uint64_t uploadedVersion_ = UINT64_MAX;
+    D3D12_GPU_VIRTUAL_ADDRESS uploadedAddress_ = 0;
 
     Vector3 ambientColor_ = {1.0f, 1.0f, 1.0f};
     float ambientIntensity_ = 0.1f;

@@ -1,6 +1,7 @@
 ﻿#include "3d/CircleShadow.h"
 #include "3d/Camera.h"
 #include "base/DirectXCommon.h"
+#include "base/Profiler.h"
 #include "base/DXCManager.h"
 #include "math/MathUtil.h"
 #include <cassert>
@@ -205,20 +206,10 @@ void CircleShadow::Initialize()
     ibView_.SizeInBytes    = static_cast<UINT>(ibSize);
     ibView_.Format         = DXGI_FORMAT_R32_UINT;
 
-    // ---- Material Buffer ----
-    materialResource_ = makeBuffer(sizeof(CircleShadowMaterialGPU));
-    materialResource_->Map(0, nullptr, reinterpret_cast<void**>(&materialData_));
-    if (materialData_) {
-        *materialData_ = CircleShadowMaterialGPU{}; // Default values
-    }
-
-    // ---- Transform Buffer (WVP + World) ----
-    transformResource_ = makeBuffer(sizeof(TransformMatrix));
-    transformResource_->Map(0, nullptr, reinterpret_cast<void**>(&transformData_));
-    if (transformData_) {
-        transformData_->WVP   = Mathematics::MakeIdentity4x4();
-        transformData_->World = Mathematics::MakeIdentity4x4();
-    }
+    // ---- Material / Transform: CPU copies, uploaded per frame at draw time ----
+    material_ = CircleShadowMaterialGPU{}; // Default values
+    transform_.WVP   = Mathematics::MakeIdentity4x4();
+    transform_.World = Mathematics::MakeIdentity4x4();
 }
 
 // ============================================================
@@ -229,9 +220,7 @@ void CircleShadow::Update(const Vector3& characterPos, float floorY, float radiu
     position_ = { characterPos.x, floorY, characterPos.z };
     radius_   = radius;
     opacity_  = opacity;
-    if (materialData_) {
-        materialData_->color.w = opacity;
-    }
+    material_.color.w = opacity;
 }
 
 // ============================================================
@@ -239,7 +228,7 @@ void CircleShadow::Update(const Vector3& characterPos, float floorY, float radiu
 // ============================================================
 void CircleShadow::Draw(ID3D12GraphicsCommandList* cmdList, Camera* camera)
 {
-    if (!sInitialized_ || !transformData_) return;
+    if (!sInitialized_ || !sDxCommon_ || sDxCommon_->IsDeviceLost()) return;
 
     // Hitung transform: posisi di lantai + scale sesuai radius
     Matrix4x4 scale     = Mathematics::MakeScaleMatrix({ radius_, 1.0f, radius_ });
@@ -247,8 +236,8 @@ void CircleShadow::Draw(ID3D12GraphicsCommandList* cmdList, Camera* camera)
     Matrix4x4 world     = Mathematics::Multiply(scale, translate);
 
     const Matrix4x4& viewProj = camera->GetViewProjectionMatrix();
-    transformData_->World = world;
-    transformData_->WVP   = Mathematics::Multiply(world, viewProj);
+    transform_.World = world;
+    transform_.WVP   = Mathematics::Multiply(world, viewProj);
 
     // Bind pipeline khusus circle shadow
     cmdList->SetGraphicsRootSignature(sRootSignature_.Get());
@@ -258,11 +247,15 @@ void CircleShadow::Draw(ID3D12GraphicsCommandList* cmdList, Camera* camera)
     cmdList->IASetIndexBuffer(&ibView_);
 
     // Bind constant buffers
-    cmdList->SetGraphicsRootConstantBufferView(0, materialResource_->GetGPUVirtualAddress());
-    cmdList->SetGraphicsRootConstantBufferView(1, transformResource_->GetGPUVirtualAddress());
+    const D3D12_GPU_VIRTUAL_ADDRESS materialAddr  = sDxCommon_->UploadConstants(material_);
+    const D3D12_GPU_VIRTUAL_ADDRESS transformAddr = sDxCommon_->UploadConstants(transform_);
+    if (materialAddr == 0 || transformAddr == 0) return;
+    cmdList->SetGraphicsRootConstantBufferView(0, materialAddr);
+    cmdList->SetGraphicsRootConstantBufferView(1, transformAddr);
     // Slot 2 (SRV table) tidak di-set karena PS tidak benar-benar membaca texture
 
     cmdList->DrawIndexedInstanced(6, 1, 0, 0, 0);
+    Profiler::GetInstance()->CountDrawCall();
 
     // Catatan: Setelah Draw(), pipeline 3D utama perlu di-bind ulang.
     // Object3d::Draw() sudah otomatis melakukan ini dengan memanggil sPipeline_->Bind().
@@ -273,7 +266,5 @@ void CircleShadow::Draw(ID3D12GraphicsCommandList* cmdList, Camera* camera)
 // ============================================================
 void CircleShadow::SetColor(const Vector4& color)
 {
-    if (materialData_) {
-        materialData_->color = color;
-    }
+    material_.color = color;
 }

@@ -4,6 +4,7 @@
 #include "math/MathUtil.h"
 #include <d3d12.h>
 #include <wrl.h>
+#include <cstdint>
 
 class DirectXCommon;
 
@@ -18,7 +19,7 @@ public:
 	static D3D12_GPU_VIRTUAL_ADDRESS GetDefaultGPUVirtualAddress();
 
 	Camera() = default;
-	~Camera();
+	~Camera() = default;
 
 	void Initialize();
 	void Update();
@@ -38,14 +39,17 @@ public:
 	float farClip = 1000.0f;
 
 private:
-	void CreateBufferIfNeeded();
-
 	static DirectXCommon* sDxCommon_;
-	static Microsoft::WRL::ComPtr<ID3D12Resource> sDefaultCameraResource_;
-	static CameraForGPU* sDefaultMappedData_;
+	static CameraForGPU sDefaultData_;
+	static uint64_t sDefaultUploadFrame_;
+	static D3D12_GPU_VIRTUAL_ADDRESS sDefaultUploadAddress_;
 
-	Microsoft::WRL::ComPtr<ID3D12Resource> cameraResource_;
-	CameraForGPU* mappedCameraData_ = nullptr;
+	// CPU copy of the camera CB; uploaded to the per-frame upload allocator on demand
+	CameraForGPU data_ = { { 0.0f, 0.0f, -10.0f }, 0.0f };
+	uint64_t version_ = 0;
+	mutable uint64_t uploadFrame_ = UINT64_MAX;
+	mutable uint64_t uploadedVersion_ = UINT64_MAX;
+	mutable D3D12_GPU_VIRTUAL_ADDRESS uploadedAddress_ = 0;
 
 	Matrix4x4 matView_ = {};
 	Matrix4x4 matProjection_ = {};

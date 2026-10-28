@@ -1,4 +1,18 @@
 ﻿#include "EditorSuiteInternal.h"
+#include "SceneJson.h"
+
+namespace {
+	/// Writes ProjectSettings/project.json (names are escaped by the JSON writer).
+	void WriteProjectSettingsFile(const std::filesystem::path& file, const std::string& projectName, const std::string& startupScene)
+	{
+		SceneJson::Json j = SceneJson::Json::object();
+		j["projectName"] = projectName;
+		j["engineVersion"] = "v2.0";
+		j["startupScene"] = startupScene;
+		std::ofstream pj(file);
+		pj << SceneJson::DumpCompact(j);
+	}
+}
 
 std::string EditorSuite::OpenNativeFolderDialog()
 {
@@ -82,8 +96,7 @@ bool EditorSuite::CreateNewProject(const std::string& parentFolder, const std::s
 		// 4. ProjectSettings/project.json (scene path is relative to the project root)
 		const std::string startupSceneRel = "Assets/Scenes/SampleScene.scene.json";
 		{
-			std::ofstream pj(projPath / "ProjectSettings" / "project.json");
-			pj << "{\n  \"projectName\": \"" << name << "\",\n  \"engineVersion\": \"v2.0\",\n  \"startupScene\": \"" << startupSceneRel << "\"\n}\n";
+			WriteProjectSettingsFile(projPath / "ProjectSettings" / "project.json", name, startupSceneRel);
 		}
 
 		// 5. Copy starter assets so the project folders are not empty
@@ -200,9 +213,7 @@ std::string EditorSuite::NormalizeScenePath(const std::string& input) const
 
 void EditorSuite::ResetEditorHistory()
 {
-	undoStack_.clear();
-	redoStack_.clear();
-	PushUndoSnapshot(); // baseline state so the first Ctrl+Z has something to return to
+	ResetUndoHistory();
 	isSceneDirty_ = false;
 	selectedObjectIndex_ = -1;
 }
@@ -259,6 +270,8 @@ void EditorSuite::LoadRecentProjects()
 
 void EditorSuite::AddRecentProject(const std::filesystem::path& projectRoot)
 {
+	// Self-tests create throw-away projects in the temp folder; they must not appear in the user's list
+	if (isRunningTests_) return;
 	LoadRecentProjects();
 	std::error_code ec;
 	const std::filesystem::path root = std::filesystem::weakly_canonical(projectRoot, ec);
@@ -400,8 +413,7 @@ bool EditorSuite::OpenProject(const std::string& folderPath)
 		if (std::filesystem::is_directory(projPath / "Assets", ec)) {
 			std::filesystem::create_directories(projPath / "ProjectSettings", ec);
 			std::filesystem::create_directories(projPath / "Assets" / "Scenes", ec);
-			std::ofstream pj(projJsonPath);
-			pj << "{\n  \"projectName\": \"" << projPath.filename().string() << "\",\n  \"engineVersion\": \"v2.0\",\n  \"startupScene\": \"Assets/Scenes/SampleScene.scene.json\"\n}\n";
+			WriteProjectSettingsFile(projJsonPath, projPath.filename().string(), "Assets/Scenes/SampleScene.scene.json");
 			LogMessage(std::format("[Project] Converted folder into a project (created ProjectSettings/project.json): {}", projPath.string()), 0);
 		} else {
 			projectModalError_ = std::format("Not a project folder (no ProjectSettings/project.json or Assets/): {}", folderPath);
@@ -417,21 +429,15 @@ bool EditorSuite::OpenProject(const std::string& folderPath)
 	if (pj.is_open()) {
 		std::stringstream buf;
 		buf << pj.rdbuf();
-		std::string content = buf.str();
+		const std::string content = buf.str();
 
-		auto ExtractJsonString = [&](const std::string& key, std::string& outVal) {
-			std::string token = "\"" + key + "\": \"";
-			size_t p = content.find(token);
-			if (p != std::string::npos) {
-				size_t ep = content.find("\"", p + token.length());
-				if (ep != std::string::npos) {
-					outVal = content.substr(p + token.length(), ep - (p + token.length()));
-				}
-			}
-		};
-
-		ExtractJsonString("projectName", projectName);
-		ExtractJsonString("startupScene", startupScene);
+		std::string parseError;
+		if (const auto settings = SceneJson::Parse(content, &parseError)) {
+			SceneJson::Read(*settings, "projectName", projectName);
+			SceneJson::Read(*settings, "startupScene", startupScene);
+		} else {
+			LogMessage(std::format("[Project] Warning: could not parse project.json ({}). Using defaults.", parseError), 1);
+		}
 	}
 
 	if (sceneState_ != EditorSceneState::Edit) {
@@ -578,7 +584,7 @@ bool EditorSuite::ExportStandaloneGame()
 		else if (buildResolutionIndex_ == 2) { resW = 2560; resH = 1440; }
 
 		{
-			std::ofstream cfg((outDir / "game_build.cfg").string());
+			std::ofstream cfg((outDir / kExportedGameConfigFile).string());
 			cfg << "standaloneGameMode = true\n";
 			cfg << "gameTitle = " << gameTitle << "\n";
 			cfg << "resolutionWidth = " << resW << "\n";

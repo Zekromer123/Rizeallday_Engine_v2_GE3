@@ -3,6 +3,7 @@
 #include <dxgi1_6.h>
 #include <cassert>
 #include <cstdint>
+#include <string>
 #include <vector>
 #include <wrl.h>
 
@@ -13,11 +14,15 @@ public:
 	// RTV Heap (8): [0..1] SwapChain (sRGB, 3D), [2] Scene RT, [3] Game RT, [4] Asset Preview RT,
 	//               [6..7] SwapChain (UNORM, ImGui)
 	// DSV Heap (8): [0] Main Depth, [1] Scene Depth, [2] Game Depth, [3] ShadowMap DSV, [4] Asset Preview Depth
-	// SRV Heap (256): [0] ImGui, [1..127] Cached Textures, [128] Scene SRV, [129] Game SRV, [130] ShadowMap SRV,
-	//                 [131] Cubemap SRV, [132] Asset Preview RT SRV, [133..136] Preview Texture Ring, [140..249] Particles
+	// SRV Heap (1024): [0] ImGui (fixed)
+	//                  [128] Scene RT, [129] Game RT, [130] ShadowMap, [131] Cubemap, [132] Asset Preview RT,
+	//                  [133..136] Preview Texture Ring (fixed range 128..139)
+	//                  everything else: dynamic free-list (textures, ...) via AllocateSrvIndex()
 	static constexpr uint32_t kMaxRtvDescriptors = 8;
 	static constexpr uint32_t kMaxDsvDescriptors = 8;
-	static constexpr uint32_t kMaxSrvDescriptors = 256;
+	static constexpr uint32_t kMaxSrvDescriptors = 1024;
+	static constexpr uint32_t kFixedSrvBegin = 128;
+	static constexpr uint32_t kFixedSrvEnd = 140;
 	static constexpr uint32_t kUiRtvBaseIndex = 6;
 
 	static DirectXCommon* GetInstance();
@@ -32,7 +37,33 @@ public:
 	ID3D12GraphicsCommandList* GetCommandList() const { return commandList.Get(); }
 	ID3D12CommandQueue* GetCommandQueue() const { return commandQueue.Get(); }
 	ID3D12DescriptorHeap* GetSrvDescriptorHeap() const { return srvDescriptorHeap.Get(); }
-	ID3D12CommandAllocator* GetCommandAllocator() const { return commandAllocator.Get(); }
+	ID3D12CommandAllocator* GetCommandAllocator() const { return commandAllocators_[frameSlot_].Get(); }
+
+	// ---- Frames in flight ----
+	// The CPU records frame N while the GPU may still execute frame N-1. Each in-flight frame has its own
+	// command allocator and per-frame upload buffer; PreDraw waits only for the frame that used the same slot.
+	static constexpr uint32_t kFramesInFlight = 2;
+	uint32_t GetFrameSlot() const { return frameSlot_; }
+	uint64_t GetFrameIndex() const { return frameIndex_; }
+
+	// ---- Per-frame linear upload allocator ----
+	// Memory is valid for the current frame only (reset when its slot is reused). Use it for every
+	// constant/vertex/structured buffer the CPU rewrites each frame; never keep the pointer across frames.
+	struct UploadAllocation {
+		void* cpu = nullptr;
+		D3D12_GPU_VIRTUAL_ADDRESS gpu = 0;
+	};
+	static constexpr size_t kConstantBufferAlignment = 256;
+	UploadAllocation AllocateUpload(size_t sizeInBytes, size_t alignment = kConstantBufferAlignment);
+	/// Copies `sizeInBytes` into this frame's upload memory and returns its GPU address (0 on failure)
+	D3D12_GPU_VIRTUAL_ADDRESS UploadData(const void* data, size_t sizeInBytes, size_t alignment = kConstantBufferAlignment);
+	template <typename T>
+	D3D12_GPU_VIRTUAL_ADDRESS UploadConstants(const T& data) { return UploadData(&data, sizeof(T)); }
+	/// Bytes already handed out from the current frame slot's upload buffer (for the profiler)
+	size_t GetFrameUploadBytesUsed() const { return frameUpload_[frameSlot_].offset; }
+	static constexpr size_t GetFrameUploadCapacity() { return kFrameUploadBufferSize; }
+	/// Name of the adapter in use ("WARP (software)" for the software rasterizer)
+	const std::string& GetAdapterName() const { return adapterName_; }
 	uint32_t GetSrvDescriptorSize() const { return device ? device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV) : 0; }
 	Microsoft::WRL::ComPtr<ID3D12Resource> CreateBufferResource(size_t sizeInBytes);
 	void SignalAndWaitFence();
@@ -42,6 +73,16 @@ public:
 	void ProcessDeferredReleases(bool forceAll = false);
 	uint64_t GetCurrentFenceValue() const { return fenceValue; }
 	uint64_t GetCompletedFenceValue() const { return fence ? fence->GetCompletedValue() : 0; }
+
+	// Dynamic SRV descriptor allocation (free-list). Fixed slots ([0] ImGui, [kFixedSrvBegin..kFixedSrvEnd))
+	// are never handed out. A freed index becomes reusable only after the GPU has finished the frames
+	// that may still reference it.
+	static constexpr uint32_t kInvalidSrvIndex = 0xFFFFFFFFu;
+	uint32_t AllocateSrvIndex();
+	uint32_t PeekSrvIndex();
+	bool HasFreeSrvIndex() { return PeekSrvIndex() != kInvalidSrvIndex; }
+	void FreeSrvIndex(uint32_t index);
+	uint32_t GetFreeSrvCount() const { return static_cast<uint32_t>(freeSrvIndices_.size()); }
 
 	// Device Removed / Reset safety & Debug Layer message output
 	bool IsDeviceLost() const { return isDeviceLost_; }
@@ -80,13 +121,28 @@ private:
 	Microsoft::WRL::ComPtr<ID3D12Device> device = nullptr;
 
 	Microsoft::WRL::ComPtr<IDXGIAdapter4> useAdapter = nullptr;
+	std::string adapterName_;
+	uint32_t gpuFrameToken_ = 0xFFFFFFFFu; // profiler scope that brackets the whole frame
 	Microsoft::WRL::ComPtr<IDXGIFactory7> dxgiFactory = nullptr;
 	Microsoft::WRL::ComPtr<ID3D12Resource> depthStencilResource = nullptr;
 
 	Microsoft::WRL::ComPtr<ID3D12CommandQueue> commandQueue = nullptr;
 	D3D12_COMMAND_QUEUE_DESC commandQueueDesc{};
-	Microsoft::WRL::ComPtr<ID3D12CommandAllocator> commandAllocator = nullptr;
+	Microsoft::WRL::ComPtr<ID3D12CommandAllocator> commandAllocators_[kFramesInFlight];
+	uint64_t frameFenceValues_[kFramesInFlight] = {};
+	uint32_t frameSlot_ = 0;
 	Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> commandList = nullptr;
+
+	struct FrameUploadBuffer {
+		Microsoft::WRL::ComPtr<ID3D12Resource> resource;
+		uint8_t* cpu = nullptr;
+		D3D12_GPU_VIRTUAL_ADDRESS gpu = 0;
+		size_t offset = 0;
+	};
+	static constexpr size_t kFrameUploadBufferSize = 32ull * 1024ull * 1024ull; // per in-flight frame
+	FrameUploadBuffer frameUpload_[kFramesInFlight];
+	void CreateFrameUploadBuffers();
+	void WaitForFenceValue(uint64_t value);
 
 	Microsoft::WRL::ComPtr<IDXGISwapChain4> swapChain = nullptr;
 	DXGI_SWAP_CHAIN_DESC1 swapChainDesc{};
@@ -118,6 +174,16 @@ private:
 		uint64_t retireFrameIndex = 0;
 	};
 	std::vector<DeferredReleaseEntry> deferredReleaseQueue_;
+
+	// SRV free-list (stack, lowest index on top) and indices waiting for the GPU before reuse
+	struct RetiredSrvIndex {
+		uint32_t index;
+		uint64_t retireFenceValue;
+	};
+	std::vector<uint32_t> freeSrvIndices_;
+	std::vector<RetiredSrvIndex> retiredSrvIndices_;
+	void InitializeSrvFreeList();
+	void ReclaimRetiredSrvIndices();
 
 	uint32_t kClientWidth = 1280;
 	uint32_t kClientHeight = 720;

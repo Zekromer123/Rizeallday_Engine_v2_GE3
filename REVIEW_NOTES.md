@@ -2,6 +2,12 @@
 
 Review dilakukan pada mirror `D:\GE3test\Rizeallday_Engine_v2`. Nomor baris bisa sedikit bergeser di workspace utama `D:\GE3`.
 
+> [!NOTE]
+> **Status 2026-10-28:**
+> - A1, A2 dan A3 sudah diperbaiki. A4 ditangani oleh [`ROADMAP.md`](ROADMAP.md). A5 masih terbuka di ROADMAP 6.1.
+> - Bagian **C (urutan kerja)** digantikan oleh [`ROADMAP.md`](ROADMAP.md).
+> - Catatan teknis di bagian B masih berlaku sebagai referensi untuk Tahap 5, 6 dan 8 di ROADMAP.
+
 ---
 
 ## A. Bug & risiko di kode (kerjakan dulu)

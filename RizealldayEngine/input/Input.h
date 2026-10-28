@@ -28,9 +28,9 @@ public:
 	int GetMouseX() const { return mouseState_.lX; }
 	int GetMouseY() const { return mouseState_.lY; }
 	int GetMouseWheel() const { return mouseState_.lZ; }
-	bool IsPressMouse(int button) const { return (mouseState_.rgbButtons[button] & 0x80) != 0; }
-	bool PushMouseButton(int button) const { return (mouseState_.rgbButtons[button] & 0x80) != 0; }
-	bool IsTriggerMouse(int button) const { return (mouseState_.rgbButtons[button] & 0x80) && !(preMouseState_.rgbButtons[button] & 0x80); }
+	bool IsPressMouse(int button) const { return button >= 0 && button < 4 && (mouseState_.rgbButtons[button] & 0x80) != 0; }
+	bool PushMouseButton(int button) const { return IsPressMouse(button); }
+	bool IsTriggerMouse(int button) const { return button >= 0 && button < 4 && (mouseState_.rgbButtons[button] & 0x80) && !(preMouseState_.rgbButtons[button] & 0x80); }
 
 	// Gamepad (XInput)
 	bool IsGamepadConnected(int padIndex = 0) const;
@@ -40,6 +40,8 @@ public:
 	float GetLeftStickY(int padIndex = 0) const;
 	float GetRightStickX(int padIndex = 0) const;
 	float GetRightStickY(int padIndex = 0) const;
+	float GetLeftTrigger(int padIndex = 0) const;  // 0..1
+	float GetRightTrigger(int padIndex = 0) const; // 0..1
 	void SetVibration(int padIndex, float leftMotor, float rightMotor);
 
 private:

@@ -53,7 +53,7 @@ struct AnimationClip {
 
 struct NodeData {
 	std::string name;
-	Matrix4x4 transform;
+	Matrix4x4 transform = Mathematics::MakeIdentity4x4(); // (C26495: was left uninitialised)
 	Vector3 defaultPosition = { 0.0f, 0.0f, 0.0f };
 	KeyQuat defaultRotation = { 0.0f, 0.0f, 0.0f, 0.0f, 1.0f };
 	Vector3 defaultScaling = { 1.0f, 1.0f, 1.0f };

@@ -56,10 +56,6 @@ private:
 	DirectXCommon* dxCommon_ = nullptr;
 
 	std::vector<LineVertex> lineVertices_;
-	Microsoft::WRL::ComPtr<ID3D12Resource> vertexResource_;
 	Microsoft::WRL::ComPtr<ID3D12RootSignature> rootSignature_;
 	Microsoft::WRL::ComPtr<ID3D12PipelineState> pso_;
-	D3D12_VERTEX_BUFFER_VIEW vbView_{};
-	LineVertex* mappedVertices_ = nullptr;
-	size_t writeOffset_ = 0;
 };

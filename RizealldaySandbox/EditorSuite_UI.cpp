@@ -2,10 +2,12 @@
 
 void EditorSuite::DrawEditorUI(float deltaTime, bool& showParticles)
 {
+	RIZE_PROFILE_CPU("Editor UI");
 	if (!dxCommon_ || dxCommon_->IsDeviceLost()) {
 		return;
 	}
 #ifdef USE_IMGUI
+	gameViewRect_[2] = 0.0f; // set again below if the Game view is visible this frame
 	if (IsStandaloneMode()) {
 		ImGuiIO& io = ImGui::GetIO();
 		ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
@@ -17,6 +19,7 @@ void EditorSuite::DrawEditorUI(float deltaTime, bool& showParticles)
 		if (ImGui::Begin("##StandaloneFullscreenGameView", nullptr, flags)) {
 			ImVec2 avail = ImGui::GetContentRegionAvail();
 			ImGui::Image(ImTextureRef((ImTextureID)gameViewRT_.GetSrvGPUHandle().ptr), avail);
+			RecordGameViewRect(ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y, ImGui::GetItemRectSize().x, ImGui::GetItemRectSize().y);
 
 			if (isStandalonePreview_) {
 				ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -47,6 +50,7 @@ void EditorSuite::DrawEditorUI(float deltaTime, bool& showParticles)
 	if (showSaveSceneAsModal_) DrawSaveSceneAsModal();
 	if (showOpenSceneModal_) DrawOpenSceneModal();
 	if (showProjectHub_) DrawProjectHub();
+	if (showUnsavedCloseModal_) DrawUnsavedChangesModal();
 
 	if (showLightingSettings_) {
 		ImGui::SetNextWindowSize(ImVec2(380.0f, 420.0f), ImGuiCond_FirstUseEver);
@@ -55,6 +59,8 @@ void EditorSuite::DrawEditorUI(float deltaTime, bool& showParticles)
 		}
 		ImGui::End();
 	}
+
+	if (showProfiler_) DrawProfilerWindow();
 #endif
 }
 
@@ -164,6 +170,8 @@ void EditorSuite::DrawMainMenuBar()
 			if (ImGui::MenuItem("Load Game Template > Playable 3D Tetris")) { LoadTetrisTemplate(); }
 			ImGui::Separator();
 			if (ImGui::MenuItem("Build & Export Game...")) { showBuildSettingsModal_ = true; }
+			ImGui::Separator();
+			if (ImGui::MenuItem("Exit", "Alt+F4")) { WinApp::GetInstance()->RequestClose(); }
 			ImGui::EndMenu();
 		}
 		if (ImGui::BeginMenu("Edit")) {
@@ -193,6 +201,9 @@ void EditorSuite::DrawMainMenuBar()
 			if (ImGui::MenuItem("Preview Standalone Game Mode", "F11")) { ToggleStandalonePreview(); }
 			if (ImGui::MenuItem("Lighting / Environment", nullptr, showLightingSettings_)) {
 				showLightingSettings_ = !showLightingSettings_;
+			}
+			if (ImGui::MenuItem("Profiler", "Ctrl+P", showProfiler_)) {
+				showProfiler_ = !showProfiler_;
 			}
 			if (ImGui::BeginMenu("Application Scene")) {
 				bool canSwitch = (sceneState_ == EditorSceneState::Edit);
@@ -418,9 +429,50 @@ void EditorSuite::DrawHierarchyPanel()
 			}
 
 			if (nodeOpen) {
-				for (size_t i = 0; i < gameObjects_.size(); ++i) {
+				const bool searching = (hierarchySearchBuf_[0] != '\0');
+
+				// Reparenting is deferred until after the rows are drawn so the tree is not modified while iterating it
+				bool hasPendingReparent = false;
+				uint32_t pendingReparentChildId = 0;
+				int pendingReparentParentId = -1;
+
+				auto acceptReparentDrop = [&](int targetParentId) {
+					if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("RIZE_GAMEOBJECT")) {
+						if (payload->DataSize == static_cast<int>(sizeof(uint32_t))) {
+							hasPendingReparent = true;
+							pendingReparentChildId = *static_cast<const uint32_t*>(payload->Data);
+							pendingReparentParentId = targetParentId;
+						}
+					}
+				};
+
+				// Children lists (in gameObjects_ order) for the tree view; roots are objects without a valid parent
+				std::unordered_map<uint32_t, std::vector<size_t>> childIndices;
+				std::vector<size_t> rootIndices;
+				if (!searching) {
+					std::unordered_set<uint32_t> knownIds;
+					knownIds.reserve(gameObjects_.size());
+					for (const auto& o : gameObjects_) knownIds.insert(o.id);
+					for (size_t i = 0; i < gameObjects_.size(); ++i) {
+						const GameObject& o = gameObjects_[i];
+						if (o.parentId != -1 && knownIds.count(static_cast<uint32_t>(o.parentId)) > 0 && static_cast<uint32_t>(o.parentId) != o.id) {
+							childIndices[static_cast<uint32_t>(o.parentId)].push_back(i);
+						} else {
+							rootIndices.push_back(i);
+						}
+					}
+				}
+				std::vector<bool> visited(gameObjects_.size(), false);
+
+				auto drawRow = [&](auto&& self, size_t i) -> void {
 					auto& obj = gameObjects_[i];
-					if (hierarchySearchBuf_[0] != '\0' && obj.name.find(hierarchySearchBuf_) == std::string::npos) continue;
+					visited[i] = true;
+
+					const std::vector<size_t>* kids = nullptr;
+					if (!searching) {
+						auto it = childIndices.find(obj.id);
+						if (it != childIndices.end() && !it->second.empty()) kids = &it->second;
+					}
 
 					ImGui::PushID(static_cast<int>(obj.id));
 
@@ -444,16 +496,30 @@ void EditorSuite::DrawHierarchyPanel()
 					const float toggleSize = ImGui::GetFontSize();
 					const float typeW = ImGui::CalcTextSize(typeName).x;
 
-					ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_SpanAvailWidth;
+					ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick |
+						ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_DefaultOpen;
+					if (!kids) nodeFlags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
 					if (static_cast<int>(i) == selectedObjectIndex_) nodeFlags |= ImGuiTreeNodeFlags_Selected;
 
 					if (!obj.isActive) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
 					ImGui::SetNextItemAllowOverlap();
-					ImGui::TreeNodeEx("##Row", nodeFlags, "%s", obj.name.c_str());
+					const bool nodeIsOpen = ImGui::TreeNodeEx("##Row", nodeFlags, "%s", obj.name.c_str());
 					if (!obj.isActive) ImGui::PopStyleColor();
 
-					if (ImGui::IsItemClicked()) {
+					if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
 						selectedObjectIndex_ = static_cast<int>(i);
+					}
+
+					// Drag & drop reparenting: drag a row onto another row to make it a child
+					if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+						const uint32_t dragId = obj.id;
+						ImGui::SetDragDropPayload("RIZE_GAMEOBJECT", &dragId, sizeof(dragId));
+						ImGui::TextUnformatted(obj.name.c_str());
+						ImGui::EndDragDropSource();
+					}
+					if (ImGui::BeginDragDropTarget()) {
+						acceptReparentDrop(static_cast<int>(obj.id));
+						ImGui::EndDragDropTarget();
 					}
 
 					if (ImGui::BeginPopupContextItem()) {
@@ -464,6 +530,16 @@ void EditorSuite::DrawHierarchyPanel()
 						if (ImGui::MenuItem("Duplicate", "Ctrl+D")) {
 							pendingDuplicateIndex_ = static_cast<int>(i);
 						}
+						if (ImGui::MenuItem("Unparent", nullptr, false, obj.parentId != -1)) {
+							hasPendingReparent = true;
+							pendingReparentChildId = obj.id;
+							pendingReparentParentId = -1;
+						}
+						ImGui::Separator();
+						if (ImGui::MenuItem("Save as Prefab")) {
+							SavePrefab(obj.id, obj.name);
+						}
+						ImGui::SetItemTooltip("Saves this object and its children to Assets/Prefabs/<name>.prefab.json");
 						ImGui::EndPopup();
 					}
 
@@ -482,7 +558,47 @@ void EditorSuite::DrawHierarchyPanel()
 					ImGui::PopStyleVar();
 					ImGui::SetItemTooltip(obj.isActive ? "Active (click to disable)" : "Inactive (click to enable)");
 
+					if (kids && nodeIsOpen) {
+						for (size_t child : *kids) {
+							if (!visited[child]) self(self, child);
+						}
+						ImGui::TreePop();
+					}
+
 					ImGui::PopID();
+				};
+
+				if (searching) {
+					for (size_t i = 0; i < gameObjects_.size(); ++i) {
+						if (gameObjects_[i].name.find(hierarchySearchBuf_) == std::string::npos) continue;
+						drawRow(drawRow, i);
+					}
+				} else {
+					for (size_t r : rootIndices) {
+						if (!visited[r]) drawRow(drawRow, r);
+					}
+					// Objects stuck in a parent cycle have no root; show them at the top level so they stay reachable
+					for (size_t i = 0; i < gameObjects_.size(); ++i) {
+						if (!visited[i]) drawRow(drawRow, i);
+					}
+				}
+
+				// Empty area below the rows: drop here to unparent; right-click opens the creation menu
+				{
+					const float dropH = (std::max)(24.0f, ImGui::GetContentRegionAvail().y);
+					ImGui::InvisibleButton("##HierarchyDropArea", ImVec2(-1.0f, dropH));
+					if (ImGui::BeginDragDropTarget()) {
+						acceptReparentDrop(-1);
+						ImGui::EndDragDropTarget();
+					}
+					if (ImGui::BeginPopupContextItem("HierarchyEmptyAreaContext")) {
+						DrawHierarchyCreationMenu();
+						ImGui::EndPopup();
+					}
+				}
+
+				if (hasPendingReparent) {
+					ReparentGameObject(pendingReparentChildId, pendingReparentParentId, true);
 				}
 				ImGui::TreePop();
 			}
@@ -507,15 +623,33 @@ void EditorSuite::DrawHierarchyCreationMenu()
 		if (parentIdx >= 0 && parentIdx < static_cast<int>(gameObjects_.size()) - 1) {
 			gameObjects_[parentIdx].childrenIds.push_back(child.id);
 		}
+		RebuildHierarchyLinks();
+		UpdateWorldMatrices();
 	}
 	if (ImGui::MenuItem("Create Empty Parent", "Ctrl+Shift+G")) {
 		int childIdx = selectedObjectIndex_;
 		auto& parent = CreateGameObject("ParentGameObject", GameObjectType::Empty);
 		if (childIdx >= 0 && childIdx < static_cast<int>(gameObjects_.size()) - 1) {
-			parent.translation = gameObjects_[childIdx].translation;
+			// The new parent sits at the child's world position with identity rotation/scale,
+			// so the child's local translation becomes zero and its world transform is unchanged
+			Vector3 childWorldPos{};
+			Quaternion childWorldRot = Quaternion::Identity();
+			Vector3 childWorldScale{};
+			UpdateWorldMatrices();
+			GetWorldTRS(gameObjects_[childIdx], childWorldPos, childWorldRot, childWorldScale);
+			parent.translation = childWorldPos;
+			gameObjects_[childIdx].translation = { 0.0f, 0.0f, 0.0f };
+			if (gameObjects_[childIdx].parentId != -1) {
+				// The child leaves its old parent: bake its world rotation/scale into the local values
+				gameObjects_[childIdx].rotationQuat = childWorldRot;
+				gameObjects_[childIdx].rotation = childWorldRot.ToEuler();
+				gameObjects_[childIdx].scale = childWorldScale;
+			}
 			gameObjects_[childIdx].parentId = static_cast<int>(parent.id);
 			gameObjects_[childIdx].parentIndex = static_cast<int>(gameObjects_.size()) - 1;
 			parent.childrenIds.push_back(gameObjects_[childIdx].id);
+			RebuildHierarchyLinks();
+			UpdateWorldMatrices();
 		}
 	}
 	ImGui::Separator();
@@ -589,6 +723,7 @@ void EditorSuite::DrawHierarchyCreationMenu()
 			light.lightSpotAngle = 30.0f;
 			light.lightSpotFalloffStart = 20.0f;
 			light.rotation = { 0.5f, 0.0f, 0.0f };
+			light.rotationQuat = Quaternion::FromEuler(light.rotation); // world matrix / cone direction use the quaternion
 		}
 		ImGui::EndMenu();
 	}
@@ -605,6 +740,17 @@ void EditorSuite::DrawHierarchyCreationMenu()
 		if (ImGui::MenuItem("Canvas")) {
 			CreateGameObject("Canvas", GameObjectType::Canvas);
 		}
+		ImGui::EndMenu();
+	}
+
+	ImGui::Separator();
+	if (ImGui::BeginMenu("Samples")) {
+		const bool canCreate = (sceneState_ == EditorSceneState::Edit) && !currentProjectRoot_.empty();
+		if (ImGui::MenuItem("Survivors Demo (new scene)", nullptr, false, canCreate)) {
+			CreateSurvivorsDemo();
+		}
+		ImGui::SetItemTooltip("Creates Assets/Scenes/SurvivorsDemo.scene.json and the Enemy / Bullet prefabs,\n"
+			"using the Survivors* sample scripts in GameScripts. Unsaved changes in the current scene are discarded.");
 		ImGui::EndMenu();
 	}
 #endif
@@ -687,6 +833,7 @@ void EditorSuite::DrawViewportsPanel()
 				ImVec2 avail = ImGui::GetContentRegionAvail();
 				ImVec2 imgPos = ImGui::GetCursorScreenPos();
 				ImGui::Image(ImTextureRef((ImTextureID)gameViewRT_.GetSrvGPUHandle().ptr), avail);
+				RecordGameViewRect(ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y, ImGui::GetItemRectSize().x, ImGui::GetItemRectSize().y);
 
 				if (isTetrisActive_) {
 					DrawTetrisHUD(imgPos, avail);
@@ -701,6 +848,7 @@ void EditorSuite::DrawViewportsPanel()
 				ImGui::Image(ImTextureRef((ImTextureID)editViewRT_.GetSrvGPUHandle().ptr), ImVec2(halfW, avail.y));
 				ImGui::SameLine();
 				ImGui::Image(ImTextureRef((ImTextureID)gameViewRT_.GetSrvGPUHandle().ptr), ImVec2(halfW, avail.y));
+				RecordGameViewRect(ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y, ImGui::GetItemRectSize().x, ImGui::GetItemRectSize().y);
 				ImGui::EndTabItem();
 			}
 

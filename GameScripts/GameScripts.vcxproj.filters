@@ -24,6 +24,21 @@
     <ClCompile Include="Scripts\SpawnStressTest.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>
+    <ClCompile Include="Scripts\SurvivorsBullet.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
+    <ClCompile Include="Scripts\SurvivorsCamera.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
+    <ClCompile Include="Scripts\SurvivorsEnemy.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
+    <ClCompile Include="Scripts\SurvivorsGameManager.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
+    <ClCompile Include="Scripts\SurvivorsPlayer.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Scripts\OscillateScript.h">
@@ -36,6 +51,24 @@
       <Filter>Scripts</Filter>
     </ClInclude>
     <ClInclude Include="Scripts\SpawnStressTest.h">
+      <Filter>Scripts</Filter>
+    </ClInclude>
+    <ClInclude Include="Scripts\SurvivorsBullet.h">
+      <Filter>Scripts</Filter>
+    </ClInclude>
+    <ClInclude Include="Scripts\SurvivorsCamera.h">
+      <Filter>Scripts</Filter>
+    </ClInclude>
+    <ClInclude Include="Scripts\SurvivorsEnemy.h">
+      <Filter>Scripts</Filter>
+    </ClInclude>
+    <ClInclude Include="Scripts\SurvivorsGameManager.h">
+      <Filter>Scripts</Filter>
+    </ClInclude>
+    <ClInclude Include="Scripts\SurvivorsPlayer.h">
+      <Filter>Scripts</Filter>
+    </ClInclude>
+    <ClInclude Include="Scripts\SurvivorsShared.h">
       <Filter>Scripts</Filter>
     </ClInclude>
     <ClInclude Include="..\RizealldayEngine\base\ScriptAPI.h">

@@ -1,5 +1,6 @@
 ﻿#include "2d/Sprite.h"
 #include "base/DirectXCommon.h"
+#include "base/Profiler.h"
 #include "base/TextureManager.h"
 #include "base/WinApp.h"
 #include "3d/DirectionalLight.h"
@@ -28,20 +29,14 @@ void Sprite::Initialize(DirectXCommon* dxCommon, uint32_t textureHandle)
 {
 	Finalize();
 	dxCommon_ = dxCommon;
-	vertexResourceSprite = dxCommon->CreateBufferResource(sizeof(VertexData) * 6);
 	this->srvDescriptorHeap = dxCommon->GetSrvDescriptorHeap();
-	vertexBufferViewSprite.BufferLocation = vertexResourceSprite->GetGPUVirtualAddress();
-	vertexBufferViewSprite.SizeInBytes = sizeof(VertexData) * 6;
-	vertexBufferViewSprite.StrideInBytes = sizeof(VertexData);
-
 	indexResourceSprite = dxCommon->CreateBufferResource(sizeof(uint32_t) * 6);
 	indexBufferViewSprite.BufferLocation = indexResourceSprite->GetGPUVirtualAddress();
 	indexBufferViewSprite.SizeInBytes = sizeof(uint32_t) * 6;
 	indexBufferViewSprite.Format = DXGI_FORMAT_R32_UINT;
 
-	vertexResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&vertexDataSprite));
-	std::memset(vertexDataSprite, 0, sizeof(VertexData) * 6);
-
+	// Index buffer is static (written once here), so it can stay in a persistent upload resource
+	uint32_t* indexDataSprite = nullptr;
 	indexResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&indexDataSprite));
 	indexDataSprite[0] = 0;
 	indexDataSprite[1] = 1;
@@ -49,27 +44,24 @@ void Sprite::Initialize(DirectXCommon* dxCommon, uint32_t textureHandle)
 	indexDataSprite[3] = 1;
 	indexDataSprite[4] = 4;
 	indexDataSprite[5] = 2;
+	indexResourceSprite->Unmap(0, nullptr);
 
 	// Material & Lighting
-	materialResourceSprite = dxCommon->CreateBufferResource(sizeof(Material));
-	materialResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&materialDataSprite));
-	*materialDataSprite = Material{};
-	materialDataSprite->color = { 1.0f, 1.0f, 1.0f, 1.0f };
-	materialDataSprite->enableLighting = 0;
-	materialDataSprite->lightingType = 0;
-	materialDataSprite->receiveShadows = 0;
+	materialSprite_ = Material{};
+	materialSprite_.color = { 1.0f, 1.0f, 1.0f, 1.0f };
+	materialSprite_.enableLighting = 0;
+	materialSprite_.lightingType = 0;
+	materialSprite_.receiveShadows = 0;
 
-	directionalLightResource = dxCommon->CreateBufferResource(sizeof(DirectionalLightData));
-	directionalLightResource->Map(0, nullptr, reinterpret_cast<void**>(&directionalLightData));
-	directionalLightData->color = { 1.0f, 1.0f, 1.0f, 1.0f };
-	directionalLightData->direction = { 0.0f, -1.0f, 0.0f };
-	directionalLightData->intensity = 1.0f;
-	directionalLightData->active = 1;
+	directionalLightSprite_ = DirectionalLightData{};
+	directionalLightSprite_.color = { 1.0f, 1.0f, 1.0f, 1.0f };
+	directionalLightSprite_.direction = { 0.0f, -1.0f, 0.0f };
+	directionalLightSprite_.intensity = 1.0f;
+	directionalLightSprite_.active = 1;
 
-	transformationMatrixResourceSprite = dxCommon->CreateBufferResource((sizeof(TransformationMatrix) + 255) & ~255);
-	transformationMatrixResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&transformationMatrixDataSprite));
-	transformationMatrixDataSprite->WVP = Mathematics::MakeIdentity4x4();
-	transformationMatrixDataSprite->World = Mathematics::MakeIdentity4x4();
+	transformationMatrixSprite_.WVP = Mathematics::MakeIdentity4x4();
+	transformationMatrixSprite_.World = Mathematics::MakeIdentity4x4();
+	initialized_ = true;
 
 	// Bind initial texture and initialize cutout range to full texture dimensions
 	SetTextureHandle(textureHandle);
@@ -78,46 +70,11 @@ void Sprite::Initialize(DirectXCommon* dxCommon, uint32_t textureHandle)
 
 void Sprite::Finalize()
 {
-	if (vertexResourceSprite) {
-		if (vertexDataSprite) {
-			vertexResourceSprite->Unmap(0, nullptr);
-			vertexDataSprite = nullptr;
-		}
-		if (dxCommon_) dxCommon_->DeferRelease(vertexResourceSprite);
-		vertexResourceSprite.Reset();
-	}
-	if (transformationMatrixResourceSprite) {
-		if (transformationMatrixDataSprite) {
-			transformationMatrixResourceSprite->Unmap(0, nullptr);
-			transformationMatrixDataSprite = nullptr;
-		}
-		if (dxCommon_) dxCommon_->DeferRelease(transformationMatrixResourceSprite);
-		transformationMatrixResourceSprite.Reset();
-	}
-	if (materialResourceSprite) {
-		if (materialDataSprite) {
-			materialResourceSprite->Unmap(0, nullptr);
-			materialDataSprite = nullptr;
-		}
-		if (dxCommon_) dxCommon_->DeferRelease(materialResourceSprite);
-		materialResourceSprite.Reset();
-	}
 	if (indexResourceSprite) {
-		if (indexDataSprite) {
-			indexResourceSprite->Unmap(0, nullptr);
-			indexDataSprite = nullptr;
-		}
 		if (dxCommon_) dxCommon_->DeferRelease(indexResourceSprite);
 		indexResourceSprite.Reset();
 	}
-	if (directionalLightResource) {
-		if (directionalLightData) {
-			directionalLightResource->Unmap(0, nullptr);
-			directionalLightData = nullptr;
-		}
-		if (dxCommon_) dxCommon_->DeferRelease(directionalLightResource);
-		directionalLightResource.Reset();
-	}
+	initialized_ = false;
 }
 
 void Sprite::SetTexture(D3D12_GPU_DESCRIPTOR_HANDLE handle)
@@ -213,14 +170,12 @@ void Sprite::SetSize(const Vector2& size)
 const Vector4& Sprite::GetColor() const
 {
 	static const Vector4 kDefaultWhite = { 1.0f, 1.0f, 1.0f, 1.0f };
-	return materialDataSprite ? materialDataSprite->color : kDefaultWhite;
+	return initialized_ ? materialSprite_.color : kDefaultWhite;
 }
 
 void Sprite::SetColor(const Vector4& color)
 {
-	if (materialDataSprite) {
-		materialDataSprite->color = color;
-	}
+	materialSprite_.color = color;
 }
 
 void Sprite::SetAnchorPoint(const Vector2& anchorPoint)
@@ -243,13 +198,7 @@ void Sprite::SetIsFlipY(bool isFlipY)
 
 void Sprite::UpdateVertexBuffer()
 {
-	if (!vertexResourceSprite) {
-		return;
-	}
-	if (!vertexDataSprite) {
-		vertexResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&vertexDataSprite));
-	}
-	if (!vertexDataSprite) {
+	if (!initialized_) {
 		return;
 	}
 
@@ -286,30 +235,30 @@ void Sprite::UpdateVertexBuffer()
 	}
 
 	// First triangle
-	vertexDataSprite[0].position = { left, bottom, 0.0f, 1.0f }; // Bottom-left
-	vertexDataSprite[0].texcoord = { texLeft, texBottom };
-	vertexDataSprite[0].normal = { 0.0f, 0.0f, -1.0f };
+	vertexDataSprite_[0].position = { left, bottom, 0.0f, 1.0f }; // Bottom-left
+	vertexDataSprite_[0].texcoord = { texLeft, texBottom };
+	vertexDataSprite_[0].normal = { 0.0f, 0.0f, -1.0f };
 
-	vertexDataSprite[1].position = { left, top, 0.0f, 1.0f }; // Top-left
-	vertexDataSprite[1].texcoord = { texLeft, texTop };
-	vertexDataSprite[1].normal = { 0.0f, 0.0f, -1.0f };
+	vertexDataSprite_[1].position = { left, top, 0.0f, 1.0f }; // Top-left
+	vertexDataSprite_[1].texcoord = { texLeft, texTop };
+	vertexDataSprite_[1].normal = { 0.0f, 0.0f, -1.0f };
 
-	vertexDataSprite[2].position = { right, bottom, 0.0f, 1.0f }; // Bottom-right
-	vertexDataSprite[2].texcoord = { texRight, texBottom };
-	vertexDataSprite[2].normal = { 0.0f, 0.0f, -1.0f };
+	vertexDataSprite_[2].position = { right, bottom, 0.0f, 1.0f }; // Bottom-right
+	vertexDataSprite_[2].texcoord = { texRight, texBottom };
+	vertexDataSprite_[2].normal = { 0.0f, 0.0f, -1.0f };
 
 	// Second triangle
-	vertexDataSprite[3].position = { left, top, 0.0f, 1.0f }; // Top-left
-	vertexDataSprite[3].texcoord = { texLeft, texTop };
-	vertexDataSprite[3].normal = { 0.0f, 0.0f, -1.0f };
+	vertexDataSprite_[3].position = { left, top, 0.0f, 1.0f }; // Top-left
+	vertexDataSprite_[3].texcoord = { texLeft, texTop };
+	vertexDataSprite_[3].normal = { 0.0f, 0.0f, -1.0f };
 
-	vertexDataSprite[4].position = { right, top, 0.0f, 1.0f }; // Top-right
-	vertexDataSprite[4].texcoord = { texRight, texTop };
-	vertexDataSprite[4].normal = { 0.0f, 0.0f, -1.0f };
+	vertexDataSprite_[4].position = { right, top, 0.0f, 1.0f }; // Top-right
+	vertexDataSprite_[4].texcoord = { texRight, texTop };
+	vertexDataSprite_[4].normal = { 0.0f, 0.0f, -1.0f };
 
-	vertexDataSprite[5].position = { right, bottom, 0.0f, 1.0f }; // Bottom-right
-	vertexDataSprite[5].texcoord = { texRight, texBottom };
-	vertexDataSprite[5].normal = { 0.0f, 0.0f, -1.0f };
+	vertexDataSprite_[5].position = { right, bottom, 0.0f, 1.0f }; // Bottom-right
+	vertexDataSprite_[5].texcoord = { texRight, texBottom };
+	vertexDataSprite_[5].normal = { 0.0f, 0.0f, -1.0f };
 }
 
 void Sprite::Update()
@@ -327,21 +276,41 @@ void Sprite::Update()
 		static_cast<float>(WinApp::kClientHeight),
 		0.0f, 100.0f);
 	Matrix4x4 worldViewProjectionMatrixSprite = Mathematics::Multiply(worldMatrixSprite, Mathematics::Multiply(viewMatrixSprite, projectionMatrixSprite));
-	transformationMatrixDataSprite->WVP = worldViewProjectionMatrixSprite;
-	transformationMatrixDataSprite->World = worldMatrixSprite;
+	transformationMatrixSprite_.WVP = worldViewProjectionMatrixSprite;
+	transformationMatrixSprite_.World = worldMatrixSprite;
 }
 
 void Sprite::Draw(ID3D12GraphicsCommandList* commandList)
 {
+	if (!initialized_ || !dxCommon_ || dxCommon_->IsDeviceLost()) {
+		return;
+	}
+
+	// Upload this frame's vertices and constants into the per-frame upload allocator
+	DirectXCommon::UploadAllocation vertexAlloc = dxCommon_->AllocateUpload(sizeof(vertexDataSprite_), 16);
+	const D3D12_GPU_VIRTUAL_ADDRESS transformAddr = dxCommon_->UploadConstants(transformationMatrixSprite_);
+	const D3D12_GPU_VIRTUAL_ADDRESS materialAddr = dxCommon_->UploadConstants(materialSprite_);
+	const D3D12_GPU_VIRTUAL_ADDRESS lightAddr = dxCommon_->UploadConstants(directionalLightSprite_);
+	if (!vertexAlloc.cpu || transformAddr == 0 || materialAddr == 0 || lightAddr == 0) {
+		return;
+	}
+	std::memcpy(vertexAlloc.cpu, vertexDataSprite_, sizeof(vertexDataSprite_));
+
+	D3D12_VERTEX_BUFFER_VIEW vertexBufferView{};
+	vertexBufferView.BufferLocation = vertexAlloc.gpu;
+	vertexBufferView.SizeInBytes = sizeof(vertexDataSprite_);
+	vertexBufferView.StrideInBytes = sizeof(VertexData);
+
 	ID3D12DescriptorHeap* heaps[] = { srvDescriptorHeap };
 	commandList->SetDescriptorHeaps(1, heaps);
 	commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-	commandList->IASetVertexBuffers(0, 1, &vertexBufferViewSprite);
-	commandList->SetGraphicsRootConstantBufferView(1, transformationMatrixResourceSprite->GetGPUVirtualAddress());
+	commandList->IASetVertexBuffers(0, 1, &vertexBufferView);
+	commandList->SetGraphicsRootConstantBufferView(1, transformAddr);
 	commandList->SetGraphicsRootDescriptorTable(2, textureSrvHandleGPUSprite);
-	commandList->SetGraphicsRootConstantBufferView(0, materialResourceSprite->GetGPUVirtualAddress());
+	commandList->SetGraphicsRootConstantBufferView(0, materialAddr);
 	commandList->IASetIndexBuffer(&indexBufferViewSprite);
 
-	commandList->SetGraphicsRootConstantBufferView(3, directionalLightResource->GetGPUVirtualAddress());
+	commandList->SetGraphicsRootConstantBufferView(3, lightAddr);
 	commandList->DrawIndexedInstanced(6, 1, 0, 0, 0);
+	Profiler::GetInstance()->CountDrawCall();
 }

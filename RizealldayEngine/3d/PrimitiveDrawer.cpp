@@ -1,6 +1,7 @@
 ﻿#include "3d/PrimitiveDrawer.h"
 #include "3d/Camera.h"
 #include "base/DirectXCommon.h"
+#include "base/Profiler.h"
 #include "base/DXCManager.h"
 #include "base/Log.h"
 #include <cassert>
@@ -18,14 +19,6 @@ void PrimitiveDrawer::Initialize(DirectXCommon* dxCommon, DXCManager* dxc)
 {
 	dxCommon_ = dxCommon;
 
-	size_t sizeInBytes = sizeof(LineVertex) * kMaxVertices;
-	vertexResource_ = dxCommon_->CreateBufferResource(sizeInBytes);
-	vertexResource_->Map(0, nullptr, reinterpret_cast<void**>(&mappedVertices_));
-
-	vbView_.BufferLocation = vertexResource_->GetGPUVirtualAddress();
-	vbView_.SizeInBytes = static_cast<UINT>(sizeInBytes);
-	vbView_.StrideInBytes = sizeof(LineVertex);
-
 	lineVertices_.reserve(kMaxVertices);
 
 	CreateRootSignature();
@@ -35,11 +28,6 @@ void PrimitiveDrawer::Initialize(DirectXCommon* dxCommon, DXCManager* dxc)
 void PrimitiveDrawer::Finalize()
 {
 	// Called after the GPU has been flushed (RizeEngine::Finalize), so resources can be released directly
-	if (vertexResource_ && mappedVertices_) {
-		vertexResource_->Unmap(0, nullptr);
-		mappedVertices_ = nullptr;
-	}
-	vertexResource_.Reset();
 	pso_.Reset();
 	rootSignature_.Reset();
 	lineVertices_.clear();
@@ -197,21 +185,27 @@ void PrimitiveDrawer::DrawEditorGrid(const Vector3& center, int halfExtent, cons
 
 void PrimitiveDrawer::Render(ID3D12GraphicsCommandList* cmdList, const Camera& camera)
 {
-	if (lineVertices_.empty() || !pso_ || !rootSignature_ || !mappedVertices_) {
+	if (lineVertices_.empty() || !pso_ || !rootSignature_ || !dxCommon_ || dxCommon_->IsDeviceLost()) {
 		lineVertices_.clear();
 		return;
 	}
 
 	size_t count = (std::min)(lineVertices_.size(), kMaxVertices);
 
-	// Ring-allocate inside the upload buffer so several Render() calls in one frame
-	// (e.g. Scene and Game view) do not overwrite vertices the GPU has not consumed yet
-	if (writeOffset_ + count > kMaxVertices) {
-		writeOffset_ = 0;
+	// Vertices go into this frame's linear upload memory, so several Render() calls in one frame
+	// (e.g. Scene and Game view) never overwrite data the GPU has not consumed yet
+	const size_t bytes = sizeof(LineVertex) * count;
+	DirectXCommon::UploadAllocation alloc = dxCommon_->AllocateUpload(bytes, 16);
+	if (!alloc.cpu) {
+		lineVertices_.clear();
+		return;
 	}
-	const size_t startVertex = writeOffset_;
-	std::memcpy(mappedVertices_ + startVertex, lineVertices_.data(), sizeof(LineVertex) * count);
-	writeOffset_ += count;
+	std::memcpy(alloc.cpu, lineVertices_.data(), bytes);
+
+	D3D12_VERTEX_BUFFER_VIEW vbView{};
+	vbView.BufferLocation = alloc.gpu;
+	vbView.SizeInBytes = static_cast<UINT>(bytes);
+	vbView.StrideInBytes = sizeof(LineVertex);
 
 	const Matrix4x4& viewProjection = camera.GetViewProjectionMatrix();
 
@@ -219,8 +213,9 @@ void PrimitiveDrawer::Render(ID3D12GraphicsCommandList* cmdList, const Camera& c
 	cmdList->SetPipelineState(pso_.Get());
 	cmdList->SetGraphicsRoot32BitConstants(0, 16, &viewProjection, 0);
 	cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_LINELIST);
-	cmdList->IASetVertexBuffers(0, 1, &vbView_);
-	cmdList->DrawInstanced(static_cast<UINT>(count), 1, static_cast<UINT>(startVertex), 0);
+	cmdList->IASetVertexBuffers(0, 1, &vbView);
+	cmdList->DrawInstanced(static_cast<UINT>(count), 1, 0, 0);
+	Profiler::GetInstance()->CountDrawCall();
 
 	lineVertices_.clear();
 }

@@ -226,3 +226,70 @@ void EditorSuite::DrawBuildSettingsModal()
 #endif
 }
 
+
+bool EditorSuite::OnCloseRequested()
+{
+	// Exported games and the Project Hub (no project open yet) have nothing to save
+	if (IsStandaloneMode() || showProjectHub_ || !isSceneDirty_) {
+		return true;
+	}
+	unsavedCloseError_.clear();
+	showUnsavedCloseModal_ = true;
+	return false;
+}
+
+void EditorSuite::DrawUnsavedChangesModal()
+{
+#ifdef USE_IMGUI
+	const char* popupId = "Unsaved Changes##CloseConfirm";
+	ImGui::OpenPopup(popupId);
+
+	const ImGuiViewport* viewport = ImGui::GetMainViewport();
+	ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+	if (!ImGui::BeginPopupModal(popupId, nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
+		return;
+	}
+
+	ImGui::Text("The scene \"%s\" has unsaved changes.", currentSceneName_.c_str());
+	ImGui::TextDisabled("Do you want to save them before closing?");
+	if (sceneState_ != EditorSceneState::Edit) {
+		ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.25f, 1.0f), "Play mode is running: it will be stopped first (Play-mode changes are not saved).");
+	}
+	if (!unsavedCloseError_.empty()) {
+		ImGui::TextColored(ImVec4(0.95f, 0.4f, 0.4f, 1.0f), "%s", unsavedCloseError_.c_str());
+	}
+	ImGui::Spacing();
+
+	auto closeApplication = [&]() {
+		showUnsavedCloseModal_ = false;
+		ImGui::CloseCurrentPopup();
+		PostQuitMessage(0); // the main loop ends on the next frame
+	};
+
+	const ImVec2 buttonSize(110.0f, 0.0f);
+	if (ImGui::Button("Save", buttonSize)) {
+		if (sceneState_ != EditorSceneState::Edit) {
+			StopPlayMode();
+		}
+		if (!currentScenePath_.empty() && SaveScene(currentScenePath_)) {
+			closeApplication();
+		} else {
+			unsavedCloseError_ = "Could not save the scene. Use File > Save Scene As..., then close again.";
+		}
+	}
+	ImGui::SetItemTooltip("Save to %s and close", currentScenePath_.c_str());
+
+	ImGui::SameLine();
+	if (ImGui::Button("Don't Save", buttonSize)) {
+		closeApplication();
+	}
+
+	ImGui::SameLine();
+	if (ImGui::Button("Cancel", buttonSize) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+		showUnsavedCloseModal_ = false;
+		ImGui::CloseCurrentPopup();
+	}
+
+	ImGui::EndPopup();
+#endif
+}

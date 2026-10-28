@@ -1,8 +1,10 @@
 ﻿#include "base/DirectXCommon.h"
 #include "base/Log.h"
+#include "base/Profiler.h"
 #include "base/ConvertString.h"
 #include "base/WinApp.h"
 #include <dxgidebug.h>
+#include <cstring>
 #include <format>
 #ifdef USE_IMGUI
 #include <imgui.h>
@@ -47,6 +49,7 @@ void DirectXCommon::Initialize(HWND hwnd, uint32_t width, uint32_t height)
 	DirectXCommon::DescriptorHeap();
 
 	srvDescriptorHeap = CreateDescriptorHeap(device.Get(), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kMaxSrvDescriptors, true);
+	InitializeSrvFreeList();
 	depthStencilResource = CreateDepthStencilTextureResource(device.Get(), kClientWidth, kClientHeight);
 	dsvDescriptorHeap = CreateDescriptorHeap(device.Get(), D3D12_DESCRIPTOR_HEAP_TYPE_DSV, kMaxDsvDescriptors, false);
 	D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc{};
@@ -165,11 +168,20 @@ void DirectXCommon::PreDraw()//Present -> Render Target
 		}
 	}
 
+	// Reuse this frame slot only after the GPU finished the frame that last used it (frame N - kFramesInFlight)
+	frameSlot_ = static_cast<uint32_t>(frameIndex_ % kFramesInFlight);
+	WaitForFenceValue(frameFenceValues_[frameSlot_]);
+	frameUpload_[frameSlot_].offset = 0;
+
 	HRESULT hr;
-	hr = commandAllocator->Reset();
+	hr = commandAllocators_[frameSlot_]->Reset();
 	if (CheckDeviceLost(hr, "CommandAllocator::Reset")) return;
-	hr = commandList->Reset(commandAllocator.Get(), nullptr);
+	hr = commandList->Reset(commandAllocators_[frameSlot_].Get(), nullptr);
 	if (CheckDeviceLost(hr, "CommandList::Reset")) return;
+
+	// Profiler: read back the finished frame of this slot, then bracket the whole GPU frame
+	Profiler::GetInstance()->BeginFrame(frameSlot_);
+	gpuFrameToken_ = Profiler::GetInstance()->BeginGpu(commandList.Get(), "GPU Frame");
 
 	//RTV and DSV
 	UINT backBufferIndex = swapChain->GetCurrentBackBufferIndex();
@@ -238,14 +250,20 @@ void DirectXCommon::PostDraw()//Render Target -> Present
 	commandList->OMSetRenderTargets(1, &uiRtvHandles[backBufferIndex], false, nullptr);
 	ID3D12DescriptorHeap* descriptorHeaps[] = { srvDescriptorHeap.Get() };
 	commandList->SetDescriptorHeaps(1, descriptorHeaps);
-	ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), commandList.Get());
-#endif  
+	{
+		RIZE_PROFILE_GPU(commandList.Get(), "ImGui");
+		ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), commandList.Get());
+	}
+#endif
 
 	//Render
 	barrier.Transition.pResource = swapChainResources[backBufferIndex].Get();
 	barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 	barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
 	commandList->ResourceBarrier(1, &barrier);
+
+	Profiler::GetInstance()->EndGpu(commandList.Get(), gpuFrameToken_);
+	Profiler::GetInstance()->EndFrame(commandList.Get());
 
 	hr = commandList->Close();
 	if (CheckDeviceLost(hr, "CommandList::Close")) return;
@@ -258,12 +276,9 @@ void DirectXCommon::PostDraw()//Render Target -> Present
 	fenceValue++;
 	hr = commandQueue->Signal(fence.Get(), fenceValue);
 	if (CheckDeviceLost(hr, "CommandQueue::Signal")) return;
-	if (fence->GetCompletedValue() < fenceValue)
-	{
-		fence->SetEventOnCompletion(fenceValue, fenceEvent);
-		WaitForSingleObject(fenceEvent, INFINITE);
-	}
-	CheckDeviceLost(S_OK, "PostDraw::FenceComplete");
+	// No wait here: the next PreDraw waits only for the frame that used its slot
+	frameFenceValues_[frameSlot_] = fenceValue;
+	CheckDeviceLost(S_OK, "PostDraw::Signal");
 
 	frameIndex_++;
 	ProcessDeferredReleases(false);
@@ -312,6 +327,62 @@ void DirectXCommon::SignalAndWaitFence()
 		WaitForSingleObject(fenceEvent, INFINITE);
 	}
 	FlushDebugMessages();
+}
+
+void DirectXCommon::InitializeSrvFreeList()
+{
+	freeSrvIndices_.clear();
+	retiredSrvIndices_.clear();
+	// Push in descending order so the lowest free index is handed out first
+	for (uint32_t i = kMaxSrvDescriptors - 1; i >= 1; --i) {
+		if (i >= kFixedSrvBegin && i < kFixedSrvEnd) continue;
+		freeSrvIndices_.push_back(i);
+	}
+}
+
+void DirectXCommon::ReclaimRetiredSrvIndices()
+{
+	if (retiredSrvIndices_.empty()) return;
+	const uint64_t completed = GetCompletedFenceValue();
+	for (auto it = retiredSrvIndices_.begin(); it != retiredSrvIndices_.end(); ) {
+		if (isDeviceLost_ || completed >= it->retireFenceValue) {
+			freeSrvIndices_.push_back(it->index);
+			it = retiredSrvIndices_.erase(it);
+		} else {
+			++it;
+		}
+	}
+}
+
+uint32_t DirectXCommon::PeekSrvIndex()
+{
+	ReclaimRetiredSrvIndices();
+	return freeSrvIndices_.empty() ? kInvalidSrvIndex : freeSrvIndices_.back();
+}
+
+uint32_t DirectXCommon::AllocateSrvIndex()
+{
+	ReclaimRetiredSrvIndices();
+	if (freeSrvIndices_.empty()) {
+		static bool sLoggedFull = false;
+		if (!sLoggedFull) {
+			sLoggedFull = true;
+			Log::GetInstance()->logOutput(std::format("[DirectXCommon] Error: SRV descriptor heap is full ({} descriptors).\n", kMaxSrvDescriptors));
+		}
+		return kInvalidSrvIndex;
+	}
+	const uint32_t index = freeSrvIndices_.back();
+	freeSrvIndices_.pop_back();
+	return index;
+}
+
+void DirectXCommon::FreeSrvIndex(uint32_t index)
+{
+	if (index == 0 || index >= kMaxSrvDescriptors || (index >= kFixedSrvBegin && index < kFixedSrvEnd)) {
+		return;
+	}
+	// Same retirement rule as DeferRelease: frames recorded up to now may still read this descriptor
+	retiredSrvIndices_.push_back({ index, fenceValue + 2 });
 }
 
 void DirectXCommon::DeferRelease(Microsoft::WRL::ComPtr<IUnknown> resource)
@@ -468,7 +539,10 @@ void DirectXCommon::CreateAdapter()
 {
 	ConvertStrings converter;
 
-	for (UINT i = 0;
+	// `--warp` forces Microsoft's software rasterizer (CI runners have no GPU; also handy to rule out driver bugs)
+	const bool forceWarp = std::strstr(GetCommandLineA(), "--warp") != nullptr;
+
+	for (UINT i = 0; !forceWarp &&
 		dxgiFactory->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&useAdapter)) != DXGI_ERROR_NOT_FOUND;
 		++i)
 	{
@@ -479,10 +553,23 @@ void DirectXCommon::CreateAdapter()
 		if (!(adapterDesc.Flags & DXGI_ADAPTER_FLAG3_SOFTWARE))
 		{
 			std::string adapterName = converter.ConvertString(adapterDesc.Description);
+			adapterName_ = adapterName;
 			Log::GetInstance()->logOutput(std::format("Using GPU: {}\n", adapterName));
 			break;
 		}
 		useAdapter = nullptr;
+	}
+
+	// No hardware adapter (or --warp): fall back to WARP instead of failing
+	if (!useAdapter) {
+		Microsoft::WRL::ComPtr<IDXGIAdapter> warpAdapter;
+		if (SUCCEEDED(dxgiFactory->EnumWarpAdapter(IID_PPV_ARGS(&warpAdapter))) && warpAdapter) {
+			warpAdapter.As(&useAdapter);
+			adapterName_ = "WARP (software)";
+			Log::GetInstance()->logOutput(forceWarp
+				? "Using GPU: WARP software adapter (--warp)\n"
+				: "Using GPU: WARP software adapter (no hardware adapter found)\n");
+		}
 	}
 	assert(useAdapter != nullptr);
 }
@@ -493,14 +580,80 @@ void DirectXCommon::CreateCommand()
 	hr = device->CreateCommandQueue(&commandQueueDesc, IID_PPV_ARGS(&commandQueue));
 	assert(SUCCEEDED(hr));
 
-	hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator));
-	assert(SUCCEEDED(hr));
+	for (uint32_t i = 0; i < kFramesInFlight; ++i) {
+		hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocators_[i]));
+		assert(SUCCEEDED(hr));
+	}
 
-	hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator.Get(), nullptr, IID_PPV_ARGS(&commandList));
+	hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocators_[0].Get(), nullptr, IID_PPV_ARGS(&commandList));
 	assert(SUCCEEDED(hr));
 
 	hr = commandList->Close();
 	assert(SUCCEEDED(hr));
+
+	CreateFrameUploadBuffers();
+}
+
+void DirectXCommon::CreateFrameUploadBuffers()
+{
+	for (uint32_t i = 0; i < kFramesInFlight; ++i) {
+		FrameUploadBuffer& fb = frameUpload_[i];
+		fb.resource = CreateBufferResource(kFrameUploadBufferSize);
+		assert(fb.resource);
+		if (!fb.resource) continue;
+		// Upload heaps may stay mapped for the resource's lifetime
+		fb.resource->Map(0, nullptr, reinterpret_cast<void**>(&fb.cpu));
+		fb.gpu = fb.resource->GetGPUVirtualAddress();
+		fb.offset = 0;
+	}
+}
+
+DirectXCommon::UploadAllocation DirectXCommon::AllocateUpload(size_t sizeInBytes, size_t alignment)
+{
+	UploadAllocation result{};
+	if (sizeInBytes == 0 || isDeviceLost_) return result;
+	if (alignment == 0) alignment = 1;
+
+	FrameUploadBuffer& fb = frameUpload_[frameSlot_];
+	const size_t aligned = (fb.offset + alignment - 1) / alignment * alignment;
+	if (fb.cpu && aligned + sizeInBytes <= kFrameUploadBufferSize) {
+		result.cpu = fb.cpu + aligned;
+		result.gpu = fb.gpu + aligned;
+		fb.offset = aligned + sizeInBytes;
+		return result;
+	}
+
+	// Frame buffer exhausted: fall back to a one-off buffer kept alive until the GPU is done with this frame
+	static bool sLoggedOverflow = false;
+	if (!sLoggedOverflow) {
+		sLoggedOverflow = true;
+		Log::GetInstance()->logOutput(std::format("[DirectXCommon] Warning: per-frame upload buffer ({} MB) exhausted; using transient buffers.\n", kFrameUploadBufferSize / (1024 * 1024)));
+	}
+	Microsoft::WRL::ComPtr<ID3D12Resource> transient = CreateBufferResource((sizeInBytes + alignment - 1) / alignment * alignment);
+	if (!transient) return result;
+	void* mapped = nullptr;
+	transient->Map(0, nullptr, &mapped);
+	result.cpu = mapped;
+	result.gpu = transient->GetGPUVirtualAddress();
+	DeferRelease(transient);
+	return result;
+}
+
+D3D12_GPU_VIRTUAL_ADDRESS DirectXCommon::UploadData(const void* data, size_t sizeInBytes, size_t alignment)
+{
+	UploadAllocation alloc = AllocateUpload(sizeInBytes, alignment);
+	if (!alloc.cpu || !data) return 0;
+	std::memcpy(alloc.cpu, data, sizeInBytes);
+	return alloc.gpu;
+}
+
+void DirectXCommon::WaitForFenceValue(uint64_t value)
+{
+	if (!fence || value == 0) return;
+	if (fence->GetCompletedValue() < value) {
+		fence->SetEventOnCompletion(value, fenceEvent);
+		WaitForSingleObject(fenceEvent, INFINITE);
+	}
 }
 
 void DirectXCommon::CreateSwapChain(HWND hwnd)

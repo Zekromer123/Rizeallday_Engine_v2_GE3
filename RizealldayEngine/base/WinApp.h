@@ -2,6 +2,7 @@
 #include <Windows.h>
 #include <cstdint>
 #include <string>
+#include <functional>
 
 class WinApp
 {
@@ -22,6 +23,12 @@ public:
 	/// Process Windows messages (returns true when WM_QUIT received)
 	bool ProcessMessage();
 
+	/// Called on WM_CLOSE (window X button, Alt+F4). Return true to close now, false to keep the window
+	/// open (e.g. to ask about unsaved changes first). Pass nullptr to always close.
+	void SetCloseRequestHandler(std::function<bool()> handler) { closeRequestHandler_ = std::move(handler); }
+	/// Same decision as WM_CLOSE, usable from menus: quits when the handler allows it
+	void RequestClose();
+
 	HWND GetHWND() const { return hwnd_; }
 	HINSTANCE GetHInstance() const { return wc_.hInstance; }
 	int GetClientWidth() const;
@@ -35,4 +42,5 @@ private:
 
 	HWND hwnd_ = nullptr;
 	WNDCLASS wc_ = {};
+	std::function<bool()> closeRequestHandler_;
 };

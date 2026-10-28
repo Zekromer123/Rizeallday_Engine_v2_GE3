@@ -139,18 +139,11 @@ private:
 	DirectXCommon* dxCommon_ = nullptr;
 	uint32_t maxParticles_ = 100;
 	uint32_t textureHandle_ = 0;
-	uint32_t srvIndex_[kMaxPasses] = { 0, 0 };
+	// Per-frame data lives on the CPU and is uploaded to the per-frame upload allocator in Draw()
+	Material materialData_{};
 
-	Microsoft::WRL::ComPtr<ID3D12Resource> materialResource_;
-	Material* materialData_ = nullptr;
-
-	Microsoft::WRL::ComPtr<ID3D12Resource> instancingResource_[kMaxPasses];
-	ParticleForGPU* instancingData_[kMaxPasses] = { nullptr, nullptr };
-
-	D3D12_GPU_DESCRIPTOR_HANDLE instancingSrvGPU_[kMaxPasses]{};
-
-	Microsoft::WRL::ComPtr<ID3D12Resource> cameraResource_;
-	uint8_t* cameraMappedData_ = nullptr;
+	// CPU-side instancing data per pass (bound as a root SRV at draw time)
+	std::vector<ParticleForGPU> instancingData_[kMaxPasses];
 
 	std::vector<Particle> particles_;
 	std::mt19937 randomEngine_{ 12345 };

@@ -6,9 +6,10 @@
 #include <string>
 #include "math/MathUtil.h"
 #include "math/VertexData.h"
+#include "3d/DirectionalLight.h"
 
 class DirectXCommon;
-struct DirectionalLightData;
+
 
 class Sprite
 {
@@ -69,19 +70,15 @@ public:
 
 public:
 	Transform transformSprite{ {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} };
-	Material* materialDataSprite = nullptr;
-	DirectionalLightData* directionalLightData = nullptr;
 
 private:
 	DirectXCommon* dxCommon_ = nullptr;
-	Microsoft::WRL::ComPtr<ID3D12Resource> materialResourceSprite = nullptr;
-	Microsoft::WRL::ComPtr<ID3D12Resource> directionalLightResource = nullptr;
-	Microsoft::WRL::ComPtr<ID3D12Resource> vertexResourceSprite = nullptr;
-	Microsoft::WRL::ComPtr<ID3D12Resource> transformationMatrixResourceSprite = nullptr;
-	VertexData* vertexDataSprite = nullptr;
-	uint32_t* indexDataSprite = nullptr;
-	TransformationMatrix* transformationMatrixDataSprite = nullptr;
-	D3D12_VERTEX_BUFFER_VIEW vertexBufferViewSprite{};
+	// Per-frame data is kept on the CPU and uploaded to the per-frame upload allocator in Draw()
+	Material materialSprite_{};
+	DirectionalLightData directionalLightSprite_{};
+	TransformationMatrix transformationMatrixSprite_{};
+	VertexData vertexDataSprite_[6] = {};
+	bool initialized_ = false;
 	ID3D12DescriptorHeap* srvDescriptorHeap = nullptr;
 	D3D12_GPU_DESCRIPTOR_HANDLE textureSrvHandleGPUSprite{};
 	Microsoft::WRL::ComPtr<ID3D12Resource> indexResourceSprite = nullptr;

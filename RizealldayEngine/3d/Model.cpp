@@ -1,5 +1,6 @@
 ﻿#include "3d/Model.h"
 #include "base/DirectXCommon.h"
+#include "base/Profiler.h"
 #include "base/TextureManager.h"
 #include "base/Log.h"
 #include <assimp/Importer.hpp>
@@ -790,6 +791,7 @@ void Model::Draw(ID3D12GraphicsCommandList* cmdList, uint32_t overrideTextureHan
         cmdList->IASetVertexBuffers(0, 1, &mesh.vbView);
         cmdList->IASetIndexBuffer(&mesh.ibView);
         cmdList->DrawIndexedInstanced(static_cast<UINT>(mesh.indices.size()), 1, 0, 0, 0);
+        Profiler::GetInstance()->CountDrawCall();
     }
 }
 

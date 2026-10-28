@@ -80,7 +80,8 @@ bool ScriptModule::Initialize(const EngineAPI* engineApi) {
 	CleanupOldShadowCopies(shadowDir);
 
 	if (std::filesystem::exists(dllSourcePath_, ec)) {
-		return LoadShadowCopy(nullptr);
+		lastLoadError_.clear();
+		return LoadShadowCopy(&lastLoadError_);
 	}
 	return false;
 }
@@ -156,6 +157,19 @@ bool ScriptModule::LoadShadowCopy(std::string* outErrorMsg) {
 
 	if (!fnInit_ || !fnCreateScript_ || !fnDestroyScript_ || !fnGetScriptCount_ || !fnGetScriptName_) {
 		if (outErrorMsg) *outErrorMsg = "GameScripts.dll is missing required exported entry points.";
+		Unload();
+		return false;
+	}
+
+	// A DLL built against another ScriptAPI.h would read EngineAPI / views with the wrong layout
+	using FnGetApiFingerprint = uint32_t(*)();
+	auto fnFingerprint = reinterpret_cast<FnGetApiFingerprint>(GetProcAddress(dllHandle_, "GameScripts_GetApiFingerprint"));
+	const uint32_t dllFingerprint = fnFingerprint ? fnFingerprint() : 0u;
+	if (dllFingerprint != ScriptApiFingerprint()) {
+		if (outErrorMsg) {
+			*outErrorMsg = std::format("GameScripts.dll was built against a different engine version (API fingerprint {:08X}, engine {:08X}). "
+				"Rebuild the whole solution so the engine and the scripts match.", dllFingerprint, ScriptApiFingerprint());
+		}
 		Unload();
 		return false;
 	}

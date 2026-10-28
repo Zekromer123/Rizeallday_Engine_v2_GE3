@@ -57,6 +57,15 @@
     <ClCompile Include="EditorSuite_Mapchip.cpp">
       <Filter>editor</Filter>
     </ClCompile>
+    <ClCompile Include="EditorSuite_Prefabs.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorSuite_Runtime.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorSuite_Samples.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
     <ClCompile Include="EditorSuite_Physics.cpp">
       <Filter>editor</Filter>
     </ClCompile>
@@ -75,6 +84,15 @@
     <ClCompile Include="EditorSuite_Environment.cpp">
       <Filter>editor</Filter>
     </ClCompile>
+    <ClCompile Include="EditorSuite_Tests.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorSuite_Profiler.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorSuite_Hierarchy.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
     <ClCompile Include="ParticleQuad.cpp">
       <Filter>3d</Filter>
     </ClCompile>
@@ -90,6 +108,15 @@
       <Filter>base</Filter>
     </ClInclude>
     <ClInclude Include="EditorSuiteInternal.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="SceneJson.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="Tests\TestFramework.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="TransformUtil.h">
       <Filter>editor</Filter>
     </ClInclude>
     <ClInclude Include="EditorSuite.h">

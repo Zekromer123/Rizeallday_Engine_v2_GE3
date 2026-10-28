@@ -23,14 +23,18 @@ void EditorSuite::CalculateLightViewProjection()
 	for (const auto& obj : gameObjects_) {
 		if (obj.isActive && obj.hasMesh && obj.meshEnabled && obj.castShadow) {
 			hasCasters = true;
-			float maxExtent = (std::max)({ obj.scale.x, obj.scale.y, obj.scale.z });
-			minBound.x = (std::min)(minBound.x, obj.translation.x - maxExtent);
-			minBound.y = (std::min)(minBound.y, obj.translation.y - maxExtent);
-			minBound.z = (std::min)(minBound.z, obj.translation.z - maxExtent);
+			Vector3 wPos{};
+			Quaternion wRot = Quaternion::Identity();
+			Vector3 wScale{};
+			GetWorldTRS(obj, wPos, wRot, wScale);
+			float maxExtent = (std::max)({ wScale.x, wScale.y, wScale.z });
+			minBound.x = (std::min)(minBound.x, wPos.x - maxExtent);
+			minBound.y = (std::min)(minBound.y, wPos.y - maxExtent);
+			minBound.z = (std::min)(minBound.z, wPos.z - maxExtent);
 
-			maxBound.x = (std::max)(maxBound.x, obj.translation.x + maxExtent);
-			maxBound.y = (std::max)(maxBound.y, obj.translation.y + maxExtent);
-			maxBound.z = (std::max)(maxBound.z, obj.translation.z + maxExtent);
+			maxBound.x = (std::max)(maxBound.x, wPos.x + maxExtent);
+			maxBound.y = (std::max)(maxBound.y, wPos.y + maxExtent);
+			maxBound.z = (std::max)(maxBound.z, wPos.z + maxExtent);
 		}
 	}
 
@@ -166,10 +170,16 @@ void EditorSuite::RenderShadowPass(ID3D12GraphicsCommandList* cmdList)
 			obj.shadowTransform = std::make_unique<WorldTransform>();
 			obj.shadowTransform->Initialize();
 		}
-		obj.shadowTransform->translation = obj.translation;
-		obj.shadowTransform->rotation = obj.rotation;
-		obj.shadowTransform->scale = obj.scale;
-		obj.shadowTransform->rotationQuat = obj.rotationQuat;
+		{
+			Vector3 wPos{};
+			Quaternion wRot = Quaternion::Identity();
+			Vector3 wScale{};
+			GetWorldTRS(obj, wPos, wRot, wScale);
+			obj.shadowTransform->translation = wPos;
+			obj.shadowTransform->rotation = (obj.parentId == -1) ? obj.rotation : wRot.ToEuler();
+			obj.shadowTransform->scale = wScale;
+			obj.shadowTransform->rotationQuat = wRot;
+		}
 		obj.shadowTransform->UpdateMatrix(lightViewProjectionMatrix_);
 
 		if (enableFrustumCulling_) {
@@ -179,11 +189,15 @@ void EditorSuite::RenderShadowPass(ID3D12GraphicsCommandList* cmdList)
 			}
 		}
 
-		cmdList->SetGraphicsRootConstantBufferView(1, obj.shadowTransform->GetGPUAddress());
-		if (obj.editObject3d && obj.editObject3d->GetBonePaletteGPUAddress() != 0) {
-			cmdList->SetGraphicsRootConstantBufferView(4, obj.editObject3d->GetBonePaletteGPUAddress());
-		} else if (obj.gameObject3d && obj.gameObject3d->GetBonePaletteGPUAddress() != 0) {
-			cmdList->SetGraphicsRootConstantBufferView(4, obj.gameObject3d->GetBonePaletteGPUAddress());
+		const D3D12_GPU_VIRTUAL_ADDRESS shadowTransformAddr = obj.shadowTransform->Upload();
+		if (shadowTransformAddr == 0) continue;
+		cmdList->SetGraphicsRootConstantBufferView(1, shadowTransformAddr);
+		// Skinned casters use the animated palette of the edit (or game) instance; others get the shared identity
+		const Object3d* paletteSource = obj.editObject3d ? obj.editObject3d.get() : obj.gameObject3d.get();
+		if (paletteSource) {
+			if (const D3D12_GPU_VIRTUAL_ADDRESS boneAddr = paletteSource->UploadBonePalette()) {
+				cmdList->SetGraphicsRootConstantBufferView(4, boneAddr);
+			}
 		}
 		model->Draw(cmdList);
 	}
@@ -253,10 +267,16 @@ void EditorSuite::RenderScene3D(ID3D12GraphicsCommandList* cmdList, Camera& came
 		}
 		obj3d->SetGeometryShaderMode(gsMode);
 		obj3d->SetUseGeometryShader(obj.useGeometryShader);
-		obj3d->worldTransform.translation = obj.translation;
-		obj3d->worldTransform.rotation = obj.rotation;
-		obj3d->worldTransform.scale = obj.scale;
-		obj3d->worldTransform.rotationQuat = obj.rotationQuat;
+		{
+			Vector3 wPos{};
+			Quaternion wRot = Quaternion::Identity();
+			Vector3 wScale{};
+			GetWorldTRS(obj, wPos, wRot, wScale);
+			obj3d->worldTransform.translation = wPos;
+			obj3d->worldTransform.rotation = (obj.parentId == -1) ? obj.rotation : wRot.ToEuler();
+			obj3d->worldTransform.scale = wScale;
+			obj3d->worldTransform.rotationQuat = wRot;
+		}
 		obj3d->SetCamera(&camera);
 
 		obj3d->SetCurrentAnimationIndex(static_cast<uint32_t>((std::max)(0, obj.animationIndex)));
@@ -304,13 +324,21 @@ void EditorSuite::RenderViewports(ID3D12GraphicsCommandList* cmdList, bool showP
 		return;
 	}
 
+	RIZE_PROFILE_CPU("Record 3D");
+
+	UpdateWorldMatrices();
+
 	bool activeParticles = HasActiveParticleSystem() && showParticles;
 
 	// 0. Directional Light Shadow Pass (Render active casters into shadow map)
-	RenderShadowPass(cmdList);
+	{
+		RIZE_PROFILE_GPU(cmdList, "Shadow Pass");
+		RenderShadowPass(cmdList);
+	}
 
 #ifdef USE_IMGUI
 	// 1. Render to EDIT VIEW (Scene Camera)
+	const uint32_t sceneViewScope = Profiler::GetInstance()->BeginGpu(cmdList, "Scene View");
 	editViewRT_.BeginRender();
 	editorCamera_.Update();
 	skybox_.Draw(cmdList, editorCamera_);
@@ -334,8 +362,10 @@ void EditorSuite::RenderViewports(ID3D12GraphicsCommandList* cmdList, bool showP
 		}
 	}
 	editViewRT_.EndRender();
+	Profiler::GetInstance()->EndGpu(cmdList, sceneViewScope);
 
 	// 2. Render to GAME VIEW (Player Game Camera)
+	const uint32_t gameViewScope = Profiler::GetInstance()->BeginGpu(cmdList, "Game View");
 	gameViewRT_.BeginRender();
 	if (gameCamera_) {
 		gameCamera_->Update();
@@ -350,10 +380,16 @@ void EditorSuite::RenderViewports(ID3D12GraphicsCommandList* cmdList, bool showP
 			}
 		}
 	}
+	// Game UI (HUD/menus from scripts) on top of the 3D view
+	if (sceneState_ != EditorSceneState::Edit || IsStandaloneMode()) {
+		UIRenderer::GetInstance()->Render(cmdList);
+	}
 	gameViewRT_.EndRender();
+	Profiler::GetInstance()->EndGpu(cmdList, gameViewScope);
 
 	// 3. Render 3D Asset Preview (if a 3D model is currently selected in the Asset Browser)
 	if (previewModel_ && previewObject3d_ && modelPreviewRT_.IsInitialized() && !IsStandaloneMode()) {
+		RIZE_PROFILE_GPU(cmdList, "Asset Preview");
 		modelPreviewRT_.BeginRender();
 		TextureManager::GetInstance()->SetDescriptorHeaps(cmdList);
 		previewCamera_.Update();
@@ -394,6 +430,7 @@ void EditorSuite::RenderViewports(ID3D12GraphicsCommandList* cmdList, bool showP
 #else
 	// Standalone Release build without ImGui: render Game View directly to the main swapchain backbuffer
 	dxCommon_->BindMainRenderTarget();
+	RIZE_PROFILE_GPU(cmdList, "Game View");
 	if (gameCamera_) {
 		gameCamera_->Update();
 		skybox_.Draw(cmdList, *gameCamera_);
@@ -407,6 +444,7 @@ void EditorSuite::RenderViewports(ID3D12GraphicsCommandList* cmdList, bool showP
 			}
 		}
 	}
+	UIRenderer::GetInstance()->Render(cmdList);
 #endif
 }
 

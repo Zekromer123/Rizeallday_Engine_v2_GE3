@@ -17,6 +17,11 @@ void EditorSuite::StartPlayMode()
 	SavePlayModeSnapshot();
 	DestroyAllScriptInstances();
 	sceneState_ = EditorSceneState::Play;
+	timeScale_ = 1.0f;
+	ClearPrefabCache(); // pick up prefab edits made since the last run
+	ResetPrefabPools();
+	UIRenderer::GetInstance()->Clear();
+	gameTime_ = 0.0;
 	stepSingleFrame_ = false;
 
 	RefreshAllScriptObjectViews();
@@ -121,12 +126,18 @@ void EditorSuite::StopPlayMode()
 
 	pendingDeletes_.clear();
 	pendingSpawns_.clear();
+	ResetPrefabPools();
+	UIRenderer::GetInstance()->Clear();
 	CollisionManager::GetInstance()->Clear();
 	sceneState_ = EditorSceneState::Edit;
+	timeScale_ = 1.0f;
+	gameTime_ = 0.0;
 	stepSingleFrame_ = false;
 
 	// 2. Restore scene snapshot (including any objects deleted during Play mode)
+	pendingSceneLoad_.clear();
 	RestorePlayModeSnapshot();
+	RestoreRuntimeSceneOrigin(); // scene path/name/settings if a script switched scenes
 
 	// 3. Re-create Edit-mode script instances so Inspector can display exposed fields
 	EnsureEditModeScriptInstances();
@@ -134,6 +145,10 @@ void EditorSuite::StopPlayMode()
 	// No Play-mode script instance is alive anymore, so views of deleted objects can be released
 	RefreshAllScriptObjectViews();
 	ClearRetiredScriptViews();
+
+	// The restored scene is the undo baseline again (play-mode changes are not part of the history)
+	undoBaseline_ = CaptureUndoState();
+	undoMergeAllowed_ = false;
 }
 
 void EditorSuite::SavePlayModeSnapshot()
@@ -237,21 +252,12 @@ void EditorSuite::RestorePlayModeSnapshot()
 	}
 
 	// Rebuild hierarchy parent/child indices cleanly
+	RebuildHierarchyLinks();
+	UpdateWorldMatrices();
 	for (size_t i = 0; i < gameObjects_.size(); ++i) {
-		gameObjects_[i].childrenIds.clear();
-		gameObjects_[i].parentIndex = -1;
 		gameObjects_[i].attachToIndex = -1;
 	}
 	for (size_t i = 0; i < gameObjects_.size(); ++i) {
-		if (gameObjects_[i].parentId != -1) {
-			for (size_t p = 0; p < gameObjects_.size(); ++p) {
-				if (gameObjects_[p].id == static_cast<uint32_t>(gameObjects_[i].parentId)) {
-					gameObjects_[i].parentIndex = static_cast<int>(p);
-					gameObjects_[p].childrenIds.push_back(gameObjects_[i].id);
-					break;
-				}
-			}
-		}
 		if (gameObjects_[i].attachedParentId != -1) {
 			for (size_t p = 0; p < gameObjects_.size(); ++p) {
 				if (gameObjects_[p].id == static_cast<uint32_t>(gameObjects_[i].attachedParentId)) {

@@ -42,6 +42,9 @@
     <ClCompile Include="base\DirectXCommon.cpp">
       <Filter>base</Filter>
     </ClCompile>
+    <ClCompile Include="base\Profiler.cpp">
+      <Filter>base</Filter>
+    </ClCompile>
     <ClCompile Include="base\WinApp.cpp">
       <Filter>base</Filter>
     </ClCompile>
@@ -111,6 +114,9 @@
     <ClCompile Include="2d\Sprite.cpp">
       <Filter>2d</Filter>
     </ClCompile>
+    <ClCompile Include="2d\UIRenderer.cpp">
+      <Filter>2d</Filter>
+    </ClCompile>
     <ClCompile Include="input\Input.cpp">
       <Filter>input</Filter>
     </ClCompile>
@@ -153,6 +159,9 @@
       <Filter>base</Filter>
     </ClInclude>
     <ClInclude Include="base\DirectXCommon.h">
+      <Filter>base</Filter>
+    </ClInclude>
+    <ClInclude Include="base\Profiler.h">
       <Filter>base</Filter>
     </ClInclude>
     <ClInclude Include="base\WinApp.h">
@@ -240,6 +249,9 @@
       <Filter>3d</Filter>
     </ClInclude>
     <ClInclude Include="2d\Sprite.h">
+      <Filter>2d</Filter>
+    </ClInclude>
+    <ClInclude Include="2d\UIRenderer.h">
       <Filter>2d</Filter>
     </ClInclude>
     <ClInclude Include="input\Input.h">
@@ -332,6 +344,12 @@
       <Filter>shaders</Filter>
     </FxCompile>
     <FxCompile Include="shaders\Line.PS.hlsl">
+      <Filter>shaders</Filter>
+    </FxCompile>
+    <FxCompile Include="shaders\UI.VS.hlsl">
+      <Filter>shaders</Filter>
+    </FxCompile>
+    <FxCompile Include="shaders\UI.PS.hlsl">
       <Filter>shaders</Filter>
     </FxCompile>
     <None Include="shaders\Sprite.hlsli">

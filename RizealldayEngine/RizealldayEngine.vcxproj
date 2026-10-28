@@ -114,6 +114,7 @@
     <!-- base/ -->
     <ClCompile Include="base\RizeEngine.cpp" />
     <ClCompile Include="base\DirectXCommon.cpp" />
+    <ClCompile Include="base\Profiler.cpp" />
     <ClCompile Include="base\WinApp.cpp" />
     <ClCompile Include="base\DXCManager.cpp" />
     <ClCompile Include="base\TextureManager.cpp" />
@@ -136,6 +137,7 @@
     <ClCompile Include="3d\Collider.cpp" />
     <ClCompile Include="3d\CollisionManager.cpp" />
     <ClCompile Include="3d\PrimitiveDrawer.cpp" />
+    <ClCompile Include="2d\UIRenderer.cpp" />
     <ClCompile Include="3d\Skybox.cpp" />
     <!-- 2d/ -->
     <ClCompile Include="2d\Sprite.cpp" />
@@ -175,6 +177,7 @@
   <ItemGroup>
     <ClInclude Include="base\RizeEngine.h" />
     <ClInclude Include="base\DirectXCommon.h" />
+    <ClInclude Include="base\Profiler.h" />
     <ClInclude Include="base\WinApp.h" />
     <ClInclude Include="base\DXCManager.h" />
     <ClInclude Include="base\TextureManager.h" />
@@ -200,6 +203,7 @@
     <ClInclude Include="3d\CircleShadow.h" />
     <ClInclude Include="3d\ShadowMap.h" />
     <ClInclude Include="3d\PrimitiveDrawer.h" />
+    <ClInclude Include="2d\UIRenderer.h" />
     <ClInclude Include="3d\Skybox.h" />
     <ClInclude Include="3d\Collider.h" />
     <ClInclude Include="3d\CollisionManager.h" />
@@ -310,6 +314,18 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</ExcludedFromBuild>
     </FxCompile>
     <FxCompile Include="shaders\Line.PS.hlsl">
+      <ShaderType>Pixel</ShaderType>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</ExcludedFromBuild>
+    </FxCompile>
+    <FxCompile Include="shaders\UI.VS.hlsl">
+      <ShaderType>Vertex</ShaderType>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</ExcludedFromBuild>
+    </FxCompile>
+    <FxCompile Include="shaders\UI.PS.hlsl">
       <ShaderType>Pixel</ShaderType>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>

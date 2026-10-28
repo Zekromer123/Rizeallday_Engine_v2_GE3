@@ -59,6 +59,62 @@ void EditorSuite::DrawInspectorAndDetailsPanel(bool& showParticles)
 					PushUndoSnapshot();
 				}
 
+				// Tag + collision layer / mask (layer names match ScriptLayer in ScriptAPI.h)
+				{
+					char tagBuf[64]{};
+					strncpy_s(tagBuf, obj.tag.c_str(), sizeof(tagBuf) - 1);
+					if (ImGui::InputText("Tag", tagBuf, sizeof(tagBuf))) {
+						obj.tag = tagBuf;
+						isSceneDirty_ = true;
+					}
+					if (ImGui::IsItemDeactivatedAfterEdit()) {
+						PushUndoSnapshot();
+					}
+					ImGui::SetItemTooltip("Free-form tag scripts can compare (e.g. \"Enemy\")");
+
+					const uint32_t layer = obj.layer & 31u;
+					if (ImGui::BeginCombo("Layer", GetCollisionLayerName(layer).c_str())) {
+						for (uint32_t i = 0; i < 32; ++i) {
+							if (ImGui::Selectable(GetCollisionLayerName(i).c_str(), i == layer)) {
+								obj.layer = i;
+								isSceneDirty_ = true;
+								PushUndoSnapshot();
+							}
+						}
+						ImGui::EndCombo();
+					}
+					ImGui::SetItemTooltip("Collision layer of this object's colliders");
+
+					std::string maskPreview;
+					if (obj.collisionMask == 0xFFFFFFFFu) {
+						maskPreview = "Everything";
+					} else if (obj.collisionMask == 0u) {
+						maskPreview = "Nothing";
+					} else {
+						for (uint32_t i = 0; i < 32; ++i) {
+							if (obj.collisionMask & (1u << i)) {
+								if (!maskPreview.empty()) maskPreview += ", ";
+								maskPreview += GetCollisionLayerName(i);
+							}
+						}
+					}
+					if (ImGui::BeginCombo("Collides With", maskPreview.c_str())) {
+						if (ImGui::Selectable("Everything")) { obj.collisionMask = 0xFFFFFFFFu; isSceneDirty_ = true; PushUndoSnapshot(); }
+						if (ImGui::Selectable("Nothing")) { obj.collisionMask = 0u; isSceneDirty_ = true; PushUndoSnapshot(); }
+						ImGui::Separator();
+						for (uint32_t i = 0; i < 32; ++i) {
+							bool on = (obj.collisionMask & (1u << i)) != 0;
+							if (ImGui::Checkbox(GetCollisionLayerName(i).c_str(), &on)) {
+								obj.collisionMask = on ? (obj.collisionMask | (1u << i)) : (obj.collisionMask & ~(1u << i));
+								isSceneDirty_ = true;
+								PushUndoSnapshot();
+							}
+						}
+						ImGui::EndCombo();
+					}
+					ImGui::SetItemTooltip("Layers this object collides with. A pair collides only if both masks accept each other's layer.");
+				}
+
 				// 1. TRANSFORM COMPONENT (Always Present)
 				if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
 					DrawVec3Control("Position", obj.translation, 0.0f);
@@ -92,7 +148,7 @@ void EditorSuite::DrawInspectorAndDetailsPanel(bool& showParticles)
 
 				// 2. MESH FILTER & MESH RENDERER
 				if (obj.hasMesh) {
-					if (ImGui::CollapsingHeader("Mesh Filter & Renderer", ImGuiTreeNodeFlags_DefaultOpen)) {
+					if (DrawComponentHeader("Mesh Filter & Renderer", ComponentKind::Mesh)) {
 						if (ImGui::Checkbox("Enabled##Mesh", &obj.meshEnabled)) { isSceneDirty_ = true; PushUndoSnapshot(); }
 						const char* meshTypes[] = { "Cube", "Sphere", "Plane", "Quad", "CustomModel" };
 						int currentMesh = static_cast<int>(obj.meshType);
@@ -263,7 +319,7 @@ void EditorSuite::DrawInspectorAndDetailsPanel(bool& showParticles)
 
 				// 3. BOX COLLIDER COMPONENT
 				if (obj.hasBoxCollider) {
-					if (ImGui::CollapsingHeader("Box Collider", ImGuiTreeNodeFlags_DefaultOpen)) {
+					if (DrawComponentHeader("Box Collider", ComponentKind::BoxCollider)) {
 						if (ImGui::Checkbox("Enabled##BoxCol", &obj.boxColliderEnabled)) { isSceneDirty_ = true; PushUndoSnapshot(); }
 						ImGui::SameLine();
 						if (ImGui::Button(isEditingColliderBounds_ ? " [ Editing Bounds ] " : " Edit Bounds ")) {
@@ -288,7 +344,7 @@ void EditorSuite::DrawInspectorAndDetailsPanel(bool& showParticles)
 
 				// 4. SPHERE COLLIDER COMPONENT
 				if (obj.hasSphereCollider) {
-					if (ImGui::CollapsingHeader("Sphere Collider", ImGuiTreeNodeFlags_DefaultOpen)) {
+					if (DrawComponentHeader("Sphere Collider", ComponentKind::SphereCollider)) {
 						if (ImGui::Checkbox("Enabled##SphCol", &obj.sphereColliderEnabled)) { isSceneDirty_ = true; PushUndoSnapshot(); }
 						if (ImGui::Checkbox("Is Trigger##Sph", &obj.sphereIsTrigger)) { isSceneDirty_ = true; PushUndoSnapshot(); }
 						DrawVec3Control("Center##Sph", obj.sphereCenter, 0.0f);
@@ -302,7 +358,7 @@ void EditorSuite::DrawInspectorAndDetailsPanel(bool& showParticles)
 
 				// 5. RIGIDBODY COMPONENT
 				if (obj.hasRigidbody) {
-					if (ImGui::CollapsingHeader("Rigidbody", ImGuiTreeNodeFlags_DefaultOpen)) {
+					if (DrawComponentHeader("Rigidbody", ComponentKind::Rigidbody)) {
 						if (ImGui::Checkbox("Enabled##RB", &obj.rbEnabled)) { isSceneDirty_ = true; PushUndoSnapshot(); }
 
 						if (ImGui::DragFloat("Mass (kg)", &obj.mass, 0.1f, 0.01f, 1000.0f, "%.2f")) isSceneDirty_ = true;
@@ -332,7 +388,7 @@ void EditorSuite::DrawInspectorAndDetailsPanel(bool& showParticles)
 
 				// 6. CAMERA COMPONENT
 				if (obj.hasCamera) {
-					if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
+					if (DrawComponentHeader("Camera", ComponentKind::Camera)) {
 						if (ImGui::Checkbox("Enabled##Cam", &obj.cameraEnabled)) { isSceneDirty_ = true; PushUndoSnapshot(); }
 						if (ImGui::SliderFloat("Field of View", &obj.fov, 10.0f, 150.0f, "%.1f deg")) isSceneDirty_ = true;
 						if (ImGui::IsItemDeactivatedAfterEdit()) PushUndoSnapshot();
@@ -345,7 +401,7 @@ void EditorSuite::DrawInspectorAndDetailsPanel(bool& showParticles)
 
 				// 7. LIGHT COMPONENT (Directional + Point Light 03_00 + Spot Light 03_01)
 				if (obj.hasLight) {
-					if (ImGui::CollapsingHeader("Light", ImGuiTreeNodeFlags_DefaultOpen)) {
+					if (DrawComponentHeader("Light", ComponentKind::Light)) {
 						if (ImGui::Checkbox("Enabled##Light", &obj.lightEnabled)) { isSceneDirty_ = true; PushUndoSnapshot(); }
 						const char* lightTypes[] = { "Directional", "Point", "Spot" };
 						int currentLight = static_cast<int>(obj.lightType);
@@ -424,7 +480,7 @@ void EditorSuite::DrawInspectorAndDetailsPanel(bool& showParticles)
 				// 8. PARTICLE SYSTEM COMPONENT (Parent Attachment, Presets & Controls)
 				if (obj.hasParticleSystem) {
 					EnsureParticleQuadInitialized(obj);
-					if (ImGui::CollapsingHeader("Particle System", ImGuiTreeNodeFlags_DefaultOpen)) {
+					if (DrawComponentHeader("Particle System", ComponentKind::ParticleSystem)) {
 						// 1. Parent Attachment
 						std::vector<std::string> parentNames;
 						std::vector<int> parentIds;
@@ -687,7 +743,7 @@ void EditorSuite::DrawInspectorAndDetailsPanel(bool& showParticles)
 				// 9b. AUDIO SOURCE COMPONENT (XAudio2 + Windows Media Foundation: .wav / .mp3 / .m4a / .wma)
 				if (obj.hasAudioSource || obj.type == GameObjectType::AudioSource) {
 					obj.hasAudioSource = true;
-					if (ImGui::CollapsingHeader("Audio Source (XAudio2 + Media Foundation)", ImGuiTreeNodeFlags_DefaultOpen)) {
+					if (DrawComponentHeader("Audio Source (XAudio2 + Media Foundation)", ComponentKind::AudioSource)) {
 						// Discover available audio files in Resources/Sound and Assets/Audio
 						std::vector<std::string> audioClips;
 						audioClips.push_back("None");
@@ -1009,6 +1065,14 @@ void EditorSuite::DrawInspectorAndDetailsPanel(bool& showParticles)
 					ImGui::EndPopup();
 				}
 
+				// Apply a "Remove Component" request now that nothing else reads this object's component data
+				if (pendingComponentRemoval_ >= 0) {
+					if (selectedObjectIndex_ >= 0 && selectedObjectIndex_ < static_cast<int>(gameObjects_.size())) {
+						RemoveComponent(gameObjects_[selectedObjectIndex_], static_cast<ComponentKind>(pendingComponentRemoval_));
+					}
+					pendingComponentRemoval_ = -1;
+				}
+
 				ImGui::PopItemWidth();
 				ImGui::EndTabItem();
 			}
@@ -1228,3 +1292,103 @@ bool EditorSuite::DrawVec3Control(const std::string& label, Vector3& values, flo
 	return modified;
 }
 
+
+bool EditorSuite::DrawComponentHeader(const char* label, ComponentKind kind)
+{
+#ifdef USE_IMGUI
+	bool keep = true;
+	// Passing &keep adds the close (x) button on the right side of the header
+	const bool open = ImGui::CollapsingHeader(label, &keep, ImGuiTreeNodeFlags_DefaultOpen);
+	ImGui::SetItemTooltip("Right-click or press x to remove this component");
+	if (ImGui::BeginPopupContextItem()) {
+		if (ImGui::MenuItem("Remove Component")) {
+			keep = false;
+		}
+		ImGui::EndPopup();
+	}
+	if (!keep) {
+		pendingComponentRemoval_ = static_cast<int>(kind);
+	}
+	return open && keep;
+#else
+	(void)label;
+	(void)kind;
+	return false;
+#endif
+}
+
+void EditorSuite::RemoveComponent(GameObject& obj, ComponentKind kind)
+{
+	// Objects created from a typed menu entry (Camera, Light, ...) are recognised by their type in several
+	// places (gizmos, camera sync, audio on Play), so removing that component also makes the object Empty.
+	auto clearTypeIf = [&](std::initializer_list<GameObjectType> types) {
+		for (GameObjectType t : types) {
+			if (obj.type == t) {
+				obj.type = GameObjectType::Empty;
+				return;
+			}
+		}
+	};
+
+	const char* name = "Component";
+	switch (kind) {
+	case ComponentKind::Mesh:
+		name = "Mesh Filter & Renderer";
+		obj.hasMesh = false;
+		obj.editObject3d.reset();
+		obj.gameObject3d.reset();
+		obj.shadowTransform.reset();
+		clearTypeIf({ GameObjectType::Cube, GameObjectType::Sphere, GameObjectType::Plane, GameObjectType::Quad });
+		break;
+	case ComponentKind::BoxCollider:
+		name = "Box Collider";
+		obj.hasBoxCollider = false;
+		break;
+	case ComponentKind::SphereCollider:
+		name = "Sphere Collider";
+		obj.hasSphereCollider = false;
+		break;
+	case ComponentKind::Rigidbody:
+		name = "Rigidbody";
+		obj.hasRigidbody = false;
+		obj.velocity = { 0.0f, 0.0f, 0.0f };
+		obj.isGrounded = false;
+		break;
+	case ComponentKind::Camera:
+		name = "Camera";
+		obj.hasCamera = false;
+		clearTypeIf({ GameObjectType::Camera });
+		break;
+	case ComponentKind::Light:
+		name = "Light";
+		obj.hasLight = false;
+		clearTypeIf({ GameObjectType::DirectionalLight, GameObjectType::PointLight, GameObjectType::SpotLight });
+		break;
+	case ComponentKind::ParticleSystem:
+		name = "Particle System";
+		obj.hasParticleSystem = false;
+		obj.particleQuad.reset(); // GPU resources go through DeferRelease in ~ParticleQuad
+		obj.attachedParentId = -1;
+		obj.attachToIndex = -1;
+		clearTypeIf({ GameObjectType::ParticleSystem });
+		break;
+	case ComponentKind::AudioSource:
+		name = "Audio Source";
+		if (obj.runtimeVoiceHandle != 0) {
+			Audio::GetInstance()->StopAudio(obj.runtimeVoiceHandle);
+			obj.runtimeVoiceHandle = 0;
+		}
+		obj.hasAudioSource = false;
+		clearTypeIf({ GameObjectType::AudioSource });
+		break;
+	case ComponentKind::Mapchip:
+		name = "Mapchip Level Editor";
+		obj.hasMapchip = false;
+		clearTypeIf({ GameObjectType::MapchipGrid });
+		break;
+	}
+
+	isSceneDirty_ = true;
+	PushUndoSnapshot();
+	LogMessage(std::format("[Inspector] Removed {} from '{}'.", name, obj.name), 0);
+}

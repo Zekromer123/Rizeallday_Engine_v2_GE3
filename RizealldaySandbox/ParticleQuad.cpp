@@ -1,5 +1,6 @@
 ﻿#include "ParticleQuad.h"
 #include "base/DirectXCommon.h"
+#include "base/Profiler.h"
 #include "base/DXCManager.h"
 #include "base/TextureManager.h"
 #include "3d/Camera.h"
@@ -15,82 +16,7 @@ static Microsoft::WRL::ComPtr<ID3D12PipelineState> s_psoAdd;
 static Microsoft::WRL::ComPtr<ID3D12Resource> s_vertexBuffer;
 static D3D12_VERTEX_BUFFER_VIEW s_vbView{};
 
-// Static descriptor allocator for particle instancing SRVs
-static uint32_t s_nextParticleSrvIndex = 140;
-static std::vector<uint32_t> s_freeParticleSrvIndices;
-
-struct RetiredParticleSrv {
-	uint32_t srvIndex;
-	uint64_t retireFenceValue;
-};
-static std::vector<RetiredParticleSrv> s_retiredParticleSrvs;
-
-static void ProcessRetiredParticleSrvs(DirectXCommon* dxCommon) {
-	if (!dxCommon) return;
-	uint64_t completedFence = dxCommon->GetCompletedFenceValue();
-	for (auto it = s_retiredParticleSrvs.begin(); it != s_retiredParticleSrvs.end(); ) {
-		if (completedFence >= it->retireFenceValue) {
-			s_freeParticleSrvIndices.push_back(it->srvIndex);
-			it = s_retiredParticleSrvs.erase(it);
-		} else {
-			++it;
-		}
-	}
-}
-
-static uint32_t AllocateParticleSrvIndex(DirectXCommon* dxCommon) {
-	ProcessRetiredParticleSrvs(dxCommon);
-	if (!s_freeParticleSrvIndices.empty()) {
-		uint32_t idx = s_freeParticleSrvIndices.back();
-		s_freeParticleSrvIndices.pop_back();
-		return idx;
-	}
-	if (s_nextParticleSrvIndex < 250) {
-		return s_nextParticleSrvIndex++;
-	}
-	return 140;
-}
-
-static void FreeParticleSrvIndex(uint32_t idx, DirectXCommon* dxCommon) {
-	if (idx >= 140 && idx < 250) {
-		if (dxCommon) {
-			uint64_t retireFence = dxCommon->GetCurrentFenceValue() + 2;
-			s_retiredParticleSrvs.push_back({ idx, retireFence });
-		} else {
-			s_freeParticleSrvIndices.push_back(idx);
-		}
-	}
-}
-
-ParticleQuad::~ParticleQuad() {
-	for (uint32_t i = 0; i < kMaxPasses; ++i) {
-		if (instancingResource_[i]) {
-			instancingResource_[i]->Unmap(0, nullptr);
-			if (dxCommon_) {
-				dxCommon_->DeferRelease(instancingResource_[i]);
-			}
-			instancingResource_[i].Reset();
-		}
-		if (srvIndex_[i] != 0) {
-			FreeParticleSrvIndex(srvIndex_[i], dxCommon_);
-			srvIndex_[i] = 0;
-		}
-	}
-	if (cameraResource_) {
-		cameraResource_->Unmap(0, nullptr);
-		if (dxCommon_) {
-			dxCommon_->DeferRelease(cameraResource_);
-		}
-		cameraResource_.Reset();
-	}
-	if (materialResource_) {
-		materialResource_->Unmap(0, nullptr);
-		if (dxCommon_) {
-			dxCommon_->DeferRelease(materialResource_);
-		}
-		materialResource_.Reset();
-	}
-}
+ParticleQuad::~ParticleQuad() = default;
 
 ParticleQuad::ParticleQuad(ParticleQuad&& other) noexcept {
 	*this = std::move(other);
@@ -98,47 +24,13 @@ ParticleQuad::ParticleQuad(ParticleQuad&& other) noexcept {
 
 ParticleQuad& ParticleQuad::operator=(ParticleQuad&& other) noexcept {
 	if (this != &other) {
-		for (uint32_t i = 0; i < kMaxPasses; ++i) {
-			if (srvIndex_[i] != 0) {
-				FreeParticleSrvIndex(srvIndex_[i], dxCommon_);
-				srvIndex_[i] = 0;
-			}
-			if (instancingResource_[i]) {
-				instancingResource_[i]->Unmap(0, nullptr);
-				if (dxCommon_) {
-					dxCommon_->DeferRelease(instancingResource_[i]);
-				}
-				instancingResource_[i].Reset();
-			}
-		}
-		if (cameraResource_) {
-			cameraResource_->Unmap(0, nullptr);
-			if (dxCommon_) {
-				dxCommon_->DeferRelease(cameraResource_);
-			}
-			cameraResource_.Reset();
-		}
-		if (materialResource_) {
-			materialResource_->Unmap(0, nullptr);
-			if (dxCommon_) {
-				dxCommon_->DeferRelease(materialResource_);
-			}
-			materialResource_.Reset();
-		}
-
 		dxCommon_ = other.dxCommon_;
 		maxParticles_ = other.maxParticles_;
 		textureHandle_ = other.textureHandle_;
-		for (uint32_t i = 0; i < kMaxPasses; ++i) {
-			srvIndex_[i] = other.srvIndex_[i];
-			instancingResource_[i] = std::move(other.instancingResource_[i]);
-			instancingData_[i] = other.instancingData_[i];
-			instancingSrvGPU_[i] = other.instancingSrvGPU_[i];
-		}
-		materialResource_ = std::move(other.materialResource_);
 		materialData_ = other.materialData_;
-		cameraResource_ = std::move(other.cameraResource_);
-		cameraMappedData_ = other.cameraMappedData_;
+		for (uint32_t i = 0; i < kMaxPasses; ++i) {
+			instancingData_[i] = std::move(other.instancingData_[i]);
+		}
 		particles_ = std::move(other.particles_);
 		randomEngine_ = std::move(other.randomEngine_);
 		useBillboard = other.useBillboard;
@@ -149,13 +41,6 @@ ParticleQuad& ParticleQuad::operator=(ParticleQuad&& other) noexcept {
 		globalColor = other.globalColor;
 
 		other.dxCommon_ = nullptr;
-		for (uint32_t i = 0; i < kMaxPasses; ++i) {
-			other.srvIndex_[i] = 0;
-			other.instancingData_[i] = nullptr;
-			other.instancingSrvGPU_[i] = {};
-		}
-		other.materialData_ = nullptr;
-		other.cameraMappedData_ = nullptr;
 	}
 	return *this;
 }
@@ -164,72 +49,19 @@ void ParticleQuad::Initialize(DirectXCommon* dxCommon, DXCManager* dxc, uint32_t
 	dxCommon_ = dxCommon;
 	textureHandle_ = textureHandle;
 	maxParticles_ = (std::clamp)(maxParticles, 1u, kMaxCapacity);
-	auto* device = dxCommon_->GetDevice();
-
-	D3D12_HEAP_PROPERTIES heapUpload{};
-	heapUpload.Type = D3D12_HEAP_TYPE_UPLOAD;
 
 	// 1. Create or Share Pipeline & Shared Vertex Buffer
 	CreatePipeline(dxc);
 
-	// 2. Create Material Buffer
-	D3D12_RESOURCE_DESC matDesc{};
-	matDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-	matDesc.Width = (sizeof(Material) + 255) & ~255;
-	matDesc.Height = 1; matDesc.DepthOrArraySize = 1; matDesc.MipLevels = 1;
-	matDesc.SampleDesc.Count = 1;
-	matDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-
-	device->CreateCommittedResource(&heapUpload, D3D12_HEAP_FLAG_NONE, &matDesc,
-		D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&materialResource_));
-
-	materialResource_->Map(0, nullptr, reinterpret_cast<void**>(&materialData_));
-	if (materialData_) {
-		materialData_->color = { 1.0f, 1.0f, 1.0f, 1.0f };
-		materialData_->enableLighting = 0;
-		materialData_->lightingType = 0;
-	}
-
-	// 3. Create Camera Constant Buffer (2 x 256 bytes for Scene and Game passes)
-	D3D12_RESOURCE_DESC camDesc = matDesc;
-	camDesc.Width = 256 * kMaxPasses;
-	device->CreateCommittedResource(&heapUpload, D3D12_HEAP_FLAG_NONE, &camDesc,
-		D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&cameraResource_));
-	cameraResource_->Map(0, nullptr, reinterpret_cast<void**>(&cameraMappedData_));
-
-	// 4. Create StructuredBuffers for Instancing (one per pass: Scene and Game)
-	uint32_t descSize = dxCommon_->GetSrvDescriptorSize();
-	D3D12_CPU_DESCRIPTOR_HANDLE heapStartCPU = dxCommon_->GetSrvDescriptorHeap()->GetCPUDescriptorHandleForHeapStart();
-	D3D12_GPU_DESCRIPTOR_HANDLE heapStartGPU = dxCommon_->GetSrvDescriptorHeap()->GetGPUDescriptorHandleForHeapStart();
+	// 2. Material and instancing data are CPU copies, uploaded to the per-frame upload allocator in Draw()
+	materialData_ = Material{};
+	materialData_.color = { 1.0f, 1.0f, 1.0f, 1.0f };
+	materialData_.enableLighting = 0;
+	materialData_.lightingType = 0;
 
 	for (uint32_t pass = 0; pass < kMaxPasses; ++pass) {
-		D3D12_RESOURCE_DESC instDesc = matDesc;
-		instDesc.Width = sizeof(ParticleForGPU) * kMaxCapacity;
-		device->CreateCommittedResource(&heapUpload, D3D12_HEAP_FLAG_NONE, &instDesc,
-			D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&instancingResource_[pass]));
-
-		instancingResource_[pass]->Map(0, nullptr, reinterpret_cast<void**>(&instancingData_[pass]));
-
-		if (srvIndex_[pass] == 0) {
-			srvIndex_[pass] = AllocateParticleSrvIndex(dxCommon_);
-		}
-
-		D3D12_CPU_DESCRIPTOR_HANDLE instancingSrvCPU = heapStartCPU;
-		instancingSrvCPU.ptr += static_cast<SIZE_T>(descSize) * srvIndex_[pass];
-
-		instancingSrvGPU_[pass] = heapStartGPU;
-		instancingSrvGPU_[pass].ptr += static_cast<SIZE_T>(descSize) * srvIndex_[pass];
-
-		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
-		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
-		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-		srvDesc.Buffer.FirstElement = 0;
-		srvDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
-		srvDesc.Buffer.NumElements = kMaxCapacity;
-		srvDesc.Buffer.StructureByteStride = sizeof(ParticleForGPU);
-
-		device->CreateShaderResourceView(instancingResource_[pass].Get(), &srvDesc, instancingSrvCPU);
+		instancingData_[pass].clear();
+		instancingData_[pass].reserve(kMaxCapacity);
 	}
 }
 
@@ -277,13 +109,10 @@ void ParticleQuad::CreatePipeline(DXCManager* dxc) {
 	rootParams[0].Descriptor.ShaderRegister = 0; // b0
 	rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
-	D3D12_DESCRIPTOR_RANGE srvRangeInst{};
-	srvRangeInst.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-	srvRangeInst.NumDescriptors = 1;
-	srvRangeInst.BaseShaderRegister = 0; // t0 in VS
-	rootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-	rootParams[1].DescriptorTable.NumDescriptorRanges = 1;
-	rootParams[1].DescriptorTable.pDescriptorRanges = &srvRangeInst;
+	// [1] Instancing StructuredBuffer as a root SRV (t0 in VS), filled from the per-frame upload allocator
+	rootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+	rootParams[1].Descriptor.ShaderRegister = 0; // t0
+	rootParams[1].Descriptor.RegisterSpace = 0;
 	rootParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
 
 	D3D12_DESCRIPTOR_RANGE srvRangeTex{};
@@ -613,11 +442,9 @@ void ParticleQuad::Simulate(float deltaTime) {
 }
 
 void ParticleQuad::PrepareForCamera(const Camera& camera, uint32_t passIndex) {
-	if (passIndex >= kMaxPasses || !instancingData_[passIndex]) return;
+	if (passIndex >= kMaxPasses) return;
 
-	if (materialData_) {
-		materialData_->color = { 1.0f, 1.0f, 1.0f, 1.0f };
-	}
+	materialData_.color = { 1.0f, 1.0f, 1.0f, 1.0f };
 
 	Matrix4x4 cameraWorld = Mathematics::MakeAffineMatrix({ 1.0f, 1.0f, 1.0f }, camera.rotation, camera.translation);
 	Matrix4x4 billboardMatrix = Mathematics::MakeIdentity4x4();
@@ -633,17 +460,11 @@ void ParticleQuad::PrepareForCamera(const Camera& camera, uint32_t passIndex) {
 		}
 	}
 
-	if (cameraMappedData_) {
-		ParticleCameraCB cb{};
-		cb.viewProjection = camera.GetViewProjectionMatrix();
-		cb.cameraPosition = camera.translation;
-		cb.billboardRight = { cameraWorld.m[0][0], cameraWorld.m[0][1], cameraWorld.m[0][2] };
-		cb.billboardUp = { cameraWorld.m[1][0], cameraWorld.m[1][1], cameraWorld.m[1][2] };
-		memcpy(cameraMappedData_ + (passIndex * 256), &cb, sizeof(cb));
-	}
-
 	const Matrix4x4& vp = camera.GetViewProjectionMatrix();
-	for (size_t i = 0; i < particles_.size() && i < kMaxCapacity; ++i) {
+	const size_t instanceCount = (std::min)(particles_.size(), static_cast<size_t>(kMaxCapacity));
+	std::vector<ParticleForGPU>& instances = instancingData_[passIndex];
+	instances.resize(instanceCount);
+	for (size_t i = 0; i < instanceCount; ++i) {
 		const auto& p = particles_[i];
 		Matrix4x4 scaleMatrix = Mathematics::MakeScaleMatrix(p.scale);
 		Matrix4x4 translateMatrix = Mathematics::MakeTranslateMatrix(p.translate);
@@ -682,15 +503,15 @@ void ParticleQuad::PrepareForCamera(const Camera& camera, uint32_t passIndex) {
 			world = Mathematics::Multiply(scaleMatrix, Mathematics::Multiply(billboardMatrix, translateMatrix));
 		}
 
-		instancingData_[passIndex][i].WVP = Mathematics::Multiply(world, vp);
-		instancingData_[passIndex][i].World = world;
+		instances[i].WVP = Mathematics::Multiply(world, vp);
+		instances[i].World = world;
 
 		Vector4 finalColor = p.color;
 		finalColor.x *= globalColor.x;
 		finalColor.y *= globalColor.y;
 		finalColor.z *= globalColor.z;
 		finalColor.w *= globalColor.w;
-		instancingData_[passIndex][i].color = finalColor;
+		instances[i].color = finalColor;
 	}
 }
 
@@ -702,22 +523,33 @@ void ParticleQuad::Update(float deltaTime, const Camera& camera) {
 }
 
 void ParticleQuad::Draw(ID3D12GraphicsCommandList* cmdList, uint32_t passIndex) {
-	if (passIndex >= kMaxPasses || particles_.empty() || !instancingResource_[passIndex] || !s_rootSignature) return;
+	if (passIndex >= kMaxPasses || particles_.empty() || !s_rootSignature || !dxCommon_ || dxCommon_->IsDeviceLost()) return;
+
+	const std::vector<ParticleForGPU>& instances = instancingData_[passIndex];
+	const size_t instanceCount = (std::min)(particles_.size(), instances.size());
+	if (instanceCount == 0) return;
+
+	// Upload this frame's instancing data and material into the per-frame upload allocator
+	const size_t instanceBytes = instanceCount * sizeof(ParticleForGPU);
+	DirectXCommon::UploadAllocation instanceAlloc = dxCommon_->AllocateUpload(instanceBytes, 16);
+	const D3D12_GPU_VIRTUAL_ADDRESS materialAddr = dxCommon_->UploadConstants(materialData_);
+	if (!instanceAlloc.cpu || materialAddr == 0) return;
+	memcpy(instanceAlloc.cpu, instances.data(), instanceBytes);
 
 	cmdList->SetGraphicsRootSignature(s_rootSignature.Get());
 	cmdList->SetPipelineState((blendType == BlendType::Add) ? s_psoAdd.Get() : s_psoNormal.Get());
 
 	// [0] Material CBV
-	cmdList->SetGraphicsRootConstantBufferView(0, materialResource_->GetGPUVirtualAddress());
+	cmdList->SetGraphicsRootConstantBufferView(0, materialAddr);
 
-	// [1] StructuredBuffer Descriptor Table (Instancing for this pass)
-	cmdList->SetGraphicsRootDescriptorTable(1, instancingSrvGPU_[passIndex]);
+	// [1] Instancing StructuredBuffer (root SRV for this pass)
+	cmdList->SetGraphicsRootShaderResourceView(1, instanceAlloc.gpu);
 
 	// [2] Texture Descriptor Table
 	cmdList->SetGraphicsRootDescriptorTable(2, TextureManager::GetInstance()->GetGPUHandle(textureHandle_));
 
 	cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	cmdList->IASetVertexBuffers(0, 1, &s_vbView);
-	cmdList->DrawInstanced(6, static_cast<UINT>(particles_.size()), 0, 0);
+	cmdList->DrawInstanced(6, static_cast<UINT>(instanceCount), 0, 0);
+	Profiler::GetInstance()->CountDrawCall(static_cast<uint32_t>(instanceCount));
 }
-

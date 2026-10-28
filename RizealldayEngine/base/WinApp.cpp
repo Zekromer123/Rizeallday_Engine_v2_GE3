@@ -38,6 +38,13 @@ LRESULT CALLBACK WinApp::WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
 		}
 		return 0;
 
+	case WM_CLOSE:
+		// Let the application veto the close (e.g. to ask about unsaved changes first)
+		if (WinApp* app = WinApp::GetInstance(); app && app->closeRequestHandler_ && !app->closeRequestHandler_()) {
+			return 0;
+		}
+		break; // DefWindowProc destroys the window -> WM_DESTROY -> WM_QUIT
+
 	case WM_DESTROY:
 		PostQuitMessage(0);
 		return 0;
@@ -88,6 +95,13 @@ void WinApp::CreateGameWindow(const char* title, int width, int height)
 void WinApp::TerminateGameWindow()
 {
 	CoUninitialize();
+}
+
+void WinApp::RequestClose()
+{
+	if (!closeRequestHandler_ || closeRequestHandler_()) {
+		PostQuitMessage(0); // the main loop ends on the next ProcessMessage()
+	}
 }
 
 bool WinApp::ProcessMessage()

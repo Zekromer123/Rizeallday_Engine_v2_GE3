@@ -3,7 +3,7 @@
 void EditorSuite::DrawMapchipInspectorSection()
 {
 #ifdef USE_IMGUI
-	if (ImGui::CollapsingHeader("Mapchip Level Editor", ImGuiTreeNodeFlags_DefaultOpen)) {
+	if (DrawComponentHeader("Mapchip Level Editor", ComponentKind::Mapchip)) {
 		ImGui::Checkbox("Render 3D Blocks in Viewport", &renderMapchip3DBlocks_);
 		ImGui::Text("Palette:");
 		const char* tileNames[] = { "0: Empty", "1: Wall Block", "2: Spike", "3: Spawn", "4: Goal" };

@@ -30,6 +30,7 @@ struct ImVec2 {
 #include <vector>
 #include <map>
 #include <unordered_map>
+#include <unordered_set>
 #include <cstdint>
 #include <memory>
 #include <filesystem>
@@ -98,8 +99,11 @@ struct GameObject {
 	bool isActive = true;
 	bool isStatic = false;
 	std::string tag = "Untagged";
-	uint32_t layer = 0;              // 0: Default, 1: Player, 2: Enemy, 3: PlayerBullet, 4: Wall, 5: Trigger
+	uint32_t layer = 0;              // 0..31, names in ScriptLayer (ScriptAPI.h) / GetCollisionLayerName()
 	uint32_t collisionMask = 0xFFFFFFFF;
+	// Set on objects created from a prefab (runtime only, not saved): used by object pooling
+	std::string prefabSource;
+	int prefabNodeIndex = -1;
 	GameObjectType type = GameObjectType::Empty;
 	int parentIndex = -1;
 	int parentId = -1;
@@ -110,6 +114,9 @@ struct GameObject {
 	Vector3 rotation = { 0.0f, 0.0f, 0.0f }; // Radians
 	Vector3 scale = { 1.0f, 1.0f, 1.0f };
 	Quaternion rotationQuat = Quaternion::Identity();
+	// Runtime only (not serialized): world matrix, refreshed by EditorSuite::UpdateWorldMatrices().
+	// translation / rotation / rotationQuat / scale above are LOCAL (relative to the parent).
+	Matrix4x4 worldMatrix = Mathematics::MakeIdentity4x4();
 
 	// Mesh Filter & Mesh Renderer
 	bool hasMesh = false;
@@ -323,10 +330,22 @@ public:
 	GameObject& CreatePlane(const std::string& name = "Plane", const Vector3& pos = { 0.0f, 0.0f, 0.0f });
 	GameObject& CreateQuad(const std::string& name = "Textured Quad", const Vector3& pos = { 0.0f, 0.0f, 0.0f });
 	GameObject* FindGameObjectById(uint32_t id, bool warnIfMissing = true);
+	// O(1) id -> index lookup. The cache is validated on every hit and rebuilt on a miss,
+	// so code that mutates gameObjects_ does not have to invalidate it.
+	int FindGameObjectIndexById(uint32_t id);
+	static std::string GetCollisionLayerName(uint32_t layer);
 	GameObject* FindGameObjectByName(const char* name, bool warnIfMissing = true);
 	GameObject* FindGameObjectByName(const std::string& name, bool warnIfMissing = true) {
 		return FindGameObjectByName(name.c_str(), warnIfMissing);
 	}
+	// Transform hierarchy (EditorSuite_Hierarchy.cpp). parentId is the source of truth;
+	// parentIndex / childrenIds / worldMatrix are derived caches.
+	void RebuildHierarchyLinks();
+	void UpdateWorldMatrices();
+	bool IsDescendantOf(uint32_t candidateId, uint32_t ancestorId) const;
+	bool ReparentGameObject(uint32_t childId, int newParentId, bool keepWorldTransform = true);
+	void GetWorldTRS(const GameObject& obj, Vector3& t, Quaternion& q, Vector3& s) const;
+
 	void DeleteSelectedGameObject();
 	void QueueDeleteGameObject(int index);
 	void QueueDeleteGameObjectById(uint32_t id) override;
@@ -358,6 +377,38 @@ public:
 	ScriptGameObjectView* GetOrUpdateScriptViewById(uint32_t id);
 	ScriptGameObjectView* FindPendingSpawnView(uint32_t id);
 	ScriptGameObjectView* QueueScriptSpawn(const char* name, int primitiveType, const Vector3& position);
+	// Prefabs + pooling (EditorSuite_Prefabs.cpp)
+	std::filesystem::path GetPrefabDirectory() const;
+	bool SavePrefab(uint32_t rootId, const std::string& prefabName);
+	bool HasPrefab(const std::string& prefabName);
+	void ClearPrefabCache();
+	// Creates the prefab's objects right away (editor use / deferred spawn processing). Returns the root id or 0.
+	uint32_t InstantiatePrefabNow(const std::string& prefabName, const Vector3& position, uint32_t rootId = 0, const ScriptGameObjectView* rootOverride = nullptr);
+	void StartScriptsOnSpawnedObject(uint32_t id, bool createInstances);
+	void ResetPooledPrefabInstance(uint32_t rootId, const ScriptGameObjectView* rootView);
+	// Script entry points: deferred like QueueScriptSpawn. Reuses a despawned instance when one is pooled.
+	ScriptGameObjectView* QueuePrefabSpawn(const char* prefabName, const Vector3& position);
+	// Prefab instances go back to their pool (hidden, scripts paused); other objects are deleted
+	void QueueDespawn(uint32_t id);
+	void ProcessPendingDespawns();
+	void ResetPrefabPools();
+	size_t GetPooledCount(const std::string& prefabName) const;
+
+	// Runtime scene switching + save data (EditorSuite_Runtime.cpp)
+	std::filesystem::path ResolveSceneRequest(const std::string& nameOrPath) const;
+	void RequestSceneLoad(const std::string& nameOrPath); // deferred to the end of the frame
+	bool ProcessPendingSceneLoad();
+	void RestoreRuntimeSceneOrigin();
+	std::filesystem::path GetSaveDataPath() const;
+	void SetSaveNumber(const std::string& key, double value);
+	double GetSaveNumber(const std::string& key, double fallback);
+	void SetSaveString(const std::string& key, const std::string& value);
+	bool GetSaveString(const std::string& key, std::string& out);
+	bool HasSaveKey(const std::string& key);
+	void DeleteAllSaveData();
+
+	// GameObject > Samples (EditorSuite_Samples.cpp)
+	bool CreateSurvivorsDemo();
 	bool CancelPendingSpawn(uint32_t id);
 	void ProcessPendingSpawns();
 	void RetireScriptView(uint32_t id);
@@ -375,6 +426,13 @@ public:
 	// Scene Management & Serialization (.scene.json)
 	std::string SerializeSceneToString() const;
 	bool DeserializeSceneFromString(const std::string& json);
+
+	// Per-object / scene-settings JSON (shared by scene files and the undo system).
+	// The void* parameters are SceneJson::Json* so this header does not depend on nlohmann/json.
+	void WriteGameObjectJson(const GameObject& obj, void* outJson) const;
+	void ReadGameObjectJson(const void* json, GameObject& obj);
+	void WriteSceneSettingsJson(void* outJson) const;
+	void ReadSceneSettingsJson(const void* json);
 	bool SaveScene(const std::string& filePath);
 	bool LoadScene(const std::string& filePath);
 	void NewScene();
@@ -399,6 +457,20 @@ public:
 
 	// Project Hub (startup "create or open a project" popup) and recent-project list
 	void DrawProjectHub();
+
+	// Close confirmation: WinApp asks OnCloseRequested() on WM_CLOSE / File > Exit.
+	// With unsaved scene changes it returns false and opens the Save / Don't Save / Cancel popup.
+	bool OnCloseRequested();
+
+	// Exported (standalone) games are recognised by the game_build.cfg the exporter writes next to the exe
+	static constexpr const char* kExportedGameConfigFile = "game_build.cfg";
+	static std::filesystem::path GetExecutableDirectory();
+	static bool IsExportedGameFolder(const std::filesystem::path& dir);
+	/// True when this process was started from an exported game folder (working dir or exe dir)
+	static bool IsExportedGameLaunch();
+	void DrawUnsavedChangesModal();
+	bool showUnsavedCloseModal_ = false;
+	std::string unsavedCloseError_;
 	void LoadRecentProjects();
 	void AddRecentProject(const std::filesystem::path& projectRoot);
 
@@ -415,16 +487,31 @@ public:
 	void ToggleStandalonePreview();
 
 	// Undo / Redo (32-state in-memory ring buffer)
+	/// Records what changed since the last recorded state as one undo command (call after every edit).
 	void PushUndoSnapshot();
 	void Undo();
 	void Redo();
+	/// Clears undo/redo and makes the current scene the new baseline (scene load, new scene, project switch).
+	void ResetUndoHistory();
 
 	// Built-in Playable 3D Tetris Template
 	void LoadTetrisTemplate();
 	void UpdateTetrisGame(float deltaTime, Input* input);
 	void RestartTetrisGame();
 
+#ifdef USE_IMGUI
+	/// Headless self-tests (`--run-tests [filter]`, EditorSuite_Tests.cpp). Returns the number of failed tests.
+	int RunSelfTests(const std::string& filter);
+#endif
+	/// Process exit code of a `--run-tests` run (0 = all passed, 1 = failures). Always 0 otherwise.
+	static inline int sSelfTestExitCode = 0;
+
 private:
+	// Gives the self-tests (EditorSuite_Tests.cpp) access to private state
+	friend struct EditorSuiteTestAccess;
+	/// True while the self-tests run: nothing may touch the user's recent-project list
+	bool isRunningTests_ = false;
+
 	void UpdatePhysics(float deltaTime);
 	void CalculateLightViewProjection();
 	void RenderShadowPass(ID3D12GraphicsCommandList* cmdList);
@@ -436,6 +523,14 @@ private:
 	void DrawTopPlayBar();
 	void DrawHierarchyPanel();
 	void DrawInspectorAndDetailsPanel(bool& showParticles);
+
+	// Removable Inspector components (Transform and Scripts are handled separately)
+	enum class ComponentKind { Mesh, BoxCollider, SphereCollider, Rigidbody, Camera, Light, ParticleSystem, AudioSource, Mapchip };
+	/// Component header with a close (x) button and a right-click "Remove Component" menu.
+	/// A removal is only queued here and applied after the Inspector finished drawing.
+	bool DrawComponentHeader(const char* label, ComponentKind kind);
+	void RemoveComponent(GameObject& obj, ComponentKind kind);
+	int pendingComponentRemoval_ = -1; // ComponentKind queued by DrawComponentHeader, -1 = none
 	void DrawViewportsPanel();
 	void DrawProjectAndConsolePanel();
 	void DrawCppScriptGeneratorModal();
@@ -491,7 +586,23 @@ private:
 	LightGroup* lights_ = nullptr;
 	ParticleQuad* particleSystem_ = nullptr;
 	Input* currentInput_ = nullptr;
-	float currentDeltaTime_ = 0.016f;
+	float currentDeltaTime_ = 0.016f;  // scaled by timeScale_ while the game runs
+	float unscaledDeltaTime_ = 0.016f;
+	float timeScale_ = 1.0f;           // set by scripts (SetTimeScale); reset when Play starts/stops
+	double gameTime_ = 0.0;            // scaled seconds since Play started
+	// Where the Game view image was drawn last frame (x, y, width, height in client pixels); 0 width = unknown
+	float gameViewRect_[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+	void RecordGameViewRect(float x, float y, float w, float h) {
+		gameViewRect_[0] = x; gameViewRect_[1] = y; gameViewRect_[2] = w; gameViewRect_[3] = h;
+	}
+	// Mouse position inside the Game view in pixels (0,0 = top-left); false if the mouse is outside or the view is hidden
+	bool GetGameViewMousePosition(float& outX, float& outY, float& outW, float& outH) const;
+	// Intersects the game camera's ray through the mouse with the horizontal plane y = planeY
+	bool GetMouseWorldOnPlane(float planeY, Vector3& outPoint) const;
+public:
+	// Pure helper (tested): ray through NDC (x right, y up) intersected with y = planeY
+	static bool ScreenRayToPlaneY(const Matrix4x4& viewProjection, float ndcX, float ndcY, float planeY, Vector3& outPoint);
+private:
 	DXCManager dxc_{};
 	uint32_t particleTextureHandle_ = 0;
 
@@ -517,6 +628,8 @@ private:
 	bool focusDetailsTab_ = false;
 	Skybox skybox_{};
 	bool showLightingSettings_ = false;
+	bool showProfiler_ = false;
+	void DrawProfilerWindow();
 	int selectedCubemapIndex_ = 0;
 	std::vector<std::string> availableCubemaps_;
 	ShadowMap shadowMap_{};
@@ -527,11 +640,15 @@ private:
 
 	// GameObjects
 	std::vector<GameObject> gameObjects_;
+	std::unordered_map<uint32_t, size_t> idIndexCache_; // see FindGameObjectIndexById
 	int selectedObjectIndex_ = 0;
 	uint32_t nextObjectId_ = 1;
 	char hierarchySearchBuf_[128] = "";
 	std::vector<int> pendingDeletes_;
 	int pendingDuplicateIndex_ = -1;
+	// Hierarchy cycle warning guard (one log per cycle set) and rigidbody-on-child warning guard
+	bool hierarchyCycleWarned_ = false;
+	std::unordered_set<uint32_t> childRigidbodyWarned_;
 
 	// Objects instantiated by scripts are queued here and created at a safe point,
 	// so gameObjects_ never reallocates while a script callback is running.
@@ -539,8 +656,33 @@ private:
 		uint32_t id = 0;
 		std::string name;
 		int primitiveType = 0;
+		std::string prefabName;  // non-empty: instantiate this prefab instead of a primitive
+		bool reusePooled = false; // id refers to an existing, despawned prefab instance
 	};
 	std::vector<PendingSpawn> pendingSpawns_;
+
+	// Prefabs (EditorSuite_Prefabs.cpp). Files: <project>/Assets/Prefabs/<Name>.prefab.json
+public:
+	struct PrefabCache; // parsed prefab JSON by name (defined in the .cpp)
+private:
+	std::shared_ptr<PrefabCache> prefabCache_;
+	std::unordered_map<std::string, std::vector<uint32_t>> prefabPools_; // despawned root ids per prefab
+	std::vector<uint32_t> pendingDespawns_;
+
+	// Runtime scene switching (EditorSuite_Runtime.cpp)
+	std::string pendingSceneLoad_;
+	bool runtimeSceneSwitched_ = false; // editor Play mode loaded another scene; Stop restores the origin
+	std::string runtimeOriginScenePath_;
+	std::string runtimeOriginSceneName_;
+	std::string runtimeOriginSettings_;
+	bool runtimeOriginDirty_ = false;
+
+	// Save data (loaded lazily, written on change)
+	void EnsureSaveDataLoaded();
+	void WriteSaveData();
+	std::string saveDataLoadedFrom_;
+	std::map<std::string, double> saveNumbers_;
+	std::map<std::string, std::string> saveStrings_;
 	// Set while ProcessPendingSpawns() runs: skips undo snapshots, selection changes and per-object logs
 	bool isSpawningFromScript_ = false;
 
@@ -559,9 +701,38 @@ private:
 	std::function<void()> onRequestTitleScene_;
 
 	// Undo / Redo System (32-state ring buffer storing JSON scene string)
-	std::vector<std::string> undoStack_;
-	std::vector<std::string> redoStack_;
-	const size_t maxUndoStates_ = 32;
+	// ---- Command-based undo ----
+	// A command stores only the GameObjects that were created / deleted / modified (as their scene JSON),
+	// plus the scene settings (skybox, mapchip) when they changed. Undo/Redo patch just those objects.
+	struct UndoObjectChange {
+		uint32_t id = 0;
+		int indexBefore = -1;   // position in gameObjects_ before the edit (-1: did not exist)
+		int indexAfter = -1;    // position after the edit (-1: deleted)
+		std::string before;     // JSON before (empty when created)
+		std::string after;      // JSON after (empty when deleted)
+	};
+	struct UndoCommand {
+		std::vector<UndoObjectChange> changes;
+		std::string settingsBefore;  // empty when the scene settings did not change
+		std::string settingsAfter;
+		double timeSeconds = 0.0;    // when it was recorded (used to merge continuous drags)
+	};
+	struct UndoSceneState {
+		std::vector<uint32_t> order;                          // object ids in gameObjects_ order
+		std::unordered_map<uint32_t, std::string> objects;    // id -> object JSON
+		std::string settings;                                 // skybox + mapchip JSON
+	};
+	UndoSceneState CaptureUndoState() const;
+	void ApplyUndoCommand(const UndoCommand& cmd, bool undo);
+
+	std::vector<UndoCommand> undoCommands_;
+	std::vector<UndoCommand> redoCommands_;
+	UndoSceneState undoBaseline_;
+	bool undoMergeAllowed_ = false; // false right after Undo/Redo/reset so the next edit starts a new command
+	bool undoPushPending_ = false;  // an edit was made that PushUndoSnapshot() has not recorded yet
+	static constexpr size_t kMaxUndoCommands = 200;
+	// Edits of the same objects closer together than this are merged into one command (e.g. one slider drag)
+	static constexpr double kUndoMergeWindowSeconds = 0.6;
 
 	// Standalone Game Exporter & Preview Mode
 	bool isStandaloneGameMode_ = false;

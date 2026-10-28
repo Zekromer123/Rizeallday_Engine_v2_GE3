@@ -30,11 +30,19 @@ void Audio::Initialize()
 		Log::GetInstance()->logOutput(std::format("[Audio] MFStartup failed (HRESULT=0x{:08X}).\n", static_cast<uint32_t>(hrMf)));
 	}
 
+	// Machines without an audio device (CI runners, remote sessions) must still run: audio is disabled
+	// instead of asserting. PlayAudio() already returns 0 when xAudio2_ is null.
 	HRESULT result = XAudio2Create(&xAudio2_, 0, XAUDIO2_DEFAULT_PROCESSOR);
-	assert(SUCCEEDED(result));
-	if (SUCCEEDED(result) && xAudio2_) {
-		result = xAudio2_->CreateMasteringVoice(&masterVoice_);
-		assert(SUCCEEDED(result));
+	if (FAILED(result) || !xAudio2_) {
+		Log::GetInstance()->logOutput(std::format("[Audio] XAudio2Create failed (HRESULT=0x{:08X}); audio disabled.\n", static_cast<uint32_t>(result)));
+		xAudio2_.Reset();
+		return;
+	}
+	result = xAudio2_->CreateMasteringVoice(&masterVoice_);
+	if (FAILED(result) || !masterVoice_) {
+		Log::GetInstance()->logOutput(std::format("[Audio] No audio output device (HRESULT=0x{:08X}); audio disabled.\n", static_cast<uint32_t>(result)));
+		masterVoice_ = nullptr;
+		xAudio2_.Reset();
 	}
 }
 
