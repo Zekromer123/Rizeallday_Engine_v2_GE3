@@ -270,6 +270,62 @@ uint32_t TextureManager::CreateTextureFromRGBA(const std::string& cacheKey, cons
 	return handle;
 }
 
+bool TextureManager::UpdateTextureFromRGBA(uint32_t textureHandle, const uint8_t* rgba, uint32_t width, uint32_t height)
+{
+	if (!dxCommon_ || dxCommon_->IsDeviceLost() || !rgba || width == 0 || height == 0 || textureHandle == defaultWhiteHandle_) {
+		return false;
+	}
+	if (textureHandle >= textureResources_.size() || !textureResources_[textureHandle]) {
+		return false;
+	}
+
+	DirectX::ScratchImage image;
+	if (FAILED(image.Initialize2D(DXGI_FORMAT_R8G8B8A8_UNORM, width, height, 1, 1))) {
+		return false;
+	}
+	const DirectX::Image* img = image.GetImage(0, 0, 0);
+	if (!img || !img->pixels) {
+		return false;
+	}
+	for (uint32_t y = 0; y < height; ++y) {
+		memcpy(img->pixels + y * img->rowPitch, rgba + static_cast<size_t>(y) * width * 4, static_cast<size_t>(width) * 4);
+	}
+
+	// A fresh resource instead of writing the old one: earlier frames may still sample it
+	Microsoft::WRL::ComPtr<ID3D12Resource> resource = CreateTextureResource(image.GetMetadata());
+	if (!resource) {
+		return false;
+	}
+	uploadAllocator_->Reset();
+	uploadCommandList_->Reset(uploadAllocator_.Get(), nullptr);
+	Microsoft::WRL::ComPtr<ID3D12Resource> intermediateResource = UploadTextureData(resource.Get(), image);
+	uploadCommandList_->Close();
+	if (!intermediateResource) {
+		return false;
+	}
+	ID3D12CommandList* commandLists[] = { uploadCommandList_.Get() };
+	dxCommon_->GetCommandQueue()->ExecuteCommandLists(1, commandLists);
+	// Also drains the frames in flight, so rewriting the descriptor below cannot race the GPU
+	dxCommon_->SignalAndWaitFence();
+	if (dxCommon_->IsDeviceLost()) {
+		return false;
+	}
+
+	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+	srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+	srvDesc.Texture2D.MipLevels = 1;
+	D3D12_CPU_DESCRIPTOR_HANDLE srvCPUHandle = dxCommon_->GetSrvDescriptorHeap()->GetCPUDescriptorHandleForHeapStart();
+	srvCPUHandle.ptr += dxCommon_->GetSrvDescriptorSize() * textureHandle;
+	dxCommon_->GetDevice()->CreateShaderResourceView(resource.Get(), &srvDesc, srvCPUHandle);
+
+	dxCommon_->DeferRelease(textureResources_[textureHandle]);
+	textureResources_[textureHandle] = resource;
+	textureMetadatas_[textureHandle] = image.GetMetadata();
+	return true;
+}
+
 uint32_t TextureManager::LoadPreviewTexture(const std::string& filePath)
 {
 	if (!dxCommon_ || dxCommon_->IsDeviceLost()) {

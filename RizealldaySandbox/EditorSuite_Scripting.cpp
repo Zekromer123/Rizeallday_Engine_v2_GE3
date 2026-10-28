@@ -9,6 +9,8 @@ void EditorSuite::UpdateScripts(float deltaTime)
 
 	// Scripts rebuild the game UI every frame they run (the last frame stays visible while paused)
 	UIRenderer::GetInstance()->Clear();
+	// DespawnAfter() timers run on game time (paused with timeScale 0)
+	TickScriptTimers(deltaTime);
 	RefreshAllScriptObjectViews();
 
 	// Instantiate/Destroy from scripts are deferred, so gameObjects_ does not change size inside this loop.
@@ -52,7 +54,7 @@ void EditorSuite::UpdateScripts(float deltaTime)
 	ProcessPendingSpawns();
 }
 
-void EditorSuite::DispatchScriptCollision(uint32_t selfId, uint32_t otherId)
+void EditorSuite::DispatchScriptCollision(uint32_t selfId, uint32_t otherId, CollisionEvent kind)
 {
 	if (sceneState_ == EditorSceneState::Edit && !IsStandaloneMode()) {
 		return;
@@ -60,16 +62,23 @@ void EditorSuite::DispatchScriptCollision(uint32_t selfId, uint32_t otherId)
 
 	GameObject* selfObj = FindGameObjectById(selfId, false);
 	GameObject* otherObj = FindGameObjectById(otherId, false);
-	if (!selfObj || !otherObj || !selfObj->isActive || !otherObj->isActive) {
+	if (!selfObj || !selfObj->isActive || selfObj->scripts.empty()) {
 		return;
 	}
-	if (selfObj->scripts.empty()) {
+	// Exit is also reported when the other object was deactivated, despawned or destroyed
+	if (kind != CollisionEvent::Exit && (!otherObj || !otherObj->isActive)) {
 		return;
 	}
 
 	ScriptGameObjectView* selfView = GetOrUpdateScriptViewById(selfId);
-	ScriptGameObjectView* otherView = GetOrUpdateScriptViewById(otherId);
-	if (!selfView || !otherView) {
+	ScriptGameObjectView* otherView = otherObj ? GetOrUpdateScriptViewById(otherId) : nullptr;
+	ScriptGameObjectView goneView{};
+	if (!otherView) {
+		goneView.id = otherId;
+		goneView.isActive = false;
+		otherView = &goneView;
+	}
+	if (!selfView) {
 		return;
 	}
 
@@ -84,7 +93,17 @@ void EditorSuite::DispatchScriptCollision(uint32_t selfId, uint32_t otherId)
 			sc.instance->SetHost(this, this);
 			// Inside the DLL GameObject is an alias of ScriptGameObjectView, so the DLL receives the view.
 			// Never pass an editor GameObject here.
-			sc.instance->OnCollision(*reinterpret_cast<GameObject*>(otherView));
+			GameObject& otherRef = *reinterpret_cast<GameObject*>(otherView);
+			switch (kind) {
+			case CollisionEvent::Enter: sc.instance->OnCollisionEnter(otherRef); break;
+			case CollisionEvent::Exit: sc.instance->OnCollisionExit(otherRef); break;
+			default: sc.instance->OnCollision(otherRef); break;
+			}
+
+			// Callbacks never resize gameObjects_ (spawns/deletes are deferred), but re-fetch anyway
+			selfObj = FindGameObjectById(selfId, false);
+			otherObj = FindGameObjectById(otherId, false);
+			if (!selfObj) return;
 
 			bool eulerChanged = (selfView->rotation.x != prevEuler.x || selfView->rotation.y != prevEuler.y || selfView->rotation.z != prevEuler.z);
 			bool quatChanged = (selfView->rotationQuat.x != prevQuat.x || selfView->rotationQuat.y != prevQuat.y || selfView->rotationQuat.z != prevQuat.z || selfView->rotationQuat.w != prevQuat.w);
@@ -94,7 +113,9 @@ void EditorSuite::DispatchScriptCollision(uint32_t selfId, uint32_t otherId)
 				selfView->rotation = selfView->rotationQuat.ToEuler();
 			}
 			SyncViewToGameObject(*selfView, *selfObj);
-			SyncViewToGameObject(*otherView, *otherObj);
+			if (otherObj && otherView != &goneView) {
+				SyncViewToGameObject(*otherView, *otherObj);
+			}
 		}
 	}
 }
@@ -182,6 +203,7 @@ void EditorSuite::SetupEngineAPI()
 	engineApi_.deleteObject = [](void* ctx, uint32_t id) {
 		if (ctx && id != 0) {
 			auto* self = static_cast<EditorSuite*>(ctx);
+			self->CancelDelayedDespawn(id);
 			// An object instantiated this frame has not been created yet: just drop the request
 			if (!self->CancelPendingSpawn(id)) {
 				self->QueueDeleteGameObjectById(id);
@@ -335,6 +357,9 @@ void EditorSuite::SetupEngineAPI()
 	engineApi_.saveDeleteAll = [](void* ctx) {
 		if (ctx) static_cast<EditorSuite*>(ctx)->DeleteAllSaveData();
 	};
+
+	// Audio, particles, material, queries, hierarchy and component access (EditorSuite_ScriptQueries.cpp)
+	SetupEngineAPIExtensions();
 }
 
 bool EditorSuite::GetGameViewMousePosition(float& outX, float& outY, float& outW, float& outH) const
@@ -532,6 +557,7 @@ void EditorSuite::ProcessPendingSpawns()
 	ProcessPendingDespawns();
 
 	if (pendingSpawns_.empty()) {
+		ProcessDeferredScriptRequests();
 		return;
 	}
 
@@ -575,6 +601,8 @@ void EditorSuite::ProcessPendingSpawns()
 	isSpawningFromScript_ = false;
 
 	RefreshAllScriptObjectViews();
+	// Reparent / particle requests may target objects created just above
+	ProcessDeferredScriptRequests();
 }
 
 void EditorSuite::RetireScriptView(uint32_t id)

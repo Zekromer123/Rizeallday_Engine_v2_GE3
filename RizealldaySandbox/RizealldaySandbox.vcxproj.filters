@@ -75,6 +75,9 @@
     <ClCompile Include="EditorSuite_PlayMode.cpp">
       <Filter>editor</Filter>
     </ClCompile>
+    <ClCompile Include="EditorSuite_ScriptQueries.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
     <ClCompile Include="EditorSuite_Scripting.cpp">
       <Filter>editor</Filter>
     </ClCompile>
@@ -91,6 +94,21 @@
       <Filter>editor</Filter>
     </ClCompile>
     <ClCompile Include="EditorSuite_Hierarchy.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorSuite_Components.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorSuite_InspectorComponents.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="Localization.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="AssetDatabase.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="ComponentRegistry.cpp">
       <Filter>editor</Filter>
     </ClCompile>
     <ClCompile Include="ParticleQuad.cpp">
@@ -120,6 +138,15 @@
       <Filter>editor</Filter>
     </ClInclude>
     <ClInclude Include="EditorSuite.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="Localization.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="AssetDatabase.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="ComponentRegistry.h">
       <Filter>editor</Filter>
     </ClInclude>
     <ClInclude Include="ParticleQuad.h">

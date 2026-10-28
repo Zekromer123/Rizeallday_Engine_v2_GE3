@@ -34,6 +34,7 @@ void EditorSuite::SyncGameObjectToParticleQuad(GameObject& obj) {
 	p.emitter.endColor = obj.particleEndColor;
 	p.blendType = (obj.particleBlendMode == 1) ? ParticleQuad::BlendType::Add : ParticleQuad::BlendType::Normal;
 	p.emitter.billboardMode = obj.particleBillboardMode;
+	p.emitter.emit = obj.particleEmitContinuously;
 	p.emitter.translate = obj.translation;
 }
 

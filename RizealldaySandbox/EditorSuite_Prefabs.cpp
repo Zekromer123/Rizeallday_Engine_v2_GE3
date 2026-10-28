@@ -54,6 +54,17 @@ std::filesystem::path EditorSuite::GetPrefabDirectory() const
 	return std::filesystem::path("Assets") / "Prefabs";
 }
 
+std::filesystem::path EditorSuite::ResolvePrefabFile(const std::string& prefabName) const
+{
+	const std::string fileName = prefabName + ".prefab.json";
+	std::filesystem::path path = GetPrefabDirectory() / fileName;
+	std::error_code ec;
+	if (std::filesystem::exists(path, ec) || currentProjectRoot_.empty()) return path;
+	// Moved into a subfolder (or elsewhere inside Assets/) from the Project panel
+	if (const std::string moved = AssetDb().FindByFileName(fileName); !moved.empty()) return AssetDb().ToAbsolute(moved);
+	return path;
+}
+
 void EditorSuite::ClearPrefabCache()
 {
 	prefabCache_.reset();
@@ -100,9 +111,8 @@ bool EditorSuite::SavePrefab(uint32_t rootId, const std::string& prefabName)
 	prefab["objects"] = std::move(objects);
 
 	std::error_code ec;
-	const std::filesystem::path dir = GetPrefabDirectory();
-	std::filesystem::create_directories(dir, ec);
-	const std::filesystem::path path = dir / (name + ".prefab.json");
+	const std::filesystem::path path = ResolvePrefabFile(name);
+	std::filesystem::create_directories(path.parent_path(), ec);
 	std::ofstream out(path, std::ios::binary | std::ios::trunc);
 	if (!out) {
 		LogMessage(std::format("[Prefab] Cannot write '{}'.", path.string()), 2);
@@ -120,13 +130,14 @@ bool EditorSuite::SavePrefab(uint32_t rootId, const std::string& prefabName)
 }
 
 namespace {
-	const SceneJson::Json* LoadPrefab(EditorSuite::PrefabCache& cache, const std::filesystem::path& dir, const std::string& name, std::string& outError)
+	template <typename ResolveFn>
+	const SceneJson::Json* LoadPrefab(EditorSuite::PrefabCache& cache, ResolveFn&& resolvePath, const std::string& name, std::string& outError)
 	{
 		auto it = cache.loaded.find(name);
 		if (it != cache.loaded.end()) return &it->second;
 		if (cache.missing.contains(name)) return nullptr;
 
-		const std::filesystem::path path = dir / (name + ".prefab.json");
+		const std::filesystem::path path = resolvePath(name);
 		std::ifstream in(path, std::ios::binary);
 		if (!in) {
 			cache.missing.insert(name);
@@ -150,7 +161,7 @@ bool EditorSuite::HasPrefab(const std::string& prefabName)
 {
 	if (!prefabCache_) prefabCache_ = std::make_shared<PrefabCache>();
 	std::string error;
-	const bool found = LoadPrefab(*prefabCache_, GetPrefabDirectory(), prefabName, error) != nullptr;
+	const bool found = LoadPrefab(*prefabCache_, [this](const std::string& n) { return ResolvePrefabFile(n); }, prefabName, error) != nullptr;
 	if (!error.empty()) LogMessage(error, 1);
 	return found;
 }
@@ -198,7 +209,7 @@ uint32_t EditorSuite::InstantiatePrefabNow(const std::string& prefabName, const 
 	using SceneJson::Json;
 	if (!prefabCache_) prefabCache_ = std::make_shared<PrefabCache>();
 	std::string error;
-	const Json* prefab = LoadPrefab(*prefabCache_, GetPrefabDirectory(), prefabName, error);
+	const Json* prefab = LoadPrefab(*prefabCache_, [this](const std::string& n) { return ResolvePrefabFile(n); }, prefabName, error);
 	if (!error.empty()) LogMessage(error, 1);
 	if (!prefab) return 0;
 	const Json& objects = *PrefabObjects(*prefab);
@@ -244,6 +255,7 @@ uint32_t EditorSuite::InstantiatePrefabNow(const std::string& prefabName, const 
 	const bool gameRunning = (sceneState_ != EditorSceneState::Edit) || IsStandaloneMode();
 	if (gameRunning) {
 		for (uint32_t id : newIds) StartScriptsOnSpawnedObject(id, true);
+		for (uint32_t id : newIds) BurstOneShotParticles(id);
 	} else {
 		EnsureEditModeScriptInstances();
 	}
@@ -256,7 +268,7 @@ ScriptGameObjectView* EditorSuite::QueuePrefabSpawn(const char* prefabName, cons
 	const std::string name = prefabName;
 	if (!prefabCache_) prefabCache_ = std::make_shared<PrefabCache>();
 	std::string error;
-	const SceneJson::Json* prefab = LoadPrefab(*prefabCache_, GetPrefabDirectory(), name, error);
+	const SceneJson::Json* prefab = LoadPrefab(*prefabCache_, [this](const std::string& n) { return ResolvePrefabFile(n); }, name, error);
 	if (!error.empty()) LogMessage(error, 1);
 	if (!prefab) return nullptr;
 	const SceneJson::Json& root = (*PrefabObjects(*prefab))[0];
@@ -297,6 +309,7 @@ ScriptGameObjectView* EditorSuite::QueuePrefabSpawn(const char* prefabName, cons
 
 void EditorSuite::QueueDespawn(uint32_t id)
 {
+	CancelDelayedDespawn(id);
 	if (CancelPendingSpawn(id)) return; // never created
 	if (std::find(pendingDespawns_.begin(), pendingDespawns_.end(), id) == pendingDespawns_.end()) {
 		pendingDespawns_.push_back(id);
@@ -367,6 +380,7 @@ void EditorSuite::ResetPooledPrefabInstance(uint32_t rootId, const ScriptGameObj
 		SceneJson::Read(src, "layer", node->layer);
 		node->layer &= 31u;
 		SceneJson::Read(src, "collisionMask", node->collisionMask);
+		ReadDataComponentsJson(&src, *node); // e.g. Health back to the prefab value
 		node->velocity = { 0.0f, 0.0f, 0.0f };
 		node->isGrounded = false;
 		node->isColliding = false;
@@ -375,6 +389,7 @@ void EditorSuite::ResetPooledPrefabInstance(uint32_t rootId, const ScriptGameObj
 	root = FindGameObjectById(rootId, false);
 	if (root && rootView) SyncViewToGameObject(*rootView, *root);
 	for (uint32_t id : instanceIds) StartScriptsOnSpawnedObject(id, false);
+	for (uint32_t id : instanceIds) BurstOneShotParticles(id);
 }
 
 void EditorSuite::ResetPrefabPools()

@@ -22,7 +22,7 @@ void UIRenderer::Initialize(DirectXCommon* dxCommon, DXCManager* dxc)
 	CreateRootSignature();
 	CreatePipeline(dxc);
 	whiteTexture_ = TextureManager::GetInstance()->GetDefaultWhiteTexture();
-	BuildFontAtlas();
+	InitializeFont();
 }
 
 void UIRenderer::Finalize()
@@ -31,6 +31,7 @@ void UIRenderer::Finalize()
 	pso_.Reset();
 	rootSignature_.Reset();
 	Clear();
+	FinalizeFont();
 	dxCommon_ = nullptr;
 }
 
@@ -141,88 +142,246 @@ void UIRenderer::CreatePipeline(DXCManager* dxc)
 	(void)hr;
 }
 
-void UIRenderer::BuildFontAtlas()
-{
-	// Rasterize ASCII 32..126 with GDI into a white-on-transparent atlas (no font file to ship)
-	constexpr int kAtlasW = 512;
-	constexpr int kAtlasH = 256;
-	constexpr int kPad = 2;
+// ---- Font: GDI rasterizes each glyph on first use (no font file to ship) ----
 
+struct UIRenderer::GlyphRasterizer {
+	static constexpr int kScratchSize = 128; // one glyph at kFontPixelSize fits easily
+
+	HDC dc = nullptr;
+	HBITMAP bitmap = nullptr;
+	HGDIOBJ oldBitmap = nullptr;
+	void* bits = nullptr;
+	HFONT primary = nullptr;  // Segoe UI: Latin, symbols
+	HFONT fallback = nullptr; // Japanese UI font for kana / kanji the primary font lacks
+	int primaryAscent = 0;
+	int fallbackAscent = 0;
+	int lineHeight = 0;
+
+	~GlyphRasterizer()
+	{
+		if (dc && oldBitmap) SelectObject(dc, oldBitmap);
+		if (primary) DeleteObject(primary);
+		if (fallback) DeleteObject(fallback);
+		if (bitmap) DeleteObject(bitmap);
+		if (dc) DeleteDC(dc);
+	}
+
+	static HFONT MakeFont(const wchar_t* face)
+	{
+		return CreateFontW(-static_cast<int>(kFontPixelSize), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+			OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_SWISS, face);
+	}
+
+	/// True when every UTF-16 unit of `text` has a glyph in `font` (surrogate pairs are left to the fallback)
+	bool FontHas(HFONT font, const wchar_t* text, int length) const
+	{
+		if (!font || length != 1) return false;
+		SelectObject(dc, font);
+		WORD index = 0xFFFF;
+		return GetGlyphIndicesW(dc, text, 1, &index, GGI_MARK_NONEXISTING_GLYPHS) != GDI_ERROR && index != 0xFFFF;
+	}
+};
+
+UIRenderer::UIRenderer() = default;
+UIRenderer::~UIRenderer() = default;
+
+void UIRenderer::InitializeFont()
+{
+	auto r = std::make_unique<GlyphRasterizer>();
 	BITMAPINFO bmi{};
 	bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-	bmi.bmiHeader.biWidth = kAtlasW;
-	bmi.bmiHeader.biHeight = -kAtlasH; // top-down rows
+	bmi.bmiHeader.biWidth = GlyphRasterizer::kScratchSize;
+	bmi.bmiHeader.biHeight = -GlyphRasterizer::kScratchSize; // top-down rows
 	bmi.bmiHeader.biPlanes = 1;
 	bmi.bmiHeader.biBitCount = 32;
 	bmi.bmiHeader.biCompression = BI_RGB;
-
-	HDC dc = CreateCompatibleDC(nullptr);
-	void* bits = nullptr;
-	HBITMAP bitmap = dc ? CreateDIBSection(dc, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0) : nullptr;
-	HFONT font = CreateFontW(-static_cast<int>(kFontPixelSize), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-		OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
-	if (!dc || !bitmap || !bits || !font) {
-		Log::GetInstance()->logOutput("[UIRenderer] Font atlas creation failed; text will not be drawn.\n");
-		if (font) DeleteObject(font);
-		if (bitmap) DeleteObject(bitmap);
-		if (dc) DeleteDC(dc);
+	r->dc = CreateCompatibleDC(nullptr);
+	r->bitmap = r->dc ? CreateDIBSection(r->dc, &bmi, DIB_RGB_COLORS, &r->bits, nullptr, 0) : nullptr;
+	r->primary = GlyphRasterizer::MakeFont(L"Segoe UI");
+	if (!r->dc || !r->bitmap || !r->bits || !r->primary) {
+		Log::GetInstance()->logOutput("[UIRenderer] Font rasterizer creation failed; text will not be drawn.\n");
 		return;
 	}
-
-	HGDIOBJ oldBitmap = SelectObject(dc, bitmap);
-	HGDIOBJ oldFont = SelectObject(dc, font);
-	std::memset(bits, 0, static_cast<size_t>(kAtlasW) * kAtlasH * 4);
-	SetBkMode(dc, TRANSPARENT);
-	SetTextColor(dc, RGB(255, 255, 255));
+	r->oldBitmap = SelectObject(r->dc, r->bitmap);
+	SetBkMode(r->dc, TRANSPARENT);
+	SetTextColor(r->dc, RGB(255, 255, 255));
 
 	TEXTMETRICW tm{};
-	GetTextMetricsW(dc, &tm);
-	const int lineH = (std::max)(1, static_cast<int>(tm.tmHeight));
-	fontLineHeight_ = static_cast<float>(lineH);
+	SelectObject(r->dc, r->primary);
+	GetTextMetricsW(r->dc, &tm);
+	r->lineHeight = (std::max)(1, static_cast<int>(tm.tmHeight));
+	r->primaryAscent = tm.tmAscent;
 
-	int penX = kPad;
-	int penY = kPad;
-	for (int c = 32; c < 128; ++c) {
-		// 127 is not printable: draw a box glyph used for any unsupported character
-		const wchar_t ch = (c == 127) ? L'\x25A1' : static_cast<wchar_t>(c);
-		SIZE size{};
-		GetTextExtentPoint32W(dc, &ch, 1, &size);
-		if (penX + size.cx + kPad > kAtlasW) {
-			penX = kPad;
-			penY += lineH + kPad;
+	// CreateFont silently substitutes a missing face, so confirm the face that was actually selected
+	for (const wchar_t* face : { L"Yu Gothic UI", L"Meiryo UI", L"MS UI Gothic" }) {
+		HFONT candidate = GlyphRasterizer::MakeFont(face);
+		if (!candidate) continue;
+		SelectObject(r->dc, candidate);
+		wchar_t selected[LF_FACESIZE]{};
+		GetTextFaceW(r->dc, LF_FACESIZE, selected);
+		if (_wcsicmp(selected, face) == 0) {
+			TEXTMETRICW ftm{};
+			GetTextMetricsW(r->dc, &ftm);
+			r->fallback = candidate;
+			r->fallbackAscent = ftm.tmAscent;
+			break;
 		}
-		if (penY + lineH + kPad > kAtlasH) break; // atlas full (does not happen with this font size)
-		TextOutW(dc, penX, penY, &ch, 1);
-
-		Glyph& g = glyphs_[c - 32];
-		g.u0 = static_cast<float>(penX) / kAtlasW;
-		g.v0 = static_cast<float>(penY) / kAtlasH;
-		g.u1 = static_cast<float>(penX + size.cx) / kAtlasW;
-		g.v1 = static_cast<float>(penY + lineH) / kAtlasH;
-		g.width = static_cast<float>(size.cx);
-		g.advance = static_cast<float>(size.cx);
-		penX += size.cx + kPad;
+		DeleteObject(candidate);
 	}
+	if (!r->fallback) {
+		Log::GetInstance()->logOutput("[UIRenderer] No Japanese UI font found; Japanese text is drawn as boxes.\n");
+	}
+
+	fontLineHeight_ = static_cast<float>(r->lineHeight);
+	rasterizer_ = std::move(r);
+
+	pages_.clear();
+	glyphs_.clear();
+	penX_ = 0;
+	penY_ = 0;
+	// ASCII and the box glyph up front, so the common case never uploads during a frame
+	GetGlyph(0x25A1);
+	for (uint32_t c = 32; c < 127; ++c) GetGlyph(c);
+	UploadFontPages();
+}
+
+void UIRenderer::FinalizeFont()
+{
+	rasterizer_.reset();
+	glyphs_.clear();
+	pages_.clear();
+}
+
+uint32_t UIRenderer::DecodeUtf8(const char*& p, const char* end)
+{
+	const auto byte = [](const char* q) { return static_cast<uint8_t>(*q); };
+	const uint8_t lead = byte(p++);
+	if (lead < 0x80) return lead;
+	int extra = 0;
+	uint32_t cp = 0;
+	if ((lead & 0xE0) == 0xC0) { extra = 1; cp = lead & 0x1F; }
+	else if ((lead & 0xF0) == 0xE0) { extra = 2; cp = lead & 0x0F; }
+	else if ((lead & 0xF8) == 0xF0) { extra = 3; cp = lead & 0x07; }
+	else return 0xFFFD;
+	for (int i = 0; i < extra; ++i) {
+		if (p >= end || (byte(p) & 0xC0) != 0x80) return 0xFFFD; // truncated sequence: the next byte starts over
+		cp = (cp << 6) | (byte(p++) & 0x3F);
+	}
+	// Overlong forms, surrogates and out-of-range values are invalid
+	static constexpr uint32_t kMinForLength[4] = { 0, 0x80, 0x800, 0x10000 };
+	if (cp < kMinForLength[extra] || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) return 0xFFFD;
+	return cp;
+}
+
+bool UIRenderer::RasterizeGlyph(uint32_t codepoint, Glyph& out) const
+{
+	GlyphRasterizer* r = rasterizer_.get();
+	if (!r) return false;
+
+	wchar_t text[2]{};
+	int length = 1;
+	if (codepoint >= 0x10000) {
+		const uint32_t v = codepoint - 0x10000;
+		text[0] = static_cast<wchar_t>(0xD800 + (v >> 10));
+		text[1] = static_cast<wchar_t>(0xDC00 + (v & 0x3FF));
+		length = 2;
+	} else {
+		text[0] = static_cast<wchar_t>(codepoint);
+	}
+
+	HFONT font = nullptr;
+	int baselineShift = 0;
+	if (r->FontHas(r->primary, text, length)) {
+		font = r->primary;
+	} else if (r->fallback && (length == 2 || r->FontHas(r->fallback, text, length))) {
+		font = r->fallback;
+		baselineShift = r->primaryAscent - r->fallbackAscent; // share the primary font's baseline
+	} else {
+		return false;
+	}
+
+	SelectObject(r->dc, font);
+	SIZE size{};
+	GetTextExtentPoint32W(r->dc, text, length, &size);
+	const int w = std::clamp(static_cast<int>(size.cx), 0, GlyphRasterizer::kScratchSize);
+	const int h = (std::min)(r->lineHeight, GlyphRasterizer::kScratchSize);
+	constexpr int kPad = 2;
+
+	// Next free cell: rows left to right, a new page when this one is full
+	if (pages_.empty() || penX_ + w + kPad > kPageSize) {
+		penX_ = kPad;
+		penY_ += pages_.empty() ? kPad : r->lineHeight + kPad;
+	}
+	if (pages_.empty() || penY_ + h + kPad > kPageSize) {
+		if (pages_.size() >= kMaxFontPages) return false;
+		pages_.push_back({ std::vector<uint8_t>(static_cast<size_t>(kPageSize) * kPageSize * 4, 0), 0, true });
+		// White RGB everywhere; coverage goes to alpha
+		std::vector<uint8_t>& px = pages_.back().rgba;
+		for (size_t i = 0; i < px.size(); i += 4) { px[i] = 255; px[i + 1] = 255; px[i + 2] = 255; }
+		penX_ = kPad;
+		penY_ = kPad;
+	}
+
+	std::memset(r->bits, 0, static_cast<size_t>(GlyphRasterizer::kScratchSize) * GlyphRasterizer::kScratchSize * 4);
+	TextOutW(r->dc, 0, baselineShift, text, length);
 	GdiFlush();
 
-	// GDI writes coverage into RGB; move it to alpha with white color
-	std::vector<uint8_t> rgba(static_cast<size_t>(kAtlasW) * kAtlasH * 4);
-	const uint8_t* src = static_cast<const uint8_t*>(bits);
-	for (size_t i = 0; i < static_cast<size_t>(kAtlasW) * kAtlasH; ++i) {
-		const uint8_t coverage = (std::max)({ src[i * 4 + 0], src[i * 4 + 1], src[i * 4 + 2] });
-		rgba[i * 4 + 0] = 255;
-		rgba[i * 4 + 1] = 255;
-		rgba[i * 4 + 2] = 255;
-		rgba[i * 4 + 3] = coverage;
+	FontPage& page = pages_.back();
+	const uint8_t* src = static_cast<const uint8_t*>(r->bits);
+	for (int y = 0; y < h; ++y) {
+		for (int x = 0; x < w; ++x) {
+			const uint8_t* s = src + (static_cast<size_t>(y) * GlyphRasterizer::kScratchSize + x) * 4;
+			const uint8_t coverage = (std::max)({ s[0], s[1], s[2] }); // GDI writes coverage into RGB
+			page.rgba[(static_cast<size_t>(penY_ + y) * kPageSize + penX_ + x) * 4 + 3] = coverage;
+		}
 	}
+	page.dirty = true;
 
-	SelectObject(dc, oldFont);
-	SelectObject(dc, oldBitmap);
-	DeleteObject(font);
-	DeleteObject(bitmap);
-	DeleteDC(dc);
+	out.u0 = static_cast<float>(penX_) / kPageSize;
+	out.v0 = static_cast<float>(penY_) / kPageSize;
+	out.u1 = static_cast<float>(penX_ + w) / kPageSize;
+	out.v1 = static_cast<float>(penY_ + h) / kPageSize;
+	out.width = static_cast<float>(w);
+	out.advance = static_cast<float>(size.cx);
+	out.page = static_cast<uint32_t>(pages_.size() - 1);
+	out.missing = false;
+	penX_ += w + kPad;
+	return true;
+}
 
-	fontTexture_ = TextureManager::GetInstance()->CreateTextureFromRGBA("UIRenderer/FontAtlas", rgba.data(), kAtlasW, kAtlasH);
+const UIRenderer::Glyph& UIRenderer::GetGlyph(uint32_t codepoint) const
+{
+	if (auto it = glyphs_.find(codepoint); it != glyphs_.end()) return it->second;
+	Glyph glyph;
+	if (!RasterizeGlyph(codepoint, glyph)) {
+		// No font has it (or the atlas is full): reuse the box glyph's cell
+		static const Glyph kNone{};
+		const auto box = glyphs_.find(0x25A1);
+		glyph = (box != glyphs_.end() && codepoint != 0x25A1) ? box->second : kNone;
+		glyph.missing = true;
+	}
+	return glyphs_.emplace(codepoint, glyph).first->second;
+}
+
+bool UIRenderer::HasGlyph(uint32_t codepoint) const
+{
+	return !GetGlyph(codepoint).missing;
+}
+
+void UIRenderer::UploadFontPages()
+{
+	if (!dxCommon_ || dxCommon_->IsDeviceLost()) return;
+	TextureManager* textures = TextureManager::GetInstance();
+	for (size_t i = 0; i < pages_.size(); ++i) {
+		FontPage& page = pages_[i];
+		if (!page.dirty) continue;
+		if (page.texture == 0) {
+			page.texture = textures->CreateTextureFromRGBA("UIRenderer/FontPage" + std::to_string(i), page.rgba.data(), kPageSize, kPageSize);
+		} else {
+			textures->UpdateTextureFromRGBA(page.texture, page.rgba.data(), kPageSize, kPageSize);
+		}
+		page.dirty = false;
+	}
 }
 
 void UIRenderer::Clear()
@@ -267,10 +426,10 @@ void UIRenderer::DrawImage(uint32_t textureHandle, float x, float y, float w, fl
 float UIRenderer::MeasureLine(const char* begin, const char* end, float scale) const
 {
 	float width = 0.0f;
-	for (const char* p = begin; p < end; ++p) {
-		const unsigned char c = static_cast<unsigned char>(*p);
-		const Glyph& g = glyphs_[(c >= 32 && c < 127) ? c - 32 : 127 - 32];
-		width += g.advance * scale;
+	for (const char* p = begin; p < end;) {
+		const uint32_t c = DecodeUtf8(p, end);
+		if (c == '\r') continue;
+		width += GetGlyph(c).advance * scale;
 	}
 	return width;
 }
@@ -293,7 +452,7 @@ float UIRenderer::MeasureText(const char* text, float size) const
 
 void UIRenderer::DrawString(const char* text, float x, float y, float size, const Vector4& color, Align align)
 {
-	if (!text || fontTexture_ == 0 || size <= 0.0f) return;
+	if (!text || pages_.empty() || size <= 0.0f) return;
 	const float scale = size / fontLineHeight_;
 	float lineY = y;
 	const char* lineStart = text;
@@ -305,11 +464,12 @@ void UIRenderer::DrawString(const char* text, float x, float y, float size, cons
 			const float lineW = MeasureLine(lineStart, p, scale);
 			penX -= (align == Align::Center) ? lineW * 0.5f : lineW;
 		}
-		for (const char* q = lineStart; q < p; ++q) {
-			const unsigned char c = static_cast<unsigned char>(*q);
-			const Glyph& g = glyphs_[(c >= 32 && c < 127) ? c - 32 : 127 - 32];
-			if (c != ' ') {
-				PushQuad(fontTexture_, penX, lineY, g.width * scale, size, g.u0, g.v0, g.u1, g.v1, color);
+		for (const char* q = lineStart; q < p;) {
+			const uint32_t c = DecodeUtf8(q, p);
+			if (c == '\r') continue;
+			const Glyph& g = GetGlyph(c);
+			if (c != ' ' && c != 0x3000) { // ASCII and ideographic spaces draw nothing
+				PushQuad(kFontPageTag | g.page, penX, lineY, g.width * scale, size, g.u0, g.v0, g.u1, g.v1, color);
 			}
 			penX += g.advance * scale;
 		}
@@ -325,6 +485,8 @@ void UIRenderer::Render(ID3D12GraphicsCommandList* cmdList)
 	if (vertices_.empty() || !pso_ || !rootSignature_ || !dxCommon_ || dxCommon_->IsDeviceLost() || !cmdList) {
 		return;
 	}
+	// Glyphs first used this frame go to the GPU before anything samples them
+	UploadFontPages();
 
 	// Per-frame linear upload memory: rendering the same commands into several targets is safe
 	const size_t bytes = sizeof(Vertex) * vertices_.size();
@@ -345,7 +507,13 @@ void UIRenderer::Render(ID3D12GraphicsCommandList* cmdList)
 	cmdList->IASetVertexBuffers(0, 1, &vbView);
 	for (const Batch& batch : batches_) {
 		if (batch.vertexCount == 0) continue;
-		cmdList->SetGraphicsRootDescriptorTable(0, textures->GetGPUHandle(batch.texture));
+		uint32_t texture = batch.texture;
+		if (texture & kFontPageTag) {
+			const size_t page = texture & ~kFontPageTag;
+			texture = (page < pages_.size()) ? pages_[page].texture : 0;
+			if (texture == 0) continue;
+		}
+		cmdList->SetGraphicsRootDescriptorTable(0, textures->GetGPUHandle(texture));
 		cmdList->DrawInstanced(batch.vertexCount, 1, batch.firstVertex, 0);
 		Profiler::GetInstance()->CountDrawCall();
 	}

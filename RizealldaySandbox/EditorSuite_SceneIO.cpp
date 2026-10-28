@@ -5,6 +5,25 @@
 using EditorSuiteDetail::SceneNameFromPath;
 using EditorSuiteDetail::IsSceneFile;
 
+namespace {
+	// Writes `guidKey` next to an asset path when the asset is managed by the asset database (inside Assets/)
+	void WriteAssetGuid(AssetDatabase& db, SceneJson::Json& o, const char* guidKey, const std::string& path)
+	{
+		if (path.empty() || path == "None") return;
+		if (const std::string guid = db.GuidForPath(path); !guid.empty()) o[guidKey] = guid;
+	}
+
+	// Reads `pathKey`; a known `guidKey` wins, so a renamed or moved asset is still found
+	void ReadAssetReference(const AssetDatabase& db, const SceneJson::Json& j, const char* pathKey, const char* guidKey, std::string& path)
+	{
+		SceneJson::Read(j, pathKey, path);
+		std::string guid;
+		SceneJson::Read(j, guidKey, guid);
+		if (guid.empty()) return;
+		if (const std::string current = db.PathForGuid(guid); !current.empty()) path = current;
+	}
+}
+
 std::string EditorSuite::SerializeSceneToString() const
 {
 	using SceneJson::Json;
@@ -47,6 +66,7 @@ void EditorSuite::WriteSceneSettingsJson(void* outJson) const
 	sky["bottomColor"] = Arr(skybox_.GetBottomColor());
 	sky["solidColor"] = Arr(skybox_.GetSolidColor());
 	sky["cubemapPath"] = skybox_.GetCubemapPath();
+	WriteAssetGuid(AssetDb(), sky, "cubemapGuid", skybox_.GetCubemapPath());
 	sky["rotation"] = Num(skybox_.GetRotation());
 	sky["exposure"] = Num(skybox_.GetExposure());
 	root["skybox"] = std::move(sky);
@@ -108,6 +128,8 @@ void EditorSuite::WriteGameObjectJson(const GameObject& obj, void* outJson) cons
 	o["explodeAmount"] = Num(obj.explodeAmount);
 	o["texturePath"] = obj.texturePath;
 	o["modelPath"] = obj.modelPath;
+	WriteAssetGuid(AssetDb(), o, "textureGuid", obj.texturePath);
+	WriteAssetGuid(AssetDb(), o, "modelGuid", obj.modelPath);
 	o["uvOffset"] = Arr(obj.uvOffset);
 	o["uvTiling"] = Arr(obj.uvTiling);
 	o["uvRotation"] = Num(obj.uvRotation);
@@ -171,6 +193,7 @@ void EditorSuite::WriteGameObjectJson(const GameObject& obj, void* outJson) cons
 	o["particleSpawnRate"] = Num(obj.particleSpawnRate);
 	o["particleMaxParticles"] = obj.particleMaxParticles;
 	o["particleBurstCount"] = obj.particleBurstCount;
+	o["particleEmitContinuously"] = obj.particleEmitContinuously;
 	o["particleDirection"] = Arr(obj.particleDirection);
 	o["particleSpreadAngle"] = Num(obj.particleSpreadAngle);
 	o["particleSpeedMin"] = Num(obj.particleSpeedMin);
@@ -192,6 +215,7 @@ void EditorSuite::WriteGameObjectJson(const GameObject& obj, void* outJson) cons
 	o["hasMapchip"] = obj.hasMapchip;
 	o["hasAudioSource"] = obj.hasAudioSource;
 	o["audioClipName"] = obj.audioClipName;
+	WriteAssetGuid(AssetDb(), o, "audioClipGuid", obj.audioClipName);
 	o["audioVolume"] = Num(obj.audioVolume);
 	o["audioPlayOnAwake"] = obj.audioPlayOnAwake;
 	o["audioLoop"] = obj.audioLoop;
@@ -207,6 +231,7 @@ void EditorSuite::WriteGameObjectJson(const GameObject& obj, void* outJson) cons
 		scriptNames.push_back(sc.className);
 	}
 	o["scripts"] = std::move(scriptNames);
+	WriteDataComponentsJson(obj, &o); // "components" (registry data components)
 
 	Json scriptComponents = Json::array();
 	for (const auto& sc : obj.scripts) {
@@ -303,6 +328,7 @@ bool EditorSuite::DeserializeSceneFromString(const std::string& content)
 	gameObjects_.clear();
 	pendingSpawns_.clear();
 	ResetPrefabPools();
+	ResetScriptRuntimeState();
 	UIRenderer::GetInstance()->Clear();
 
 	// Read sceneName with fallback to SampleScene
@@ -403,7 +429,7 @@ void EditorSuite::ReadSceneSettingsJson(const void* json)
 		skybox_.SetSolidColor(solid);
 
 		std::string cubemap = skybox_.GetCubemapPath();
-		SceneJson::Read(*sky, "cubemapPath", cubemap);
+		ReadAssetReference(AssetDb(), *sky, "cubemapPath", "cubemapGuid", cubemap);
 		skybox_.SetCubemapPath(cubemap);
 		if (skybox_.GetMode() == SkyboxMode::Cubemap) {
 			skybox_.LoadCubemap(cubemap);
@@ -487,11 +513,11 @@ void EditorSuite::ReadGameObjectJson(const void* json, GameObject& obj)
 	if (obj.geometryShaderEffect == 0 && obj.useGeometryShader) {
 		obj.geometryShaderEffect = 1;
 	}
-	SceneJson::Read(j, "texturePath", obj.texturePath);
+	ReadAssetReference(AssetDb(), j, "texturePath", "textureGuid", obj.texturePath);
 	if (!obj.texturePath.empty()) {
 		obj.textureHandle = TextureManager::GetInstance()->LoadTexture(ResolveAssetPath(obj.texturePath));
 	}
-	SceneJson::Read(j, "modelPath", obj.modelPath);
+	ReadAssetReference(AssetDb(), j, "modelPath", "modelGuid", obj.modelPath);
 	SceneJson::Read(j, "uvOffset", obj.uvOffset);
 	SceneJson::Read(j, "uvTiling", obj.uvTiling);
 	SceneJson::Read(j, "uvRotation", obj.uvRotation);
@@ -571,6 +597,7 @@ void EditorSuite::ReadGameObjectJson(const void* json, GameObject& obj)
 	SceneJson::Read(j, "particleSpawnRate", obj.particleSpawnRate);
 	SceneJson::Read(j, "particleMaxParticles", obj.particleMaxParticles);
 	SceneJson::Read(j, "particleBurstCount", obj.particleBurstCount);
+	SceneJson::Read(j, "particleEmitContinuously", obj.particleEmitContinuously);
 	SceneJson::Read(j, "particleDirection", obj.particleDirection);
 	SceneJson::Read(j, "particleSpreadAngle", obj.particleSpreadAngle);
 	SceneJson::Read(j, "particleSpeedMin", obj.particleSpeedMin);
@@ -591,7 +618,7 @@ void EditorSuite::ReadGameObjectJson(const void* json, GameObject& obj)
 	// Mapchip, Audio, Animation & Scripts
 	SceneJson::Read(j, "hasMapchip", obj.hasMapchip);
 	SceneJson::Read(j, "hasAudioSource", obj.hasAudioSource);
-	SceneJson::Read(j, "audioClipName", obj.audioClipName);
+	ReadAssetReference(AssetDb(), j, "audioClipName", "audioClipGuid", obj.audioClipName);
 	SceneJson::Read(j, "audioVolume", obj.audioVolume);
 	SceneJson::Read(j, "audioPlayOnAwake", obj.audioPlayOnAwake);
 	SceneJson::Read(j, "audioLoop", obj.audioLoop);
@@ -601,6 +628,7 @@ void EditorSuite::ReadGameObjectJson(const void* json, GameObject& obj)
 	SceneJson::Read(j, "animationPlaying", obj.animationPlaying);
 	SceneJson::Read(j, "hasScript", obj.hasScript);
 	SceneJson::Read(j, "scriptClassName", obj.scriptClassName);
+	ReadDataComponentsJson(json, obj);
 
 	const Json* scComponents = SceneJson::Find(j, "scriptComponents");
 	const bool parsedScriptComponents = (scComponents && scComponents->is_array());
@@ -747,6 +775,7 @@ void EditorSuite::NewScene()
 	pendingDeletes_.clear();
 	pendingSpawns_.clear();
 	ResetPrefabPools();
+	ResetScriptRuntimeState();
 	UIRenderer::GetInstance()->Clear();
 	pendingDuplicateIndex_ = -1;
 	CollisionManager::GetInstance()->Clear();

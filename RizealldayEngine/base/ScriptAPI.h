@@ -90,6 +90,62 @@ struct ScriptTransformData {
 	Vector3 scale = { 1.0f, 1.0f, 1.0f };
 };
 
+/// Result of Raycast (objectId 0 = nothing hit)
+struct ScriptRaycastHit {
+	uint32_t objectId = 0;
+	float distance = 0.0f;
+	Vector3 point = { 0.0f, 0.0f, 0.0f };
+	Vector3 normal = { 0.0f, 1.0f, 0.0f };
+};
+
+/// Mesh Renderer settings readable/writable from scripts (hit flash, fade, hide)
+struct ScriptMaterialData {
+	Vector4 color = { 1.0f, 1.0f, 1.0f, 1.0f };
+	bool visible = true;         // Mesh Renderer enabled
+	bool lit = true;
+	int lightingType = 4;        // 0 = Unlit, 1 = Lambert, 2 = Half-Lambert, 3 = Phong, 4 = Blinn-Phong
+	float shininess = 32.0f;
+	Vector2 uvOffset = { 0.0f, 0.0f };
+	Vector2 uvTiling = { 1.0f, 1.0f };
+};
+
+/// Light component
+struct ScriptLightData {
+	bool enabled = true;
+	int type = 0;                // 0 = Directional, 1 = Point, 2 = Spot
+	Vector3 color = { 1.0f, 1.0f, 1.0f };
+	float intensity = 1.0f;
+	float range = 10.0f;
+	float spotAngle = 30.0f;     // degrees
+};
+
+/// Rigidbody component (velocity itself is ScriptGameObjectView::velocity)
+struct ScriptRigidbodyData {
+	bool enabled = true;
+	float mass = 1.0f;
+	float drag = 0.05f;
+	float gravityScale = 1.0f;
+	bool useGravity = true;
+	bool isKinematic = false;
+	float bounciness = 0.1f;
+};
+
+/// Skeletal animation playback of a model
+struct ScriptAnimationData {
+	int clipIndex = 0;
+	float speed = 1.0f;
+	bool loop = true;
+	bool playing = true;
+};
+
+/// Camera component
+struct ScriptCameraData {
+	float fov = 45.0f;           // degrees
+	float nearClip = 0.1f;
+	float farClip = 1000.0f;
+	bool orthographic = false;
+};
+
 /// Function-pointer table passed from the Engine to GameScripts.dll on load.
 struct EngineAPI {
 	void* hostContext = nullptr;
@@ -166,12 +222,59 @@ struct EngineAPI {
 	bool (*saveGetString)(void* ctx, const char* key, char* out, int outSize) = nullptr;
 	bool (*saveHasKey)(void* ctx, const char* key) = nullptr;
 	void (*saveDeleteAll)(void* ctx) = nullptr;
+
+	// Audio (paths relative to the project, e.g. "Assets/Audio/shot.wav"). Returns a voice handle (0 = failed).
+	uint32_t (*playSound)(void* ctx, const char* path, float volume, bool loop) = nullptr;
+	void (*stopSound)(void* ctx, uint32_t voice) = nullptr;
+	void (*setSoundVolume)(void* ctx, uint32_t voice, float volume) = nullptr;
+	bool (*isSoundPlaying)(void* ctx, uint32_t voice) = nullptr;
+	void (*preloadSound)(void* ctx, const char* path) = nullptr;
+	// One looping music track at a time; playing the same track again only changes the volume
+	void (*playMusic)(void* ctx, const char* path, float volume) = nullptr;
+	void (*stopMusic)(void* ctx) = nullptr;
+
+	// Particle System component. Both take effect at the end of the frame.
+	void (*emitParticles)(void* ctx, uint32_t id, int count) = nullptr;
+	void (*setParticlesEmitting)(void* ctx, uint32_t id, bool emitting) = nullptr;
+
+	// Despawn (or destroy) id after `seconds` of game time; calling again replaces the timer
+	void (*despawnAfter)(void* ctx, uint32_t id, float seconds) = nullptr;
+
+	// Mesh Renderer
+	bool (*getMaterial)(void* ctx, uint32_t id, ScriptMaterialData* out) = nullptr;
+	bool (*setMaterial)(void* ctx, uint32_t id, const ScriptMaterialData* in) = nullptr;
+	bool (*setTexture)(void* ctx, uint32_t id, const char* texturePath) = nullptr;
+
+	// Scene queries against active Box / Sphere colliders. layerMask: bit N = include layer N.
+	// Objects spawned this frame are found from the next frame on.
+	bool (*raycast)(void* ctx, Vector3 origin, Vector3 direction, float maxDistance, uint32_t layerMask, uint32_t ignoreId, ScriptRaycastHit* outHit) = nullptr;
+	int (*overlapSphere)(void* ctx, Vector3 center, float radius, uint32_t layerMask, uint32_t* outIds, int maxCount) = nullptr;
+	// Tag searches over active objects (no collider needed). tag nullptr / "" in findNearest = any object.
+	ScriptGameObjectView* (*findWithTag)(void* ctx, const char* tag) = nullptr;
+	int (*findAllWithTag)(void* ctx, const char* tag, uint32_t* outIds, int maxCount) = nullptr;
+	ScriptGameObjectView* (*findNearest)(void* ctx, Vector3 position, const char* tag, float maxDistance, uint32_t ignoreId) = nullptr;
+
+	// Hierarchy. parentId 0 = make it a root. setParent takes effect at the end of the frame.
+	bool (*setParent)(void* ctx, uint32_t childId, uint32_t parentId, bool keepWorldTransform) = nullptr;
+	uint32_t (*getParent)(void* ctx, uint32_t id) = nullptr;
+	int (*getChildren)(void* ctx, uint32_t id, uint32_t* outIds, int maxCount) = nullptr;
+	bool (*getWorldPosition)(void* ctx, uint32_t id, Vector3* out) = nullptr;
+
+	// Other components (false when the object has no such component)
+	bool (*getLight)(void* ctx, uint32_t id, ScriptLightData* out) = nullptr;
+	bool (*setLight)(void* ctx, uint32_t id, const ScriptLightData* in) = nullptr;
+	bool (*getRigidbody)(void* ctx, uint32_t id, ScriptRigidbodyData* out) = nullptr;
+	bool (*setRigidbody)(void* ctx, uint32_t id, const ScriptRigidbodyData* in) = nullptr;
+	bool (*getAnimation)(void* ctx, uint32_t id, ScriptAnimationData* out) = nullptr;
+	bool (*setAnimation)(void* ctx, uint32_t id, const ScriptAnimationData* in) = nullptr;
+	bool (*getCamera)(void* ctx, uint32_t id, ScriptCameraData* out) = nullptr;
+	bool (*setCamera)(void* ctx, uint32_t id, const ScriptCameraData* in) = nullptr;
 };
 
 /// Engine <-> GameScripts.dll compatibility check. Bump kScriptApiVersion when the meaning of the API changes;
 /// layout changes of EngineAPI / ScriptGameObjectView / ScriptBase are caught automatically by the sizes.
 /// The fingerprint is defined at the end of this header (it needs the complete ScriptBase).
-constexpr uint32_t kScriptApiVersion = 2;
+constexpr uint32_t kScriptApiVersion = 3;
 
 /// Size of the UI canvas used by the UI* helpers (stretched over the game view)
 constexpr float kUICanvasWidth = 1280.0f;
@@ -227,7 +330,12 @@ public:
 
 	virtual void Initialize() {}
 	virtual void Update(float deltaTime) { (void)deltaTime; }
+	/// Every physics frame while touching `other` (including the first one)
 	virtual void OnCollision(GameObject& other) { (void)other; }
+	/// First frame of a contact / last contact ended (also when `other` was despawned or deactivated).
+	/// Fired for triggers too; check other.layer / other.tag to tell them apart.
+	virtual void OnCollisionEnter(GameObject& other) { (void)other; }
+	virtual void OnCollisionExit(GameObject& other) { (void)other; }
 	virtual void OnDestroy() {}
 	virtual void OnAfterReload() {}
 
@@ -596,11 +704,185 @@ public:
 		if (engineApi_ && engineApi_->setTimeScale) engineApi_->setTimeScale(engineApi_->hostContext, scale);
 	}
 
+	// In the helpers below, id 0 means "this script's own object".
+
+	// ---- Audio --------------------------------------------------------------
+	/// Plays a sound effect once (or looped). Returns a voice handle for StopAudio / SetAudioVolume.
+	uint32_t PlayAudio(const char* path, float volume = 1.0f, bool loop = false) const {
+		return (engineApi_ && engineApi_->playSound && path) ? engineApi_->playSound(engineApi_->hostContext, path, volume, loop) : 0u;
+	}
+	void StopAudio(uint32_t voice) const {
+		if (engineApi_ && engineApi_->stopSound && voice != 0) engineApi_->stopSound(engineApi_->hostContext, voice);
+	}
+	void SetAudioVolume(uint32_t voice, float volume) const {
+		if (engineApi_ && engineApi_->setSoundVolume && voice != 0) engineApi_->setSoundVolume(engineApi_->hostContext, voice, volume);
+	}
+	bool IsAudioPlaying(uint32_t voice) const {
+		return engineApi_ && engineApi_->isSoundPlaying && voice != 0 && engineApi_->isSoundPlaying(engineApi_->hostContext, voice);
+	}
+	/// Decodes the file now (call in Initialize) so the first PlayAudio does not stall
+	void PreloadAudio(const char* path) const {
+		if (engineApi_ && engineApi_->preloadSound && path) engineApi_->preloadSound(engineApi_->hostContext, path);
+	}
+	/// Background music: loops, replaces the current track (same track = only the volume changes)
+	void PlayMusic(const char* path, float volume = 1.0f) const {
+		if (engineApi_ && engineApi_->playMusic && path) engineApi_->playMusic(engineApi_->hostContext, path, volume);
+	}
+	void StopMusic() const {
+		if (engineApi_ && engineApi_->stopMusic) engineApi_->stopMusic(engineApi_->hostContext);
+	}
+
+	// ---- Particles & timers -------------------------------------------------
+	/// One-shot burst from a Particle System component (end of frame)
+	void EmitParticles(int count, uint32_t id = 0) const {
+		if (engineApi_ && engineApi_->emitParticles) engineApi_->emitParticles(engineApi_->hostContext, ResolveId(id), count);
+	}
+	/// Turns continuous emission on/off ("Emit Continuously" in the Inspector)
+	void SetParticlesEmitting(bool emitting, uint32_t id = 0) const {
+		if (engineApi_ && engineApi_->setParticlesEmitting) engineApi_->setParticlesEmitting(engineApi_->hostContext, ResolveId(id), emitting);
+	}
+	/// Despawn after a delay (bullet lifetime, effect cleanup). Despawn() / Destroy cancel the timer.
+	void DespawnAfter(float seconds, uint32_t id = 0) const {
+		if (engineApi_ && engineApi_->despawnAfter) engineApi_->despawnAfter(engineApi_->hostContext, ResolveId(id), seconds);
+	}
+
+	// ---- Material -----------------------------------------------------------
+	bool GetMaterial(ScriptMaterialData& out, uint32_t id = 0) const {
+		return engineApi_ && engineApi_->getMaterial && engineApi_->getMaterial(engineApi_->hostContext, ResolveId(id), &out);
+	}
+	bool SetMaterial(const ScriptMaterialData& in, uint32_t id = 0) const {
+		return engineApi_ && engineApi_->setMaterial && engineApi_->setMaterial(engineApi_->hostContext, ResolveId(id), &in);
+	}
+	/// Mesh color (RGBA). Example hit flash: SetColor({1,0.2f,0.2f,1}) then back after 0.1 s.
+	bool SetColor(const Vector4& color, uint32_t id = 0) const {
+		ScriptMaterialData m{};
+		if (!GetMaterial(m, id)) return false;
+		m.color = color;
+		return SetMaterial(m, id);
+	}
+	Vector4 GetColor(uint32_t id = 0) const {
+		ScriptMaterialData m{};
+		return GetMaterial(m, id) ? m.color : Vector4{ 1.0f, 1.0f, 1.0f, 1.0f };
+	}
+	bool SetVisible(bool visible, uint32_t id = 0) const {
+		ScriptMaterialData m{};
+		if (!GetMaterial(m, id)) return false;
+		m.visible = visible;
+		return SetMaterial(m, id);
+	}
+	/// texturePath relative to the project, e.g. "Assets/Textures/enemy_hurt.png"
+	bool SetTexture(const char* texturePath, uint32_t id = 0) const {
+		return engineApi_ && engineApi_->setTexture && texturePath && engineApi_->setTexture(engineApi_->hostContext, ResolveId(id), texturePath);
+	}
+
+	// ---- Scene queries ------------------------------------------------------
+	/// Closest Box / Sphere collider along the ray (direction need not be normalized).
+	/// Colliders that contain the origin are ignored, and so is this object when ignoreSelf is true.
+	bool Raycast(const Vector3& origin, const Vector3& direction, float maxDistance, ScriptRaycastHit& outHit,
+		uint32_t layerMask = kCollideWithAll, bool ignoreSelf = true) const {
+		outHit = ScriptRaycastHit{};
+		return engineApi_ && engineApi_->raycast &&
+			engineApi_->raycast(engineApi_->hostContext, origin, direction, maxDistance, layerMask, ignoreSelf ? ownerId_ : 0u, &outHit);
+	}
+	/// Ids of objects whose collider touches the sphere (this object included). Returns the number written.
+	int OverlapSphere(const Vector3& center, float radius, uint32_t* outIds, int maxCount, uint32_t layerMask = kCollideWithAll) const {
+		return (engineApi_ && engineApi_->overlapSphere && outIds && maxCount > 0)
+			? engineApi_->overlapSphere(engineApi_->hostContext, center, radius, layerMask, outIds, maxCount) : 0;
+	}
+	/// First active object with this tag (nullptr if none)
+	GameObject* FindWithTag(const char* tag) const {
+		return (engineApi_ && engineApi_->findWithTag && tag)
+			? reinterpret_cast<GameObject*>(engineApi_->findWithTag(engineApi_->hostContext, tag)) : nullptr;
+	}
+	int FindAllWithTag(const char* tag, uint32_t* outIds, int maxCount) const {
+		return (engineApi_ && engineApi_->findAllWithTag && tag && outIds && maxCount > 0)
+			? engineApi_->findAllWithTag(engineApi_->hostContext, tag, outIds, maxCount) : 0;
+	}
+	/// Nearest active object with the tag (nullptr / "" = any) within maxDistance of position
+	GameObject* FindNearest(const Vector3& position, const char* tag, float maxDistance = 1.0e30f, uint32_t ignoreId = 0) const {
+		return (engineApi_ && engineApi_->findNearest)
+			? reinterpret_cast<GameObject*>(engineApi_->findNearest(engineApi_->hostContext, position, tag, maxDistance, ignoreId)) : nullptr;
+	}
+	/// Nearest object with the tag, measured from this object (never returns this object)
+	GameObject* FindNearestWithTag(const char* tag, float maxDistance = 1.0e30f) const {
+		return FindNearest(GetWorldPosition(), tag, maxDistance, ownerId_);
+	}
+
+	// ---- Hierarchy ----------------------------------------------------------
+	/// Parents this object under parentId (0 = root). keepWorldTransform keeps it where it is on screen.
+	bool SetParent(uint32_t parentId, bool keepWorldTransform = true) const {
+		return SetParentOf(ownerId_, parentId, keepWorldTransform);
+	}
+	bool SetParentOf(uint32_t childId, uint32_t parentId, bool keepWorldTransform = true) const {
+		return engineApi_ && engineApi_->setParent && engineApi_->setParent(engineApi_->hostContext, childId, parentId, keepWorldTransform);
+	}
+	/// 0 = no parent
+	uint32_t GetParentId(uint32_t id = 0) const {
+		return (engineApi_ && engineApi_->getParent) ? engineApi_->getParent(engineApi_->hostContext, ResolveId(id)) : 0u;
+	}
+	int GetChildren(uint32_t* outIds, int maxCount, uint32_t id = 0) const {
+		return (engineApi_ && engineApi_->getChildren && outIds && maxCount > 0)
+			? engineApi_->getChildren(engineApi_->hostContext, ResolveId(id), outIds, maxCount) : 0;
+	}
+	/// World position (translation is local to the parent for child objects)
+	Vector3 GetWorldPosition(uint32_t id = 0) const {
+		Vector3 p{};
+		if (engineApi_ && engineApi_->getWorldPosition && engineApi_->getWorldPosition(engineApi_->hostContext, ResolveId(id), &p)) return p;
+		return (id == 0 || id == ownerId_) ? GetPosition() : p;
+	}
+
+	// ---- Components ---------------------------------------------------------
+	bool GetLight(ScriptLightData& out, uint32_t id = 0) const {
+		return engineApi_ && engineApi_->getLight && engineApi_->getLight(engineApi_->hostContext, ResolveId(id), &out);
+	}
+	bool SetLight(const ScriptLightData& in, uint32_t id = 0) const {
+		return engineApi_ && engineApi_->setLight && engineApi_->setLight(engineApi_->hostContext, ResolveId(id), &in);
+	}
+	bool GetRigidbody(ScriptRigidbodyData& out, uint32_t id = 0) const {
+		return engineApi_ && engineApi_->getRigidbody && engineApi_->getRigidbody(engineApi_->hostContext, ResolveId(id), &out);
+	}
+	bool SetRigidbody(const ScriptRigidbodyData& in, uint32_t id = 0) const {
+		return engineApi_ && engineApi_->setRigidbody && engineApi_->setRigidbody(engineApi_->hostContext, ResolveId(id), &in);
+	}
+	/// velocity += impulse / mass on this object (knockback, jump). Needs a Rigidbody to move by physics.
+	void AddImpulse(const Vector3& impulse) {
+		ScriptRigidbodyData rb{};
+		const float mass = (GetRigidbody(rb) && rb.mass > 0.0001f) ? rb.mass : 1.0f;
+		if (gameObject_) {
+			auto* view = reinterpret_cast<ScriptGameObjectView*>(gameObject_);
+			view->velocity = { view->velocity.x + impulse.x / mass, view->velocity.y + impulse.y / mass, view->velocity.z + impulse.z / mass };
+			view->dirtyFromScript = true;
+		}
+	}
+	bool GetAnimation(ScriptAnimationData& out, uint32_t id = 0) const {
+		return engineApi_ && engineApi_->getAnimation && engineApi_->getAnimation(engineApi_->hostContext, ResolveId(id), &out);
+	}
+	bool SetAnimation(const ScriptAnimationData& in, uint32_t id = 0) const {
+		return engineApi_ && engineApi_->setAnimation && engineApi_->setAnimation(engineApi_->hostContext, ResolveId(id), &in);
+	}
+	/// Switches the model's animation clip (by index in the model file)
+	bool PlayAnimation(int clipIndex, bool loop = true, float speed = 1.0f, uint32_t id = 0) const {
+		ScriptAnimationData a{};
+		a.clipIndex = clipIndex;
+		a.loop = loop;
+		a.speed = speed;
+		a.playing = true;
+		return SetAnimation(a, id);
+	}
+	bool GetCamera(ScriptCameraData& out, uint32_t id = 0) const {
+		return engineApi_ && engineApi_->getCamera && engineApi_->getCamera(engineApi_->hostContext, ResolveId(id), &out);
+	}
+	bool SetCamera(const ScriptCameraData& in, uint32_t id = 0) const {
+		return engineApi_ && engineApi_->setCamera && engineApi_->setCamera(engineApi_->hostContext, ResolveId(id), &in);
+	}
+
 	// Pointer to owner GameObject view (synchronized by the engine)
 	GameObject* gameObject = nullptr;
 	GameObject* owner = nullptr;
 
 protected:
+	uint32_t ResolveId(uint32_t id) const { return id != 0 ? id : ownerId_; }
+
 	void SaveFloatImpl(const char* key, double value) const {
 		if (engineApi_ && engineApi_->saveSetNumber && key) engineApi_->saveSetNumber(engineApi_->hostContext, key, value);
 	}

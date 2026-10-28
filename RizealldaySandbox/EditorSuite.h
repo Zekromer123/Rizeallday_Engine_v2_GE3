@@ -16,6 +16,8 @@
 #include "base/ScriptAPI.h"
 #include "base/ScriptBase.h"
 #include "base/ScriptModule.h"
+#include "ComponentRegistry.h"
+#include "AssetDatabase.h"
 #ifdef USE_IMGUI
 #include <imgui.h>
 #else
@@ -206,6 +208,8 @@ struct GameObject {
 	float particleSpawnRate = 20.0f; // particles per second
 	int particleMaxParticles = 100;
 	int particleBurstCount = 15;
+	// Off: no continuous spawning; prefab instances burst particleBurstCount on spawn, scripts call EmitParticles
+	bool particleEmitContinuously = true;
 
 	Vector3 particleDirection = { 0.0f, 1.0f, 0.0f };
 	float particleSpreadAngle = 30.0f; // degrees (0-180)
@@ -286,6 +290,9 @@ struct GameObject {
 	std::string scriptClassName = "";
 	std::vector<ScriptComponent> scripts;
 
+	// Data components from the component registry (ComponentRegistry.h), e.g. Health
+	ComponentStore components;
+
 	// Rigidbody Component
 	bool hasRigidbody = false;
 	bool rbEnabled = true;
@@ -358,7 +365,27 @@ public:
 	void StartPlayMode();
 	void StopPlayMode();
 	void UpdateScripts(float deltaTime);
-	void DispatchScriptCollision(uint32_t selfId, uint32_t otherId);
+	// Collision events (EditorSuite_ScriptQueries.cpp): contacts are recorded during the collision check,
+	// then OnCollisionEnter / OnCollision / OnCollisionExit are dispatched once per object pair.
+	void RecordCollisionContact(uint32_t selfId, uint32_t otherId);
+	void DispatchCollisionEvents();
+	enum class CollisionEvent { Stay, Enter, Exit };
+	void DispatchScriptCollision(uint32_t selfId, uint32_t otherId, CollisionEvent kind = CollisionEvent::Stay);
+	// World-space collider shapes shared by physics and script queries
+	void ComputeBoxColliderBounds(const GameObject& obj, bool useAbsSize, Vector3& outMin, Vector3& outMax) const;
+	void ComputeSphereColliderWorld(const GameObject& obj, Vector3& outCenter, float& outRadius) const;
+	Vector3 GetWorldPositionOf(const GameObject& obj) const;
+	bool ScriptRaycast(const Vector3& origin, const Vector3& direction, float maxDistance, uint32_t layerMask, uint32_t ignoreId, ScriptRaycastHit& outHit) const;
+	int ScriptOverlapSphere(const Vector3& center, float radius, uint32_t layerMask, uint32_t* outIds, int maxCount) const;
+	const GameObject* FindNearestObject(const Vector3& position, const char* tag, float maxDistance, uint32_t ignoreId) const;
+	// Script requests that run outside script callbacks: timers, reparenting, particle bursts, music
+	void SetupEngineAPIExtensions();
+	void ResetScriptRuntimeState();
+	void TickScriptTimers(float deltaTime);
+	void ProcessDeferredScriptRequests();
+	void BurstOneShotParticles(uint32_t id);
+	void CancelDelayedDespawn(uint32_t id);
+	size_t GetDelayedDespawnCount() const { return delayedDespawns_.size(); }
 	void SavePlayModeSnapshot();
 	void RestorePlayModeSnapshot();
 
@@ -379,6 +406,8 @@ public:
 	ScriptGameObjectView* QueueScriptSpawn(const char* name, int primitiveType, const Vector3& position);
 	// Prefabs + pooling (EditorSuite_Prefabs.cpp)
 	std::filesystem::path GetPrefabDirectory() const;
+	/// <Prefabs>/<name>.prefab.json, or wherever a prefab with that file name was moved to inside Assets/
+	std::filesystem::path ResolvePrefabFile(const std::string& prefabName) const;
 	bool SavePrefab(uint32_t rootId, const std::string& prefabName);
 	bool HasPrefab(const std::string& prefabName);
 	void ClearPrefabCache();
@@ -454,6 +483,15 @@ public:
 	std::string NormalizeScenePath(const std::string& input) const;
 	void ResetEditorHistory();
 	bool IsPathInsideProject(const std::filesystem::path& path) const;
+
+	// Asset database (AssetDatabase.h, EditorSuite_AssetBrowser.cpp): GUIDs in .meta files keep references alive
+	// across renames. AssetDb() follows currentProjectRoot_ (rescans when the project changes).
+	AssetDatabase& AssetDb() const;
+	/// Moves / renames an asset inside Assets/ and repoints every reference in the open scene
+	bool MoveAssetAndUpdateReferences(const std::string& from, const std::string& to);
+	bool DeleteAssetToRecycleBin(const std::string& path);
+	/// Replaces `from` (file or folder prefix) with `to` in the asset paths of the open scene; returns the change count
+	int RepointAssetReferences(const std::string& from, const std::string& to);
 
 	// Project Hub (startup "create or open a project" popup) and recent-project list
 	void DrawProjectHub();
@@ -531,6 +569,30 @@ private:
 	bool DrawComponentHeader(const char* label, ComponentKind kind);
 	void RemoveComponent(GameObject& obj, ComponentKind kind);
 	int pendingComponentRemoval_ = -1; // ComponentKind queued by DrawComponentHeader, -1 = none
+	std::string pendingDataComponentRemoval_; // data component name queued for removal, "" = none
+
+	// Component registry glue (EditorSuite_Components.cpp) + built-in Inspector bodies (EditorSuite_InspectorComponents.cpp)
+	static void RegisterBuiltinComponents();
+	void DrawComponentInspectors(GameObject& obj);
+	void DrawAddComponentMenuItems(GameObject& obj);
+	void DrawDataComponentInspector(GameObject& obj, const ComponentInfo& info);
+	void DrawMeshComponentInspector(GameObject& obj);
+	void DrawBoxColliderComponentInspector(GameObject& obj);
+	void DrawSphereColliderComponentInspector(GameObject& obj);
+	void DrawRigidbodyComponentInspector(GameObject& obj);
+	void DrawCameraComponentInspector(GameObject& obj);
+	void DrawLightComponentInspector(GameObject& obj);
+	void DrawParticleSystemComponentInspector(GameObject& obj);
+	void DrawAudioSourceComponentInspector(GameObject& obj);
+public:
+	// By registry name, built-in or data component. Add/Remove record undo like the Inspector does.
+	bool HasComponentByName(const GameObject& obj, const std::string& name) const;
+	bool AddComponentByName(GameObject& obj, const std::string& name);
+	bool RemoveComponentByName(GameObject& obj, const std::string& name);
+	// "components" object of a scene entry (Json* kept opaque like WriteGameObjectJson)
+	void WriteDataComponentsJson(const GameObject& obj, void* outObjectJson) const;
+	void ReadDataComponentsJson(const void* objectJson, GameObject& obj) const;
+private:
 	void DrawViewportsPanel();
 	void DrawProjectAndConsolePanel();
 	void DrawCppScriptGeneratorModal();
@@ -818,6 +880,38 @@ private:
 	std::vector<std::unique_ptr<ScriptGameObjectView>> retiredScriptViews_;
 	static constexpr size_t kMaxRetiredScriptViews = 4096;
 
+	// Collision contacts (directed pair keys: (selfId << 32) | otherId), this frame and the previous one
+	std::vector<uint64_t> frameContacts_;
+	std::unordered_set<uint64_t> frameContactSet_;
+	std::vector<uint64_t> previousContacts_;
+	std::unordered_set<uint64_t> previousContactSet_;
+	struct DelayedDespawn {
+		uint32_t id = 0;
+		float remaining = 0.0f;
+	};
+	std::vector<DelayedDespawn> delayedDespawns_;
+	struct PendingReparent {
+		uint32_t childId = 0;
+		int parentId = -1;
+		bool keepWorldTransform = true;
+	};
+	std::vector<PendingReparent> pendingReparents_;
+	struct PendingParticleBurst {
+		uint32_t id = 0;
+		int count = 0;
+		bool restart = false; // clear live particles first (pooled one-shot effects)
+	};
+	std::vector<PendingParticleBurst> pendingParticleBursts_;
+	// Pairs dispatched by the last DispatchCollisionEvents() (counted even when no script listens)
+	struct CollisionEventCounts {
+		int enter = 0;
+		int stay = 0;
+		int exit = 0;
+	};
+	CollisionEventCounts lastCollisionEvents_;
+	uint32_t musicVoice_ = 0;
+	std::string musicPath_;
+
 	bool showScriptGenModal_ = false;
 	int scriptGenTargetObjectIndex_ = -1; // >= 0 when opened via [Add Component -> Script -> New Script...]
 	char scriptClassNameBuf_[128] = "PlayerController";
@@ -850,6 +944,12 @@ private:
 	std::filesystem::path currentDirectory_ = "Resources";
 	std::filesystem::path selectedAssetPath_ = "";
 	char assetSearchBuf_[128] = "";
+	mutable AssetDatabase assetDatabase_;
+	std::filesystem::path assetRenameTarget_;
+	char assetRenameBuf_[260] = "";
+	std::filesystem::path assetDeleteTarget_;
+	bool openAssetRenamePopup_ = false;
+	bool openAssetDeletePopup_ = false;
 
 	// Console State
 	struct LogEntry {

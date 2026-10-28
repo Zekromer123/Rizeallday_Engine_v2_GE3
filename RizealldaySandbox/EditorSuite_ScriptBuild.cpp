@@ -1,5 +1,10 @@
 ﻿#include "EditorSuiteInternal.h"
 
+namespace {
+	// Generated scripts start with a UTF-8 BOM (project rule), so Japanese comments read correctly in every tool
+	constexpr const char* kUtf8Bom = "\xEF\xBB\xBF";
+}
+
 void EditorSuite::DrawCppScriptGeneratorModal()
 {
 #ifdef USE_IMGUI
@@ -81,6 +86,7 @@ bool EditorSuite::GenerateCppScriptFiles(const std::string& className, const std
 			LogMessage("[ScriptGen] " + scriptGenErrorMsg_, 2);
 			return false;
 		}
+		h << kUtf8Bom;
 		h << "#pragma once\n";
 		h << "#include \"base/ScriptAPI.h\"\n\n";
 		h << "// Note: Fields not marked EXPOSE_FIELD are not preserved across a script hot reload.\n";
@@ -105,6 +111,7 @@ bool EditorSuite::GenerateCppScriptFiles(const std::string& className, const std
 			LogMessage("[ScriptGen] " + scriptGenErrorMsg_, 2);
 			return false;
 		}
+		cpp << kUtf8Bom;
 		cpp << "#include \"" << className << ".h\"\n\n";
 		cpp << "void " << className << "::Initialize() {\n";
 		cpp << "    if (GameObject* self = GetOwner()) {\n";
@@ -530,6 +537,122 @@ void EditorSuite::PollScriptSourceWatcher(float deltaTime)
 	}
 }
 
+namespace {
+	// Late-bound calls on the Visual Studio automation object (EnvDTE via IDispatch)
+	bool DispInvoke(IDispatch* obj, const wchar_t* name, WORD flags, VARIANT* args, UINT argCount, VARIANT* result)
+	{
+		if (!obj) return false;
+		LPOLESTR names[1] = { const_cast<LPOLESTR>(name) };
+		DISPID id = DISPID_UNKNOWN;
+		if (FAILED(obj->GetIDsOfNames(IID_NULL, names, 1, LOCALE_USER_DEFAULT, &id))) return false;
+		DISPPARAMS params = { args, nullptr, argCount, 0 };
+		VARIANT scratch;
+		VariantInit(&scratch);
+		const HRESULT hr = obj->Invoke(id, IID_NULL, LOCALE_USER_DEFAULT, flags, &params, result ? result : &scratch, nullptr, nullptr);
+		VariantClear(&scratch);
+		return SUCCEEDED(hr);
+	}
+
+	Microsoft::WRL::ComPtr<IDispatch> DispGetObject(IDispatch* obj, const wchar_t* name)
+	{
+		VARIANT v;
+		VariantInit(&v);
+		Microsoft::WRL::ComPtr<IDispatch> out;
+		if (DispInvoke(obj, name, DISPATCH_PROPERTYGET, nullptr, 0, &v) && v.vt == VT_DISPATCH && v.pdispVal) out = v.pdispVal;
+		VariantClear(&v);
+		return out;
+	}
+
+	/// DTE.Solution.FullName ("" while no solution is open)
+	std::filesystem::path DteSolutionPath(IDispatch* dte)
+	{
+		Microsoft::WRL::ComPtr<IDispatch> solution = DispGetObject(dte, L"Solution");
+		VARIANT v;
+		VariantInit(&v);
+		std::filesystem::path out;
+		if (solution && DispInvoke(solution.Get(), L"FullName", DISPATCH_PROPERTYGET, nullptr, 0, &v) && v.vt == VT_BSTR && v.bstrVal) {
+			out = std::filesystem::path(std::wstring(v.bstrVal, SysStringLen(v.bstrVal)));
+		}
+		VariantClear(&v);
+		return out;
+	}
+
+	/// Every Visual Studio instance registered in the Running Object Table
+	std::vector<Microsoft::WRL::ComPtr<IDispatch>> RunningVisualStudios()
+	{
+		std::vector<Microsoft::WRL::ComPtr<IDispatch>> result;
+		Microsoft::WRL::ComPtr<IRunningObjectTable> rot;
+		Microsoft::WRL::ComPtr<IEnumMoniker> monikers;
+		if (FAILED(GetRunningObjectTable(0, &rot)) || !rot || FAILED(rot->EnumRunning(&monikers)) || !monikers) return result;
+		Microsoft::WRL::ComPtr<IMoniker> moniker;
+		while (monikers->Next(1, moniker.ReleaseAndGetAddressOf(), nullptr) == S_OK) {
+			Microsoft::WRL::ComPtr<IBindCtx> bindCtx;
+			if (FAILED(CreateBindCtx(0, &bindCtx))) continue;
+			LPOLESTR displayName = nullptr;
+			if (FAILED(moniker->GetDisplayName(bindCtx.Get(), nullptr, &displayName)) || !displayName) continue;
+			const bool isDte = std::wstring_view(displayName).starts_with(L"!VisualStudio.DTE");
+			CoTaskMemFree(displayName);
+			if (!isDte) continue;
+			Microsoft::WRL::ComPtr<IUnknown> unknown;
+			Microsoft::WRL::ComPtr<IDispatch> dte;
+			if (SUCCEEDED(rot->GetObject(moniker.Get(), &unknown)) && unknown && SUCCEEDED(unknown.As(&dte))) result.push_back(dte);
+		}
+		return result;
+	}
+
+	bool SamePath(const std::filesystem::path& a, const std::filesystem::path& b)
+	{
+		if (a.empty() || b.empty()) return false;
+		std::error_code ec;
+		return std::filesystem::equivalent(a, b, ec);
+	}
+
+	/// ItemOperations.OpenFile(file) + MainWindow.Activate()
+	bool DteOpenFile(IDispatch* dte, const std::filesystem::path& file)
+	{
+		Microsoft::WRL::ComPtr<IDispatch> itemOps = DispGetObject(dte, L"ItemOperations");
+		if (!itemOps) return false;
+		VARIANT arg;
+		VariantInit(&arg);
+		arg.vt = VT_BSTR;
+		arg.bstrVal = SysAllocString(file.wstring().c_str());
+		const bool opened = DispInvoke(itemOps.Get(), L"OpenFile", DISPATCH_METHOD, &arg, 1, nullptr);
+		VariantClear(&arg);
+		if (Microsoft::WRL::ComPtr<IDispatch> mainWindow = DispGetObject(dte, L"MainWindow")) {
+			DispInvoke(mainWindow.Get(), L"Activate", DISPATCH_METHOD, nullptr, 0, nullptr);
+		}
+		return opened;
+	}
+
+	/// The engine solution (*.slnx preferred, then *.sln) in the workspace root
+	std::filesystem::path FindEngineSolution()
+	{
+		std::error_code ec;
+		const std::filesystem::path root = ScriptModule::ResolveWorkspaceRoot();
+		std::filesystem::path sln;
+		for (const auto& entry : std::filesystem::directory_iterator(root, ec)) {
+			const std::wstring ext = entry.path().extension().wstring();
+			if (ext == L".slnx") return entry.path();
+			if (ext == L".sln" && sln.empty()) sln = entry.path();
+		}
+		return sln;
+	}
+
+	std::filesystem::path FindDevenv()
+	{
+		std::error_code ec;
+		for (const wchar_t* version : { L"18", L"2022" }) {
+			for (const wchar_t* edition : { L"Community", L"Professional", L"Enterprise", L"Insiders" }) {
+				const std::filesystem::path devenv = std::filesystem::path(L"C:\\Program Files\\Microsoft Visual Studio") / version / edition / L"Common7\\IDE\\devenv.exe";
+				if (std::filesystem::exists(devenv, ec)) return devenv;
+			}
+		}
+		return {};
+	}
+}
+
+// Opens a script inside the engine solution, so IntelliSense knows the GameScripts include paths
+// (a file opened on its own lands in "Miscellaneous Files" and gets no completion for ScriptAPI.h).
 void EditorSuite::OpenFileInVisualStudio(const std::filesystem::path& filePath)
 {
 	std::error_code ec;
@@ -546,137 +669,76 @@ void EditorSuite::OpenFileInVisualStudio(const std::filesystem::path& filePath)
 			std::lock_guard<std::mutex> lock(buildLogMutex_);
 			pendingBuildLogs_.push_back({ text, type });
 		};
+		const std::string fileName = absFile.filename().string();
 
-		// 1. Try attaching to a running Visual Studio DTE instance via Running Object Table (ROT)
-		HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-		bool comInitialized = SUCCEEDED(hr) || hr == S_FALSE;
-		bool openedViaDte = false;
+		const HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+		const bool comInitialized = SUCCEEDED(hr);
+		const std::filesystem::path solution = FindEngineSolution();
 
-		if (comInitialized) {
-			{
-				Microsoft::WRL::ComPtr<IRunningObjectTable> pRot = nullptr;
-				if (SUCCEEDED(GetRunningObjectTable(0, &pRot)) && pRot) {
-					Microsoft::WRL::ComPtr<IEnumMoniker> pEnum = nullptr;
-					if (SUCCEEDED(pRot->EnumRunning(&pEnum)) && pEnum) {
-						Microsoft::WRL::ComPtr<IMoniker> pMoniker = nullptr;
-						ULONG fetched = 0;
-						while (!openedViaDte && pEnum->Next(1, &pMoniker, &fetched) == S_OK) {
-							Microsoft::WRL::ComPtr<IBindCtx> pBindCtx = nullptr;
-							if (SUCCEEDED(CreateBindCtx(0, &pBindCtx)) && pBindCtx) {
-								LPOLESTR displayName = nullptr;
-								if (SUCCEEDED(pMoniker->GetDisplayName(pBindCtx.Get(), nullptr, &displayName)) && displayName) {
-									std::wstring disp(displayName);
-									CoTaskMemFree(displayName);
-									if (disp.find(L"!VisualStudio.DTE") == 0) {
-										Microsoft::WRL::ComPtr<IUnknown> pUnk = nullptr;
-										if (SUCCEEDED(pRot->GetObject(pMoniker.Get(), &pUnk)) && pUnk) {
-											Microsoft::WRL::ComPtr<IDispatch> pDte = nullptr;
-											if (SUCCEEDED(pUnk.As(&pDte)) && pDte) {
-												// Get ItemOperations property on DTE
-												OLECHAR itemOpsName[] = L"ItemOperations";
-												LPOLESTR names[1] = { itemOpsName };
-												DISPID dispidItemOps = DISPID_UNKNOWN;
-												if (SUCCEEDED(pDte->GetIDsOfNames(IID_NULL, names, 1, LOCALE_USER_DEFAULT, &dispidItemOps))) {
-													DISPPARAMS noArgs = { nullptr, nullptr, 0, 0 };
-													VARIANT vItemOps;
-													VariantInit(&vItemOps);
-													if (SUCCEEDED(pDte->Invoke(dispidItemOps, IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_PROPERTYGET, &noArgs, &vItemOps, nullptr, nullptr))
-														&& vItemOps.vt == VT_DISPATCH && vItemOps.pdispVal) {
-														IDispatch* pItemOps = vItemOps.pdispVal;
-														OLECHAR openFileName[] = L"OpenFile";
-														LPOLESTR openNames[1] = { openFileName };
-														DISPID dispidOpenFile = DISPID_UNKNOWN;
-														if (SUCCEEDED(pItemOps->GetIDsOfNames(IID_NULL, openNames, 1, LOCALE_USER_DEFAULT, &dispidOpenFile))) {
-															BSTR bstrFile = SysAllocString(absFile.wstring().c_str());
-															VARIANT vArg;
-															VariantInit(&vArg);
-															vArg.vt = VT_BSTR;
-															vArg.bstrVal = bstrFile;
-															DISPPARAMS openParams = { &vArg, nullptr, 1, 0 };
-															VARIANT vRes;
-															VariantInit(&vRes);
-															if (SUCCEEDED(pItemOps->Invoke(dispidOpenFile, IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_METHOD, &openParams, &vRes, nullptr, nullptr))) {
-																openedViaDte = true;
-															}
-															VariantClear(&vRes);
-															SysFreeString(bstrFile);
-														}
-
-														// Also activate MainWindow if available
-														OLECHAR mainWinName[] = L"MainWindow";
-														LPOLESTR mwNames[1] = { mainWinName };
-														DISPID dispidMw = DISPID_UNKNOWN;
-														if (SUCCEEDED(pDte->GetIDsOfNames(IID_NULL, mwNames, 1, LOCALE_USER_DEFAULT, &dispidMw))) {
-															VARIANT vMw;
-															VariantInit(&vMw);
-															if (SUCCEEDED(pDte->Invoke(dispidMw, IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_PROPERTYGET, &noArgs, &vMw, nullptr, nullptr))
-																&& vMw.vt == VT_DISPATCH && vMw.pdispVal) {
-																OLECHAR actName[] = L"Activate";
-																LPOLESTR actNames[1] = { actName };
-																DISPID dispidAct = DISPID_UNKNOWN;
-																if (SUCCEEDED(vMw.pdispVal->GetIDsOfNames(IID_NULL, actNames, 1, LOCALE_USER_DEFAULT, &dispidAct))) {
-																	VARIANT vDummy;
-																	VariantInit(&vDummy);
-																	vMw.pdispVal->Invoke(dispidAct, IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_METHOD, &noArgs, &vDummy, nullptr, nullptr);
-																	VariantClear(&vDummy);
-																}
-															}
-															VariantClear(&vMw);
-														}
-													}
-													VariantClear(&vItemOps);
-												}
-											}
-										}
-									}
-								}
-							}
-						}
-					}
-				}
+		// 1. A Visual Studio that already has the engine solution open
+		auto openInSolutionInstance = [&]() {
+			for (const auto& dte : RunningVisualStudios()) {
+				if (SamePath(DteSolutionPath(dte.Get()), solution) && DteOpenFile(dte.Get(), absFile)) return true;
 			}
-			CoUninitialize();
-		}
-
-		if (openedViaDte) {
-			logAsync(std::format("[Scripts] Opened '{}' in running Visual Studio instance via DTE.", absFile.filename().string()), 0);
-			return;
-		}
-
-		// 2. Fallback: Locate devenv.exe and launch with /edit "<filePath>"
-		std::error_code localEc;
-		std::vector<std::filesystem::path> devenvCandidates = {
-			"C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\Common7\\IDE\\devenv.exe",
-			"C:\\Program Files\\Microsoft Visual Studio\\18\\Professional\\Common7\\IDE\\devenv.exe",
-			"C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\Common7\\IDE\\devenv.exe",
-			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\Common7\\IDE\\devenv.exe",
-			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Professional\\Common7\\IDE\\devenv.exe",
-			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\Common7\\IDE\\devenv.exe"
+			return false;
 		};
+		bool opened = false;
+		if (comInitialized && !solution.empty()) {
+			opened = openInSolutionInstance();
+			if (opened) logAsync(std::format("[Scripts] Opened '{}' in Visual Studio ({}).", fileName, solution.filename().string()), 0);
+		}
 
-		for (const auto& devenv : devenvCandidates) {
-			if (std::filesystem::exists(devenv, localEc)) {
-				std::wstring cmd = L"\"" + devenv.wstring() + L"\" /edit \"" + absFile.wstring() + L"\"";
-				std::vector<wchar_t> cmdBuf(cmd.begin(), cmd.end());
-				cmdBuf.push_back(L'\0');
+		// 2. Start Visual Studio with the solution, then open the file once the solution is registered
+		if (!opened && comInitialized && !solution.empty()) {
+			bool launched = false;
+			if (const std::filesystem::path devenv = FindDevenv(); !devenv.empty()) {
+				std::wstring cmd = L"\"" + devenv.wstring() + L"\" \"" + solution.wstring() + L"\"";
 				STARTUPINFOW si{};
 				si.cb = sizeof(si);
 				PROCESS_INFORMATION pi{};
-				if (CreateProcessW(NULL, cmdBuf.data(), NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+				if (CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
 					CloseHandle(pi.hProcess);
 					CloseHandle(pi.hThread);
-					logAsync(std::format("[Scripts] Opened '{}' via devenv.exe /edit.", absFile.filename().string()), 0);
-					return;
+					launched = true;
 				}
+			}
+			if (!launched) {
+				launched = reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, L"open", solution.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL)) > 32;
+			}
+			if (launched) {
+				logAsync(std::format("[Scripts] Starting Visual Studio with {} (opens '{}' when ready)...", solution.filename().string(), fileName), 0);
+				const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(120);
+				while (!opened && std::chrono::steady_clock::now() < deadline) {
+					std::this_thread::sleep_for(std::chrono::milliseconds(500));
+					opened = openInSolutionInstance();
+				}
+				if (opened) {
+					logAsync(std::format("[Scripts] Opened '{}' in Visual Studio ({}).", fileName, solution.filename().string()), 0);
+				} else {
+					logAsync(std::format("[Scripts] Visual Studio did not report the solution in time; open '{}' from Solution Explorer.", fileName), 1);
+				}
+				opened = true; // Visual Studio is running with the solution either way
 			}
 		}
 
-		// 3. Final fallback: ShellExecuteW default handler
-		HINSTANCE res = ShellExecuteW(NULL, L"open", absFile.wstring().c_str(), NULL, NULL, SW_SHOWNORMAL);
-		if (reinterpret_cast<INT_PTR>(res) > 32) {
-			logAsync(std::format("[Scripts] Opened '{}' with default system association (ShellExecuteW).", absFile.filename().string()), 0);
+		// 3. No solution found: any running Visual Studio
+		if (!opened && comInitialized) {
+			for (const auto& dte : RunningVisualStudios()) {
+				if (DteOpenFile(dte.Get(), absFile)) {
+					opened = true;
+					logAsync(std::format("[Scripts] Opened '{}' outside the engine solution (IntelliSense may be limited).", fileName), 1);
+					break;
+				}
+			}
+		}
+		if (comInitialized) CoUninitialize();
+		if (opened) return;
+
+		// 4. Default handler for the file type
+		if (reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, L"open", absFile.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL)) > 32) {
+			logAsync(std::format("[Scripts] Opened '{}' with the default editor.", fileName), 0);
 		} else {
-			logAsync(std::format("[Scripts] Warning: Failed to open '{}' in Visual Studio or default editor.", absFile.string()), 1);
+			logAsync(std::format("[Scripts] Warning: Failed to open '{}' in Visual Studio or the default editor.", absFile.string()), 1);
 		}
 	}).detach();
 }

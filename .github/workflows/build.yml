@@ -50,6 +50,22 @@ jobs:
             throw "Build halted: $($missing.Count) required dependency file(s) missing: $($missing -join ', ')"
           }
 
+      - name: Check source encoding (UTF-8 with BOM)
+        shell: pwsh
+        run: |
+          # Project rule: every .h / .cpp outside externals/ is UTF-8 with BOM (safe for Japanese text in any tool)
+          $bad = Get-ChildItem -Recurse -Include *.h,*.cpp -File |
+            Where-Object { $_.FullName -notmatch "[\\/](externals|bin)[\\/]" } |
+            Where-Object {
+              $b = [System.IO.File]::ReadAllBytes($_.FullName)
+              -not ($b.Length -ge 3 -and $b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF)
+            }
+          if ($bad) {
+            $bad | ForEach-Object { Write-Host "::error file=$($_.FullName)::Not saved as UTF-8 with BOM" }
+            throw "$(@($bad).Count) source file(s) without a UTF-8 BOM"
+          }
+          Write-Host "All source files are UTF-8 with BOM"
+
       - name: Build Development and Release (0 warnings required)
         shell: pwsh
         run: |

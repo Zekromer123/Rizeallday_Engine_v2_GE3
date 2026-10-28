@@ -14,7 +14,7 @@ namespace {
 		void OnCollision(ICollidable* other) override {
 			auto* otherAdapter = dynamic_cast<GameObjectColliderAdapter*>(other);
 			if (suite_ && otherAdapter && otherAdapter->objectId_ != objectId_) {
-				suite_->DispatchScriptCollision(objectId_, otherAdapter->objectId_);
+				suite_->RecordCollisionContact(objectId_, otherAdapter->objectId_);
 			}
 		}
 
@@ -29,6 +29,38 @@ namespace {
 	};
 }
 
+// World-space AABB of an object's box collider. Roots keep the original math (translation + center);
+// children transform the center through the world matrix and use the world scale.
+void EditorSuite::ComputeBoxColliderBounds(const GameObject& o, bool useAbsSize, Vector3& outMin, Vector3& outMax) const
+{
+	Vector3 wPos{};
+	Quaternion wRot = Quaternion::Identity();
+	Vector3 wScale{};
+	GetWorldTRS(o, wPos, wRot, wScale);
+	const Vector3 center = (o.parentId == -1)
+		? Vector3{ wPos.x + o.boxCenter.x, wPos.y + o.boxCenter.y, wPos.z + o.boxCenter.z }
+		: TransformUtil::TransformPoint(o.boxCenter, o.worldMatrix);
+	Vector3 half = { o.boxSize.x * wScale.x * 0.5f, o.boxSize.y * wScale.y * 0.5f, o.boxSize.z * wScale.z * 0.5f };
+	if (useAbsSize) {
+		half = { std::abs(half.x), std::abs(half.y), std::abs(half.z) };
+	}
+	outMin = { center.x - half.x, center.y - half.y, center.z - half.z };
+	outMax = { center.x + half.x, center.y + half.y, center.z + half.z };
+}
+
+void EditorSuite::ComputeSphereColliderWorld(const GameObject& o, Vector3& outCenter, float& outRadius) const
+{
+	Vector3 wPos{};
+	Quaternion wRot = Quaternion::Identity();
+	Vector3 wScale{};
+	GetWorldTRS(o, wPos, wRot, wScale);
+	const float maxScale = (std::max)({ std::abs(wScale.x), std::abs(wScale.y), std::abs(wScale.z) });
+	outCenter = (o.parentId == -1)
+		? Vector3{ wPos.x + o.sphereCenter.x, wPos.y + o.sphereCenter.y, wPos.z + o.sphereCenter.z }
+		: TransformUtil::TransformPoint(o.sphereCenter, o.worldMatrix);
+	outRadius = o.sphereRadius * maxScale;
+}
+
 void EditorSuite::UpdatePhysics(float deltaTime)
 {
 	const float gravity = -9.81f;
@@ -36,22 +68,8 @@ void EditorSuite::UpdatePhysics(float deltaTime)
 	// Scripts may have moved objects earlier this frame
 	UpdateWorldMatrices();
 
-	// World-space AABB of an object's box collider. Roots keep the original math (translation + center);
-	// children transform the center through the world matrix and use the world scale.
 	auto computeBoxBounds = [this](const GameObject& o, bool useAbsSize, Vector3& outMin, Vector3& outMax) {
-		Vector3 wPos{};
-		Quaternion wRot = Quaternion::Identity();
-		Vector3 wScale{};
-		GetWorldTRS(o, wPos, wRot, wScale);
-		const Vector3 center = (o.parentId == -1)
-			? Vector3{ wPos.x + o.boxCenter.x, wPos.y + o.boxCenter.y, wPos.z + o.boxCenter.z }
-			: TransformUtil::TransformPoint(o.boxCenter, o.worldMatrix);
-		Vector3 half = { o.boxSize.x * wScale.x * 0.5f, o.boxSize.y * wScale.y * 0.5f, o.boxSize.z * wScale.z * 0.5f };
-		if (useAbsSize) {
-			half = { std::abs(half.x), std::abs(half.y), std::abs(half.z) };
-		}
-		outMin = { center.x - half.x, center.y - half.y, center.z - half.z };
-		outMax = { center.x + half.x, center.y + half.y, center.z + half.z };
+		ComputeBoxColliderBounds(o, useAbsSize, outMin, outMax);
 	};
 
 	for (auto& obj : gameObjects_) {
@@ -112,16 +130,8 @@ void EditorSuite::UpdatePhysics(float deltaTime)
 			}
 
 			if (obj.hasSphereCollider && obj.sphereColliderEnabled) {
-				Vector3 wPos{};
-				Quaternion wRot = Quaternion::Identity();
-				Vector3 wScale{};
-				GetWorldTRS(obj, wPos, wRot, wScale);
-				float maxScale = (std::max)({ std::abs(wScale.x), std::abs(wScale.y), std::abs(wScale.z) });
 				SphereCollider sph{};
-				sph.center = (obj.parentId == -1)
-					? Vector3{ wPos.x + obj.sphereCenter.x, wPos.y + obj.sphereCenter.y, wPos.z + obj.sphereCenter.z }
-					: TransformUtil::TransformPoint(obj.sphereCenter, obj.worldMatrix);
-				sph.radius = obj.sphereRadius * maxScale;
+				ComputeSphereColliderWorld(obj, sph.center, sph.radius);
 				sph.attribute = 1u << (obj.layer & 31u);
 				sph.mask = obj.collisionMask;
 				sph.enabled = true;
@@ -133,6 +143,8 @@ void EditorSuite::UpdatePhysics(float deltaTime)
 
 		colMgr->CheckAllCollisions();
 		colMgr->Clear();
+		// Script callbacks run after the check, once per object pair (box + sphere on one object count once)
+		DispatchCollisionEvents();
 	}
 
 	// Collision detection and resolution.

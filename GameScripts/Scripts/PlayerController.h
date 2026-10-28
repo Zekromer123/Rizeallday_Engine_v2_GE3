@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "base/ScriptAPI.h"
 
 // Note: Fields not marked EXPOSE_FIELD are not preserved across a script hot reload.

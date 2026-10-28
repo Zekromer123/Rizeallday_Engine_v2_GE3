@@ -12,6 +12,9 @@
     <ClCompile Include="Scripts\PlayerController.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>
+    <ClCompile Include="Scripts\SceneManager.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
     <ClCompile Include="Scripts\dllmain.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>
@@ -69,6 +72,9 @@
       <Filter>Scripts</Filter>
     </ClInclude>
     <ClInclude Include="Scripts\SurvivorsShared.h">
+      <Filter>Scripts</Filter>
+    </ClInclude>
+    <ClInclude Include="Scripts\SceneManager.h">
       <Filter>Scripts</Filter>
     </ClInclude>
     <ClInclude Include="..\RizealldayEngine\base\ScriptAPI.h">

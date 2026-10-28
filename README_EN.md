@@ -22,6 +22,8 @@ and a game build/export pipeline. Designed for making 3D games directly, from pr
 **Editor**
 - Project Hub, parent/child Hierarchy, Inspector, gizmos (move/rotate/scale), Asset Browser
 - Undo/redo, JSON scenes, prefabs, Play / Pause / Step, full-window game preview (F11)
+- GUID asset database (`.meta` files): renaming or moving assets in the Project panel keeps scenes and prefabs intact
+- Japanese text (editor, game UI, file names) and an editor language option: English / 日本語 / Bahasa Indonesia (Options > Language)
 - Profiler (CPU & GPU per pass, draw calls, upload memory), game Build & Export
 
 **Gameplay & scripting**
@@ -29,6 +31,7 @@ and a game build/export pipeline. Designed for making 3D games directly, from pr
 - Keyboard, mouse (world-space aiming) and XInput gamepad input
 - Sphere / AABB / OBB collision with layers & masks and a grid broadphase, simple rigidbodies
 - Prefabs with object pooling, scene switching, save data, time scale (pause / slow motion)
+- `OnCollisionEnter/Exit` events, raycast / overlap-sphere / tag queries, and script control of audio, particles, materials, lights, rigidbodies and animation
 - XAudio2 audio
 
 **Quality**

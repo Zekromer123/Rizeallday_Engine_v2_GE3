@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "ScriptAPI.h"
 
 /// Rotates the owner GameObject continuously around a configurable axis.

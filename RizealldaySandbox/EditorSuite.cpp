@@ -89,6 +89,7 @@ GameObject::GameObject(const GameObject& other) {
 	particleSpawnRate = other.particleSpawnRate;
 	particleMaxParticles = other.particleMaxParticles;
 	particleBurstCount = other.particleBurstCount;
+	particleEmitContinuously = other.particleEmitContinuously;
 	particleDirection = other.particleDirection;
 	particleSpreadAngle = other.particleSpreadAngle;
 	particleSpeedMin = other.particleSpeedMin;
@@ -115,6 +116,7 @@ GameObject::GameObject(const GameObject& other) {
 	hasScript = other.hasScript;
 	scriptClassName = other.scriptClassName;
 	scripts = other.scripts;
+	components = other.components;
 	hasRigidbody = other.hasRigidbody;
 	rbEnabled = other.rbEnabled;
 	mass = other.mass;
@@ -216,6 +218,7 @@ GameObject& GameObject::operator=(const GameObject& other) {
 		particleSpawnRate = other.particleSpawnRate;
 		particleMaxParticles = other.particleMaxParticles;
 		particleBurstCount = other.particleBurstCount;
+		particleEmitContinuously = other.particleEmitContinuously;
 		particleDirection = other.particleDirection;
 		particleSpreadAngle = other.particleSpreadAngle;
 		particleSpeedMin = other.particleSpeedMin;
@@ -242,6 +245,7 @@ GameObject& GameObject::operator=(const GameObject& other) {
 		hasScript = other.hasScript;
 		scriptClassName = other.scriptClassName;
 		scripts = other.scripts;
+		components = other.components;
 		hasRigidbody = other.hasRigidbody;
 		rbEnabled = other.rbEnabled;
 		mass = other.mass;
@@ -305,6 +309,10 @@ void EditorSuite::Initialize(
 	LightGroup* lights,
 	ParticleQuad* particleSystem)
 {
+	RegisterBuiltinComponents();
+#ifdef USE_IMGUI
+	Localization::LoadPreference(); // editor UI language chosen in Options > Language
+#endif
 	dxCommon_ = dxCommon;
 	gameCamera_ = gameCamera;
 	lights_ = lights;

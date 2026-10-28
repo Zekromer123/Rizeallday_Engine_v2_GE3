@@ -47,7 +47,7 @@ void EditorSuite::DrawProfilerWindow()
 	const ImGuiViewport* viewport = ImGui::GetMainViewport();
 	ImGui::SetNextWindowSize(ImVec2(440.0f, 700.0f), ImGuiCond_FirstUseEver);
 	ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.75f - 460.0f, viewport->WorkPos.y + 110.0f), ImGuiCond_FirstUseEver);
-	if (!ImGui::Begin("Profiler", &showProfiler_)) {
+	if (!ImGui::Begin(TrId("Profiler"), &showProfiler_)) {
 		ImGui::End();
 		return;
 	}
@@ -91,15 +91,15 @@ void EditorSuite::DrawProfilerWindow()
 	}
 
 	// ---- 3. CPU / GPU tables ----
-	if (ImGui::CollapsingHeader("CPU", ImGuiTreeNodeFlags_DefaultOpen)) {
+	if (ImGui::CollapsingHeader(TrId("CPU"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		DrawScopeTable("##CpuScopes", snap.cpu, "No CPU scopes recorded yet.");
 	}
-	if (ImGui::CollapsingHeader("GPU", ImGuiTreeNodeFlags_DefaultOpen)) {
+	if (ImGui::CollapsingHeader(TrId("GPU"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		DrawScopeTable("##GpuScopes", snap.gpu, "No GPU timings yet (results arrive about 2 frames late).");
 	}
 
 	// ---- 4. Counters ----
-	if (ImGui::CollapsingHeader("Counters", ImGuiTreeNodeFlags_DefaultOpen)) {
+	if (ImGui::CollapsingHeader(TrId("Counters"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Text("Draw calls: %u (%u instances)", snap.drawCalls, snap.instances);
 
 		const float uploadKb = static_cast<float>(snap.uploadBytesUsed) / 1024.0f;

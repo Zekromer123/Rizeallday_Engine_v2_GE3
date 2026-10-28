@@ -23,6 +23,9 @@ public:
 	/// Create (or return the cached) RGBA8 texture from memory, e.g. a generated font atlas.
 	/// `cacheKey` must be unique and is never a file path. rgba holds width * height * 4 bytes, top row first.
 	uint32_t CreateTextureFromRGBA(const std::string& cacheKey, const uint8_t* rgba, uint32_t width, uint32_t height);
+	/// Replaces the pixels of a texture made by CreateTextureFromRGBA; the handle stays valid.
+	/// Waits for the GPU like the create call, so use it for occasional changes (e.g. new font glyphs).
+	bool UpdateTextureFromRGBA(uint32_t textureHandle, const uint8_t* rgba, uint32_t width, uint32_t height);
 
 	/// Get GPU descriptor handle
 	D3D12_GPU_DESCRIPTOR_HANDLE GetGPUHandle(uint32_t textureHandle);

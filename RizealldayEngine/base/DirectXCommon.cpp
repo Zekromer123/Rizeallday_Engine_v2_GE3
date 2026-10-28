@@ -16,6 +16,47 @@
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib,"dxguid.lib")
 
+#ifdef USE_IMGUI
+namespace {
+	// ImGui 1.92 creates and resizes its own textures (dynamic font atlas: glyphs such as kanji are added on first use),
+	// so it needs an SRV allocator. Its first descriptor is the reserved slot [0]; later ones come from the free-list.
+	bool gImGuiSlot0InUse = false;
+
+	D3D12_CPU_DESCRIPTOR_HANDLE SrvCpuHandle(DirectXCommon* dx, uint32_t index)
+	{
+		D3D12_CPU_DESCRIPTOR_HANDLE h = dx->GetSrvDescriptorHeap()->GetCPUDescriptorHandleForHeapStart();
+		h.ptr += static_cast<SIZE_T>(dx->GetSrvDescriptorSize()) * index;
+		return h;
+	}
+
+	void ImGuiSrvAlloc(ImGui_ImplDX12_InitInfo* info, D3D12_CPU_DESCRIPTOR_HANDLE* outCpu, D3D12_GPU_DESCRIPTOR_HANDLE* outGpu)
+	{
+		DirectXCommon* dx = static_cast<DirectXCommon*>(info->UserData);
+		uint32_t index = 0;
+		if (gImGuiSlot0InUse) {
+			index = dx->AllocateSrvIndex();
+			IM_ASSERT(index != DirectXCommon::kInvalidSrvIndex && "SRV heap full: ImGui texture cannot be created");
+		}
+		gImGuiSlot0InUse = true;
+		*outCpu = SrvCpuHandle(dx, index);
+		*outGpu = dx->GetSrvDescriptorHeap()->GetGPUDescriptorHandleForHeapStart();
+		outGpu->ptr += static_cast<UINT64>(dx->GetSrvDescriptorSize()) * index;
+	}
+
+	void ImGuiSrvFree(ImGui_ImplDX12_InitInfo* info, D3D12_CPU_DESCRIPTOR_HANDLE cpu, D3D12_GPU_DESCRIPTOR_HANDLE)
+	{
+		DirectXCommon* dx = static_cast<DirectXCommon*>(info->UserData);
+		const SIZE_T start = dx->GetSrvDescriptorHeap()->GetCPUDescriptorHandleForHeapStart().ptr;
+		const uint32_t index = static_cast<uint32_t>((cpu.ptr - start) / dx->GetSrvDescriptorSize());
+		if (index == 0) {
+			gImGuiSlot0InUse = false;
+		} else {
+			dx->FreeSrvIndex(index); // fence-deferred: frames in flight may still sample it
+		}
+	}
+}
+#endif
+
 DirectXCommon* DirectXCommon::GetInstance()
 {
 	static DirectXCommon instance;
@@ -62,22 +103,44 @@ void DirectXCommon::Initialize(HWND hwnd, uint32_t width, uint32_t height)
 	ImGui::CreateContext();
 	ImGui::StyleColorsDark();
 	ImGui_ImplWin32_Init(hwnd);
-	ImGui_ImplDX12_Init(
-		device.Get(),
-		swapChainDesc.BufferCount,
-		DXGI_FORMAT_R8G8B8A8_UNORM, // matches uiRtvHandles
-		srvDescriptorHeap.Get(),
-		srvDescriptorHeap->GetCPUDescriptorHandleForHeapStart(),
-		srvDescriptorHeap->GetGPUDescriptorHandleForHeapStart()
-	);
+	// Not the legacy single-descriptor ImGui_ImplDX12_Init(): that one disables ImGuiBackendFlags_RendererHasTextures,
+	// which locks the font atlas so glyphs outside the startup set (Japanese) render as U+FFFD
+	ImGui_ImplDX12_InitInfo imguiInit;
+	imguiInit.Device = device.Get();
+	imguiInit.CommandQueue = commandQueue.Get();
+	imguiInit.NumFramesInFlight = static_cast<int>(swapChainDesc.BufferCount);
+	imguiInit.RTVFormat = DXGI_FORMAT_R8G8B8A8_UNORM; // matches uiRtvHandles
+	imguiInit.DSVFormat = DXGI_FORMAT_UNKNOWN;
+	imguiInit.UserData = this;
+	imguiInit.SrvDescriptorHeap = srvDescriptorHeap.Get();
+	imguiInit.SrvDescriptorAllocFn = ImGuiSrvAlloc;
+	imguiInit.SrvDescriptorFreeFn = ImGuiSrvFree;
+	gImGuiSlot0InUse = false;
+	ImGui_ImplDX12_Init(&imguiInit);
 	ImGuiIO& io = ImGui::GetIO();
 	// UI font: Segoe UI ships with Windows; fall back to ImGui's built-in font if it is missing.
 	// Must happen before the first NewFrame() because the font atlas is locked during a frame.
 	const char* uiFontPath = "C:/Windows/Fonts/segoeui.ttf";
+	ImFont* uiFont = nullptr;
 	if (GetFileAttributesA(uiFontPath) != INVALID_FILE_ATTRIBUTES) {
-		if (ImFont* uiFont = io.Fonts->AddFontFromFileTTF(uiFontPath, 16.0f)) {
-			io.FontDefault = uiFont;
+		uiFont = io.Fonts->AddFontFromFileTTF(uiFontPath, 16.0f);
+	}
+	if (!uiFont) uiFont = io.Fonts->AddFontDefault();
+	io.FontDefault = uiFont;
+	// Japanese (kana + kanji) merged in as a fallback for glyphs Segoe UI lacks. ImGui 1.92 rasterizes glyphs
+	// on demand, so no glyph ranges are needed and only the characters actually shown use atlas space.
+	bool japaneseFont = false;
+	for (const char* jpFontPath : { "C:/Windows/Fonts/YuGothM.ttc", "C:/Windows/Fonts/meiryo.ttc", "C:/Windows/Fonts/msgothic.ttc" }) {
+		if (GetFileAttributesA(jpFontPath) == INVALID_FILE_ATTRIBUTES) continue;
+		ImFontConfig merge;
+		merge.MergeMode = true;
+		if (io.Fonts->AddFontFromFileTTF(jpFontPath, 16.0f, &merge)) {
+			japaneseFont = true;
+			break;
 		}
+	}
+	if (!japaneseFont) {
+		Log::GetInstance()->logOutput("[ImGui] No Japanese font found (Yu Gothic / Meiryo / MS Gothic); Japanese text shows as '?'.\n");
 	}
 	io.Fonts->Build();
 

@@ -54,7 +54,7 @@ void EditorSuite::DrawEditorUI(float deltaTime, bool& showParticles)
 
 	if (showLightingSettings_) {
 		ImGui::SetNextWindowSize(ImVec2(380.0f, 420.0f), ImGuiCond_FirstUseEver);
-		if (ImGui::Begin("Lighting & Environment", &showLightingSettings_)) {
+		if (ImGui::Begin(TrId("Lighting & Environment"), &showLightingSettings_)) {
 			DrawSkyboxSettingsUI();
 		}
 		ImGui::End();
@@ -154,60 +154,60 @@ void EditorSuite::DrawMainMenuBar()
 {
 #ifdef USE_IMGUI
 	if (ImGui::BeginMainMenuBar()) {
-		if (ImGui::BeginMenu("File")) {
-			if (ImGui::MenuItem("New Scene", "Ctrl+N")) { NewScene(); }
-			if (ImGui::MenuItem("Open Scene...")) { showOpenSceneModal_ = true; }
-			if (ImGui::MenuItem("Save Scene", "Ctrl+S")) {
+		if (ImGui::BeginMenu(TrId("File"))) {
+			if (ImGui::MenuItem(TrId("New Scene"), "Ctrl+N")) { NewScene(); }
+			if (ImGui::MenuItem(TrId("Open Scene..."))) { showOpenSceneModal_ = true; }
+			if (ImGui::MenuItem(TrId("Save Scene"), "Ctrl+S")) {
 				if (currentScenePath_.empty()) showSaveSceneAsModal_ = true;
 				else SaveScene(currentScenePath_);
 			}
-			if (ImGui::MenuItem("Save Scene As...")) { showSaveSceneAsModal_ = true; }
-			if (ImGui::MenuItem("Revert Unsaved Changes")) { DiscardUnsavedChanges(); }
+			if (ImGui::MenuItem(TrId("Save Scene As..."))) { showSaveSceneAsModal_ = true; }
+			if (ImGui::MenuItem(TrId("Revert Unsaved Changes"))) { DiscardUnsavedChanges(); }
 			ImGui::Separator();
-			if (ImGui::MenuItem("New Project...")) { showNewProjectModal_ = true; }
-			if (ImGui::MenuItem("Open Project...")) { showOpenProjectModal_ = true; }
+			if (ImGui::MenuItem(TrId("New Project..."))) { showNewProjectModal_ = true; }
+			if (ImGui::MenuItem(TrId("Open Project..."))) { showOpenProjectModal_ = true; }
 			ImGui::Separator();
-			if (ImGui::MenuItem("Load Game Template > Playable 3D Tetris")) { LoadTetrisTemplate(); }
+			if (ImGui::MenuItem(TrId("Load Game Template > Playable 3D Tetris"))) { LoadTetrisTemplate(); }
 			ImGui::Separator();
-			if (ImGui::MenuItem("Build & Export Game...")) { showBuildSettingsModal_ = true; }
+			if (ImGui::MenuItem(TrId("Build & Export Game..."))) { showBuildSettingsModal_ = true; }
 			ImGui::Separator();
-			if (ImGui::MenuItem("Exit", "Alt+F4")) { WinApp::GetInstance()->RequestClose(); }
+			if (ImGui::MenuItem(TrId("Exit"), "Alt+F4")) { WinApp::GetInstance()->RequestClose(); }
 			ImGui::EndMenu();
 		}
-		if (ImGui::BeginMenu("Edit")) {
-			if (ImGui::MenuItem("Undo", "Ctrl+Z")) { Undo(); }
-			if (ImGui::MenuItem("Redo", "Ctrl+Y")) { Redo(); }
+		if (ImGui::BeginMenu(TrId("Edit"))) {
+			if (ImGui::MenuItem(TrId("Undo"), "Ctrl+Z")) { Undo(); }
+			if (ImGui::MenuItem(TrId("Redo"), "Ctrl+Y")) { Redo(); }
 			ImGui::Separator();
-			if (ImGui::MenuItem("Delete Selected", "Del")) { DeleteSelectedGameObject(); }
+			if (ImGui::MenuItem(TrId("Delete Selected"), "Del")) { DeleteSelectedGameObject(); }
 			ImGui::EndMenu();
 		}
-		if (ImGui::BeginMenu("Assets")) {
-			if (ImGui::MenuItem("Create C++ Script...")) {
+		if (ImGui::BeginMenu(TrId("Assets"))) {
+			if (ImGui::MenuItem(TrId("Create C++ Script..."))) {
 				scriptGenTargetObjectIndex_ = -1;
 				scriptGenErrorMsg_.clear();
 				showScriptGenModal_ = true;
 			}
-			if (ImGui::MenuItem("Build Scripts (GameScripts.dll)", "Ctrl+Shift+B")) { TriggerScriptBuild(); }
-			ImGui::MenuItem("Auto Build Scripts on Save", nullptr, &autoBuildScripts_);
+			if (ImGui::MenuItem(TrId("Build Scripts (GameScripts.dll)"), "Ctrl+Shift+B")) { TriggerScriptBuild(); }
+			ImGui::MenuItem(TrId("Auto Build Scripts on Save"), nullptr, &autoBuildScripts_);
 			ImGui::Separator();
-			if (ImGui::MenuItem("Refresh Asset Database", "Ctrl+R")) { RefreshAssetBrowser(); }
+			if (ImGui::MenuItem(TrId("Refresh Asset Database"), "Ctrl+R")) { RefreshAssetBrowser(); }
 			ImGui::EndMenu();
 		}
-		if (ImGui::BeginMenu("GameObject")) {
+		if (ImGui::BeginMenu(TrId("GameObject"))) {
 			DrawHierarchyCreationMenu();
 			ImGui::EndMenu();
 		}
-		if (ImGui::BeginMenu("Window")) {
-			if (ImGui::MenuItem("Preview Standalone Game Mode", "F11")) { ToggleStandalonePreview(); }
-			if (ImGui::MenuItem("Lighting / Environment", nullptr, showLightingSettings_)) {
+		if (ImGui::BeginMenu(TrId("Window"))) {
+			if (ImGui::MenuItem(TrId("Preview Standalone Game Mode"), "F11")) { ToggleStandalonePreview(); }
+			if (ImGui::MenuItem(TrId("Lighting / Environment"), nullptr, showLightingSettings_)) {
 				showLightingSettings_ = !showLightingSettings_;
 			}
-			if (ImGui::MenuItem("Profiler", "Ctrl+P", showProfiler_)) {
+			if (ImGui::MenuItem(TrId("Profiler"), "Ctrl+P", showProfiler_)) {
 				showProfiler_ = !showProfiler_;
 			}
-			if (ImGui::BeginMenu("Application Scene")) {
+			if (ImGui::BeginMenu(TrId("Application Scene"))) {
 				bool canSwitch = (sceneState_ == EditorSceneState::Edit);
-				if (ImGui::MenuItem("Title Scene (Demo)", nullptr, false, canSwitch)) {
+				if (ImGui::MenuItem(TrId("Title Scene (Demo)"), nullptr, false, canSwitch)) {
 					if (onRequestTitleScene_) {
 						onRequestTitleScene_();
 					}
@@ -216,8 +216,29 @@ void EditorSuite::DrawMainMenuBar()
 			}
 			ImGui::EndMenu();
 		}
-		if (ImGui::BeginMenu("Help")) {
-			if (ImGui::MenuItem("About Rizeallday Engine v2")) {}
+		if (ImGui::BeginMenu(TrId("Options"))) {
+			if (ImGui::BeginMenu(TrId("Language"))) {
+				// Language names come from the files ("_language"), so each one is shown in its own script
+				for (const Localization::LanguageInfo& lang : Localization::AvailableLanguages()) {
+					const bool current = (lang.code == Localization::CurrentLanguage());
+					if (ImGui::MenuItem((lang.displayName + "##lang_" + lang.code).c_str(), nullptr, current) && !current) {
+						if (Localization::SetLanguage(lang.code)) {
+							if (!isRunningTests_) Localization::SavePreference();
+							LogMessage(std::format("[Editor] Language: {} ({} translated strings)", lang.displayName, Localization::TranslationCount()), 0);
+						} else {
+							LogMessage(std::format("[Editor] Cannot load language file '{}.json'.", lang.code), 2);
+						}
+					}
+				}
+				ImGui::Separator();
+				ImGui::TextDisabled("%s", Tr("Translations: Resources/Localization/<code>.json"));
+				ImGui::TextDisabled("%s", Tr("Missing entries are shown in English."));
+				ImGui::EndMenu();
+			}
+			ImGui::EndMenu();
+		}
+		if (ImGui::BeginMenu(TrId("Help"))) {
+			if (ImGui::MenuItem(TrId("About Rizeallday Engine v2"))) {}
 			ImGui::EndMenu();
 		}
 		ImGui::EndMainMenuBar();
@@ -255,7 +276,7 @@ void EditorSuite::DrawTopPlayBar()
 		const ImVec4 statusColor = building ? ImVec4(1.0f, 0.78f, 0.25f, 1.0f)
 			: buildFailed ? ImVec4(0.95f, 0.35f, 0.35f, 1.0f)
 			: ImVec4(0.35f, 0.85f, 0.45f, 1.0f);
-		const char* statusText = building ? "Building scripts..." : buildFailed ? "Script build failed" : "Scripts ready";
+		const char* statusText = Tr(building ? "Building scripts..." : buildFailed ? "Script build failed" : "Scripts ready");
 		{
 			ImDrawList* dl = ImGui::GetWindowDrawList();
 			const ImVec2 p = ImGui::GetCursorScreenPos();
@@ -264,21 +285,23 @@ void EditorSuite::DrawTopPlayBar()
 			ImGui::SameLine(0.0f, 2.0f);
 			ImGui::AlignTextToFramePadding();
 			ImGui::TextDisabled("%s", statusText);
-			if (buildFailed) ImGui::SetItemTooltip("See the Console tab for MSBuild errors");
+			if (buildFailed) ImGui::SetItemTooltip("%s", Tr("See the Console tab for MSBuild errors"));
 		}
 
 		// Center: Play / Pause / Step / Stop
 		const bool isPlay = (sceneState_ == EditorSceneState::Play);
 		const bool isPause = (sceneState_ == EditorSceneState::Pause);
 		const bool inPlaySession = (isPlay || isPause);
-		const float playW = 76.0f;
-		const float smallW = 64.0f;
+		// Wide enough for the longest label in the current language (stable while toggling Play / Pause)
+		const float playW = (std::max)({ 76.0f, buttonWidth(TrId("Play")), buttonWidth(TrId("Playing")) });
+		const float smallW = (std::max)({ 64.0f, buttonWidth(TrId("Pause")), buttonWidth(TrId("Resume")),
+			buttonWidth(TrId("Step")), buttonWidth(TrId("Stop")) });
 		const float groupW = playW + smallW * 3.0f + spacing * 3.0f;
 		ImGui::SameLine((std::max)((screenW - groupW) * 0.5f, ImGui::GetCursorPosX() + 16.0f));
 
 		if (inPlaySession) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.50f, 0.25f, 1.0f));
 		if (inPlaySession) ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.58f, 0.30f, 1.0f));
-		if (ImGui::Button(inPlaySession ? "Playing" : "Play", ImVec2(playW, 0.0f))) {
+		if (ImGui::Button(TrId(inPlaySession ? "Playing" : "Play"), ImVec2(playW, 0.0f))) {
 			if (!inPlaySession) {
 				StartPlayMode();
 			} else {
@@ -286,39 +309,39 @@ void EditorSuite::DrawTopPlayBar()
 			}
 		}
 		if (inPlaySession) ImGui::PopStyleColor(2);
-		ImGui::SetItemTooltip(inPlaySession ? "Stop play mode" : "Enter play mode");
+		ImGui::SetItemTooltip("%s", Tr(inPlaySession ? "Stop play mode" : "Enter play mode"));
 
 		ImGui::SameLine();
 		ImGui::BeginDisabled(!inPlaySession);
 		if (isPause) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.60f, 0.42f, 0.12f, 1.0f));
-		if (ImGui::Button(isPause ? "Resume" : "Pause", ImVec2(smallW, 0.0f))) {
+		if (ImGui::Button(TrId(isPause ? "Resume" : "Pause"), ImVec2(smallW, 0.0f))) {
 			sceneState_ = isPlay ? EditorSceneState::Pause : EditorSceneState::Play;
 		}
 		if (isPause) ImGui::PopStyleColor();
 		ImGui::EndDisabled();
-		ImGui::SetItemTooltip("Pause / resume the running game");
+		ImGui::SetItemTooltip("%s", Tr("Pause / resume the running game"));
 
 		ImGui::SameLine();
-		if (ImGui::Button("Step", ImVec2(smallW, 0.0f))) {
+		if (ImGui::Button(TrId("Step"), ImVec2(smallW, 0.0f))) {
 			if (sceneState_ == EditorSceneState::Edit) {
 				StartPlayMode();
 			}
 			sceneState_ = EditorSceneState::Pause;
 			stepSingleFrame_ = true;
 		}
-		ImGui::SetItemTooltip("Advance a single frame (enters play mode paused)");
+		ImGui::SetItemTooltip("%s", Tr("Advance a single frame (enters play mode paused)"));
 
 		ImGui::SameLine();
 		ImGui::BeginDisabled(!inPlaySession);
-		if (ImGui::Button("Stop", ImVec2(smallW, 0.0f))) {
+		if (ImGui::Button(TrId("Stop"), ImVec2(smallW, 0.0f))) {
 			StopPlayMode();
 		}
 		ImGui::EndDisabled();
-		ImGui::SetItemTooltip("Stop play mode and restore the scene");
+		ImGui::SetItemTooltip("%s", Tr("Stop play mode and restore the scene"));
 
 		// Right: Build Scripts + Tools menu
-		const char* buildLabel = building ? "Building..." : "Build Scripts";
-		const char* toolsLabel = "Tools";
+		const char* buildLabel = TrId(building ? "Building..." : "Build Scripts");
+		const char* toolsLabel = TrId("Tools");
 		const float rightW = buttonWidth(buildLabel) + buttonWidth(toolsLabel) + spacing;
 		ImGui::SameLine((std::max)(screenW - rightW - 10.0f, ImGui::GetCursorPosX() + 16.0f));
 
@@ -327,23 +350,23 @@ void EditorSuite::DrawTopPlayBar()
 			TriggerScriptBuild();
 		}
 		ImGui::EndDisabled();
-		ImGui::SetItemTooltip("Compile GameScripts.dll in the background (Ctrl+Shift+B)");
+		ImGui::SetItemTooltip("%s", Tr("Compile GameScripts.dll in the background (Ctrl+Shift+B)"));
 
 		ImGui::SameLine();
 		if (ImGui::Button(toolsLabel)) {
 			ImGui::OpenPopup("##TopBarTools");
 		}
 		if (ImGui::BeginPopup("##TopBarTools")) {
-			ImGui::MenuItem("Auto Build Scripts", nullptr, &autoBuildScripts_);
-			ImGui::SetItemTooltip("Rebuild and hot-reload GameScripts.dll ~1s after saving a .cpp/.h in GameScripts/Scripts");
-			ImGui::MenuItem("Simulate Physics in Edit Mode", nullptr, &simulatePhysicsInEditMode_);
+			ImGui::MenuItem(TrId("Auto Build Scripts"), nullptr, &autoBuildScripts_);
+			ImGui::SetItemTooltip("%s", Tr("Rebuild and hot-reload GameScripts.dll ~1s after saving a .cpp/.h in GameScripts/Scripts"));
+			ImGui::MenuItem(TrId("Simulate Physics in Edit Mode"), nullptr, &simulatePhysicsInEditMode_);
 			ImGui::Separator();
-			if (ImGui::MenuItem("New C++ Script...")) {
+			if (ImGui::MenuItem(TrId("New C++ Script..."))) {
 				scriptGenTargetObjectIndex_ = selectedObjectIndex_;
 				scriptGenErrorMsg_.clear();
 				showScriptGenModal_ = true;
 			}
-			if (ImGui::MenuItem("Build / Export...")) {
+			if (ImGui::MenuItem(TrId("Build / Export..."))) {
 				showBuildSettingsModal_ = true;
 			}
 			ImGui::EndPopup();
@@ -369,12 +392,12 @@ void EditorSuite::DrawHierarchyPanel()
 	ImGui::SetNextWindowSize(ImVec2(leftW, midH));
 	ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
 
-	if (ImGui::Begin("Hierarchy", nullptr, flags)) {
+	if (ImGui::Begin(TrId("Hierarchy"), nullptr, flags)) {
 		// Sub-bar: creation button and search filter
-		if (ImGui::Button("+ Create")) {
+		if (ImGui::Button(TrId("+ Create"))) {
 			ImGui::OpenPopup("HierarchyCreationPopup");
 		}
-		ImGui::SetItemTooltip("Create a new GameObject (or right-click empty space)");
+		ImGui::SetItemTooltip("%s", Tr("Create a new GameObject (or right-click empty space)"));
 
 		ImGui::SameLine();
 		ImGui::SetNextItemWidth(-1.0f);
@@ -417,11 +440,11 @@ void EditorSuite::DrawHierarchyPanel()
 			}
 
 			if (ImGui::BeginPopupContextItem("SceneHeaderContext")) {
-				if (ImGui::MenuItem("Rename Scene")) {
+				if (ImGui::MenuItem(TrId("Rename Scene"))) {
 					isEditingSceneName_ = true;
 					strncpy_s(sceneNameEditBuf_, currentSceneName_.c_str(), sizeof(sceneNameEditBuf_) - 1);
 				}
-				if (ImGui::MenuItem("Save Scene", "Ctrl+S")) {
+				if (ImGui::MenuItem(TrId("Save Scene"), "Ctrl+S")) {
 					if (currentScenePath_.empty()) showSaveSceneAsModal_ = true;
 					else SaveScene(currentScenePath_);
 				}
@@ -524,22 +547,22 @@ void EditorSuite::DrawHierarchyPanel()
 
 					if (ImGui::BeginPopupContextItem()) {
 						selectedObjectIndex_ = static_cast<int>(i);
-						if (ImGui::MenuItem("Delete GameObject", "Del")) {
+						if (ImGui::MenuItem(TrId("Delete GameObject"), "Del")) {
 							QueueDeleteGameObject(static_cast<int>(i));
 						}
-						if (ImGui::MenuItem("Duplicate", "Ctrl+D")) {
+						if (ImGui::MenuItem(TrId("Duplicate"), "Ctrl+D")) {
 							pendingDuplicateIndex_ = static_cast<int>(i);
 						}
-						if (ImGui::MenuItem("Unparent", nullptr, false, obj.parentId != -1)) {
+						if (ImGui::MenuItem(TrId("Unparent"), nullptr, false, obj.parentId != -1)) {
 							hasPendingReparent = true;
 							pendingReparentChildId = obj.id;
 							pendingReparentParentId = -1;
 						}
 						ImGui::Separator();
-						if (ImGui::MenuItem("Save as Prefab")) {
+						if (ImGui::MenuItem(TrId("Save as Prefab"))) {
 							SavePrefab(obj.id, obj.name);
 						}
-						ImGui::SetItemTooltip("Saves this object and its children to Assets/Prefabs/<name>.prefab.json");
+						ImGui::SetItemTooltip("%s", Tr("Saves this object and its children to Assets/Prefabs/<name>.prefab.json"));
 						ImGui::EndPopup();
 					}
 
@@ -611,10 +634,10 @@ void EditorSuite::DrawHierarchyPanel()
 void EditorSuite::DrawHierarchyCreationMenu()
 {
 #ifdef USE_IMGUI
-	if (ImGui::MenuItem("Create Empty", "Ctrl+Shift+N")) {
+	if (ImGui::MenuItem(TrId("Create Empty"), "Ctrl+Shift+N")) {
 		CreateGameObject("GameObject", GameObjectType::Empty);
 	}
-	if (ImGui::MenuItem("Create Empty Child", "Alt+Shift+N")) {
+	if (ImGui::MenuItem(TrId("Create Empty Child"), "Alt+Shift+N")) {
 		int parentIdx = selectedObjectIndex_;
 		int parentId = (parentIdx >= 0 && parentIdx < static_cast<int>(gameObjects_.size())) ? static_cast<int>(gameObjects_[parentIdx].id) : -1;
 		auto& child = CreateGameObject("ChildGameObject", GameObjectType::Empty);
@@ -626,7 +649,7 @@ void EditorSuite::DrawHierarchyCreationMenu()
 		RebuildHierarchyLinks();
 		UpdateWorldMatrices();
 	}
-	if (ImGui::MenuItem("Create Empty Parent", "Ctrl+Shift+G")) {
+	if (ImGui::MenuItem(TrId("Create Empty Parent"), "Ctrl+Shift+G")) {
 		int childIdx = selectedObjectIndex_;
 		auto& parent = CreateGameObject("ParentGameObject", GameObjectType::Empty);
 		if (childIdx >= 0 && childIdx < static_cast<int>(gameObjects_.size()) - 1) {
@@ -654,38 +677,38 @@ void EditorSuite::DrawHierarchyCreationMenu()
 	}
 	ImGui::Separator();
 
-	if (ImGui::BeginMenu("2D Object")) {
-		if (ImGui::MenuItem("Sprite")) {
+	if (ImGui::BeginMenu(TrId("2D Object"))) {
+		if (ImGui::MenuItem(TrId("Sprite"))) {
 			CreateGameObject("Sprite", GameObjectType::Sprite);
 		}
-		if (ImGui::MenuItem("Textured Rectangle")) {
+		if (ImGui::MenuItem(TrId("Textured Rectangle"))) {
 			CreateQuad("Textured Rectangle", { 0.0f, 0.5f, 0.0f });
 		}
-		if (ImGui::MenuItem("Mapchip Grid")) {
+		if (ImGui::MenuItem(TrId("Mapchip Grid"))) {
 			auto& map = CreateGameObject("Level Mapchip Grid", GameObjectType::MapchipGrid);
 			map.hasMapchip = true;
 		}
 		ImGui::EndMenu();
 	}
 
-	if (ImGui::BeginMenu("3D Object")) {
-		if (ImGui::MenuItem("Cube (with Box Collider)")) {
+	if (ImGui::BeginMenu(TrId("3D Object"))) {
+		if (ImGui::MenuItem(TrId("Cube (with Box Collider)"))) {
 			CreateCube("Cube", { 0.0f, 0.5f, 0.0f });
 		}
-		if (ImGui::MenuItem("Sphere (with Sphere Collider)")) {
+		if (ImGui::MenuItem(TrId("Sphere (with Sphere Collider)"))) {
 			CreateSphere("Sphere", { 0.0f, 0.5f, 0.0f });
 		}
-		if (ImGui::MenuItem("Plane (Ground)")) {
+		if (ImGui::MenuItem(TrId("Plane (Ground)"))) {
 			CreatePlane("Plane", { 0.0f, 0.0f, 0.0f });
 		}
-		if (ImGui::MenuItem("Textured Quad")) {
+		if (ImGui::MenuItem(TrId("Textured Quad"))) {
 			CreateQuad("Textured Quad", { 0.0f, 0.5f, 0.0f });
 		}
 		ImGui::EndMenu();
 	}
 
-	if (ImGui::BeginMenu("Visual Effects")) {
-		if (ImGui::MenuItem("Particle System")) {
+	if (ImGui::BeginMenu(TrId("Visual Effects"))) {
+		if (ImGui::MenuItem(TrId("Particle System"))) {
 			auto& ps = CreateGameObject("Particle System", GameObjectType::ParticleSystem);
 			ps.hasParticleSystem = true;
 			EnsureParticleQuadInitialized(ps);
@@ -695,8 +718,8 @@ void EditorSuite::DrawHierarchyCreationMenu()
 		ImGui::EndMenu();
 	}
 
-	if (ImGui::BeginMenu("Light")) {
-		if (ImGui::MenuItem("Directional Light")) {
+	if (ImGui::BeginMenu(TrId("Light"))) {
+		if (ImGui::MenuItem(TrId("Directional Light"))) {
 			auto& light = CreateGameObject("Directional Light", GameObjectType::DirectionalLight);
 			light.hasLight = true;
 			light.lightType = GameObject::LightType::Directional;
@@ -707,14 +730,14 @@ void EditorSuite::DrawHierarchyCreationMenu()
 			light.rotation = { std::asin(std::clamp(-d.y, -1.0f, 1.0f)), std::atan2(d.x, d.z), 0.0f };
 			light.rotationQuat = Quaternion::FromEuler(light.rotation);
 		}
-		if (ImGui::MenuItem("Point Light")) {
+		if (ImGui::MenuItem(TrId("Point Light"))) {
 			auto& light = CreateGameObject("Point Light", GameObjectType::PointLight);
 			light.hasLight = true;
 			light.lightType = GameObject::LightType::Point;
 			light.lightRange = 10.0f;
 			light.lightDecay = 2.0f;
 		}
-		if (ImGui::MenuItem("Spot Light")) {
+		if (ImGui::MenuItem(TrId("Spot Light"))) {
 			auto& light = CreateGameObject("Spot Light", GameObjectType::SpotLight);
 			light.hasLight = true;
 			light.lightType = GameObject::LightType::Spot;
@@ -728,25 +751,25 @@ void EditorSuite::DrawHierarchyCreationMenu()
 		ImGui::EndMenu();
 	}
 
-	if (ImGui::BeginMenu("Audio")) {
-		if (ImGui::MenuItem("Audio Source")) {
+	if (ImGui::BeginMenu(TrId("Audio"))) {
+		if (ImGui::MenuItem(TrId("Audio Source"))) {
 			auto& audio = CreateGameObject("Audio Source", GameObjectType::AudioSource);
 			audio.hasAudioSource = true;
 		}
 		ImGui::EndMenu();
 	}
 
-	if (ImGui::BeginMenu("UI (Canvas)")) {
-		if (ImGui::MenuItem("Canvas")) {
+	if (ImGui::BeginMenu(TrId("UI (Canvas)"))) {
+		if (ImGui::MenuItem(TrId("Canvas"))) {
 			CreateGameObject("Canvas", GameObjectType::Canvas);
 		}
 		ImGui::EndMenu();
 	}
 
 	ImGui::Separator();
-	if (ImGui::BeginMenu("Samples")) {
+	if (ImGui::BeginMenu(TrId("Samples"))) {
 		const bool canCreate = (sceneState_ == EditorSceneState::Edit) && !currentProjectRoot_.empty();
-		if (ImGui::MenuItem("Survivors Demo (new scene)", nullptr, false, canCreate)) {
+		if (ImGui::MenuItem(TrId("Survivors Demo (new scene)"), nullptr, false, canCreate)) {
 			CreateSurvivorsDemo();
 		}
 		ImGui::SetItemTooltip("Creates Assets/Scenes/SurvivorsDemo.scene.json and the Enemy / Bullet prefabs,\n"
@@ -774,10 +797,10 @@ void EditorSuite::DrawViewportsPanel()
 	ImGui::SetNextWindowSize(ImVec2(centerW, midH));
 	ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
 
-	if (ImGui::Begin("Viewport", nullptr, flags)) {
+	if (ImGui::Begin(TrId("Viewport"), nullptr, flags)) {
 		if (ImGui::BeginTabBar("ViewportTabs")) {
 			// TAB 1: # SCENE VIEW (Interactive 3D Viewport)
-			if (ImGui::BeginTabItem("# Scene")) {
+			if (ImGui::BeginTabItem(TrId("# Scene"))) {
 				ImVec2 avail = ImGui::GetContentRegionAvail();
 				ImVec2 imgPos = ImGui::GetCursorScreenPos();
 
@@ -829,7 +852,7 @@ void EditorSuite::DrawViewportsPanel()
 			}
 
 			// TAB 2: GAME VIEW (Player Camera)
-			if (ImGui::BeginTabItem("Game")) {
+			if (ImGui::BeginTabItem(TrId("Game"))) {
 				ImVec2 avail = ImGui::GetContentRegionAvail();
 				ImVec2 imgPos = ImGui::GetCursorScreenPos();
 				ImGui::Image(ImTextureRef((ImTextureID)gameViewRT_.GetSrvGPUHandle().ptr), avail);
@@ -842,7 +865,7 @@ void EditorSuite::DrawViewportsPanel()
 			}
 
 			// TAB 3: DUAL SPLIT VIEW
-			if (ImGui::BeginTabItem("Dual Split")) {
+			if (ImGui::BeginTabItem(TrId("Dual Split"))) {
 				ImVec2 avail = ImGui::GetContentRegionAvail();
 				float halfW = (avail.x - 8.0f) * 0.5f;
 				ImGui::Image(ImTextureRef((ImTextureID)editViewRT_.GetSrvGPUHandle().ptr), ImVec2(halfW, avail.y));

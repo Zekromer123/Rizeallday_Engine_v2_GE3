@@ -22,6 +22,8 @@ dan pipeline build/export game. Dibuat untuk membuat game 3D secara langsung, da
 **Editor**
 - Project Hub, Hierarchy dengan parent/child, Inspector, gizmo (move/rotate/scale), Asset Browser
 - Undo/redo, scene JSON, prefab, Play / Pause / Step, preview game layar penuh (F11)
+- Asset database GUID (`.meta`): rename / pindah aset di panel Project tidak memutus scene dan prefab
+- Teks Jepang (editor, UI game, nama file) dan pilihan bahasa editor: English / 日本語 / Bahasa Indonesia (Options > Language)
 - Profiler (CPU & GPU per pass, draw call, memori upload), Build & Export game
 
 **Gameplay & scripting**
@@ -29,6 +31,7 @@ dan pipeline build/export game. Dibuat untuk membuat game 3D secara langsung, da
 - Input keyboard, mouse (posisi di dunia untuk membidik), dan gamepad XInput
 - Collision Sphere / AABB / OBB dengan layer & mask serta broadphase grid, rigidbody sederhana
 - Prefab dengan object pooling, pergantian scene, save data, time scale (pause / slow motion)
+- Event `OnCollisionEnter/Exit`, raycast / overlap sphere / pencarian tag, kontrol audio, partikel, material, lampu, rigidbody, dan animasi dari script
 - Audio XAudio2
 
 **Kualitas**

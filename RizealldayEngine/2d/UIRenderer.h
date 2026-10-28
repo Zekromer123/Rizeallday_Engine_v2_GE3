@@ -2,6 +2,8 @@
 #include <d3d12.h>
 #include <wrl.h>
 #include <cstdint>
+#include <memory>
+#include <unordered_map>
 #include <vector>
 #include "math/Vector4.h"
 
@@ -31,7 +33,7 @@ public:
 
 	void DrawRect(float x, float y, float w, float h, const Vector4& color);
 	void DrawImage(uint32_t textureHandle, float x, float y, float w, float h, const Vector4& color);
-	/// '\n' starts a new line. `size` is the line height in canvas pixels.
+	/// UTF-8 text (Japanese included); '\n' starts a new line. `size` is the line height in canvas pixels.
 	void DrawString(const char* text, float x, float y, float size, const Vector4& color, Align align = Align::Left);
 	/// Width of the widest line of `text` at `size`
 	float MeasureText(const char* text, float size) const;
@@ -39,9 +41,17 @@ public:
 	/// Draws all queued commands into the currently bound render target (sRGB color + D24 depth formats)
 	void Render(ID3D12GraphicsCommandList* cmdList);
 
+	/// Glyphs rasterized so far / atlas pages in use (tests, profiler)
+	size_t GetGlyphCount() const { return glyphs_.size(); }
+	size_t GetFontPageCount() const { return pages_.size(); }
+	/// True when `codepoint` has a real glyph (primary or fallback font), false when it is drawn as a box
+	bool HasGlyph(uint32_t codepoint) const;
+	/// Next code point of a UTF-8 string (invalid bytes -> U+FFFD); advances `p`
+	static uint32_t DecodeUtf8(const char*& p, const char* end);
+
 private:
-	UIRenderer() = default;
-	~UIRenderer() = default;
+	UIRenderer();
+	~UIRenderer();
 	UIRenderer(const UIRenderer&) = delete;
 	UIRenderer& operator=(const UIRenderer&) = delete;
 
@@ -59,23 +69,43 @@ private:
 		float u0 = 0, v0 = 0, u1 = 0, v1 = 0;
 		float width = 0;   // pixels at kFontPixelSize
 		float advance = 0;
+		uint32_t page = 0;
+		bool missing = false; // drawn with the box glyph
 	};
+	// One atlas texture. Glyphs are rasterized into `rgba` on first use and uploaded once per frame (Render)
+	struct FontPage {
+		std::vector<uint8_t> rgba;
+		uint32_t texture = 0;
+		bool dirty = false;
+	};
+	struct GlyphRasterizer; // GDI state (UIRenderer.cpp)
 
 	void CreateRootSignature();
 	void CreatePipeline(DXCManager* dxc);
-	void BuildFontAtlas();
+	void InitializeFont();
+	void FinalizeFont();
+	const Glyph& GetGlyph(uint32_t codepoint) const;
+	bool RasterizeGlyph(uint32_t codepoint, Glyph& out) const;
+	void UploadFontPages();
 	void PushQuad(uint32_t texture, float x, float y, float w, float h, float u0, float v0, float u1, float v1, const Vector4& color);
 	float MeasureLine(const char* begin, const char* end, float scale) const;
 
 	static constexpr size_t kMaxVertices = 6 * 16384;
+	static constexpr int kPageSize = 1024;
+	static constexpr size_t kMaxFontPages = 4;            // 4 x 1024^2: a few thousand CJK glyphs at 32 px
+	static constexpr uint32_t kFontPageTag = 0x80000000u; // Batch::texture = tag | page, resolved in Render
 
 	DirectXCommon* dxCommon_ = nullptr;
 	Microsoft::WRL::ComPtr<ID3D12RootSignature> rootSignature_;
 	Microsoft::WRL::ComPtr<ID3D12PipelineState> pso_;
 	std::vector<Vertex> vertices_;
 	std::vector<Batch> batches_;
-	Glyph glyphs_[96]{}; // ASCII 32..127 (127 = fallback box)
-	uint32_t fontTexture_ = 0;
+	// Measuring rasterizes too, so the glyph cache is mutable
+	mutable std::unordered_map<uint32_t, Glyph> glyphs_;
+	mutable std::vector<FontPage> pages_;
+	mutable int penX_ = 0;
+	mutable int penY_ = 0;
+	std::unique_ptr<GlyphRasterizer> rasterizer_;
 	uint32_t whiteTexture_ = 0;
 	float fontLineHeight_ = kFontPixelSize;
 };

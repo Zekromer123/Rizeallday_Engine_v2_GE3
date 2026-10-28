@@ -23,6 +23,11 @@
 #include <oleauto.h>
 #include <shellapi.h>
 #include "TransformUtil.h"
+#include "Localization.h"
+
+// Editor UI language (Options > Language): Tr = translated text, TrId = translated label with the English ImGui ID
+using Localization::Tr;
+using Localization::TrId;
 
 #ifdef USE_IMGUI
 #include <imgui.h>

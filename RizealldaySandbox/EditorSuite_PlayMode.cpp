@@ -20,6 +20,7 @@ void EditorSuite::StartPlayMode()
 	timeScale_ = 1.0f;
 	ClearPrefabCache(); // pick up prefab edits made since the last run
 	ResetPrefabPools();
+	ResetScriptRuntimeState();
 	UIRenderer::GetInstance()->Clear();
 	gameTime_ = 0.0;
 	stepSingleFrame_ = false;
@@ -127,6 +128,7 @@ void EditorSuite::StopPlayMode()
 	pendingDeletes_.clear();
 	pendingSpawns_.clear();
 	ResetPrefabPools();
+	ResetScriptRuntimeState();
 	UIRenderer::GetInstance()->Clear();
 	CollisionManager::GetInstance()->Clear();
 	sceneState_ = EditorSceneState::Edit;
@@ -221,14 +223,18 @@ void EditorSuite::RestorePlayModeSnapshot()
 			}
 			gameObjects_ = std::move(restored);
 		} else {
-			// Restore component lists (e.g. scripts modified during Play) while keeping GPU objects
+			// Same objects: restore every component value (scripts, and materials / lights / particles that
+			// scripts changed during Play) while keeping the GPU objects. Nothing is destroyed, so no fence wait.
 			for (size_t i = 0; i < gameObjects_.size(); ++i) {
-				gameObjects_[i].scripts = playModeObjectSnapshots_[i].scripts;
-				for (auto& sc : gameObjects_[i].scripts) {
+				GameObject copyObj = playModeObjectSnapshots_[i];
+				for (auto& sc : copyObj.scripts) {
 					sc.instance.reset();
 				}
-				gameObjects_[i].hasScript = playModeObjectSnapshots_[i].hasScript;
-				gameObjects_[i].scriptClassName = playModeObjectSnapshots_[i].scriptClassName;
+				copyObj.editObject3d = std::move(gameObjects_[i].editObject3d);
+				copyObj.gameObject3d = std::move(gameObjects_[i].gameObject3d);
+				copyObj.shadowTransform = std::move(gameObjects_[i].shadowTransform);
+				copyObj.particleQuad = std::move(gameObjects_[i].particleQuad);
+				gameObjects_[i] = std::move(copyObj);
 			}
 		}
 	}

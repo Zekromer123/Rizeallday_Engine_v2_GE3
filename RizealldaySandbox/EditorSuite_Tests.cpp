@@ -35,6 +35,9 @@ struct EditorSuiteTestAccess {
 		auto it = s.scriptObjectViews_.find(id);
 		return (it != s.scriptObjectViews_.end()) ? it->second.get() : nullptr;
 	}
+	static void Physics(EditorSuite& s, float dt) { s.UpdatePhysics(dt); }
+	static EditorSuite::CollisionEventCounts CollisionEvents(const EditorSuite& s) { return s.lastCollisionEvents_; }
+	static uint32_t MusicVoice(const EditorSuite& s) { return s.musicVoice_; }
 	static void RemoveComponent(EditorSuite& s, uint32_t objectId, Kind kind)
 	{
 		if (GameObject* obj = s.FindGameObjectById(objectId, false)) s.RemoveComponent(*obj, kind);
@@ -1268,6 +1271,738 @@ TEST_CASE(Samples, SurvivorsDemoRuns)
 	s.StopPlayMode();
 	CHECK(A::Objects(s).size() == sceneObjects);
 	CHECK(!UIRenderer::GetInstance()->HasCommands());
+}
+
+// ===========================================================================
+// Script API, Tahap H (EditorSuite_ScriptQueries.cpp)
+// ===========================================================================
+
+namespace {
+// Collider-only object (no mesh changes): a sphere or a box of the given size
+uint32_t MakeCollider(EditorSuite& s, const char* name, const Vector3& pos, bool sphere, float size, uint32_t layer = LAYER_DEFAULT)
+{
+	GameObject& obj = s.CreateGameObject(name, GameObjectType::Empty);
+	obj.translation = pos;
+	obj.layer = layer;
+	obj.hasSphereCollider = sphere;
+	obj.sphereRadius = size * 0.5f;
+	obj.hasBoxCollider = !sphere;
+	obj.boxSize = { size, size, size };
+	return obj.id;
+}
+} // namespace
+
+TEST_CASE(ScriptAPI, CollisionEnterStayExit)
+{
+	A::State(s) = EditorSceneState::Play;
+	const uint32_t a = MakeCollider(s, "A", { 0.0f, 50.0f, 0.0f }, true, 1.0f);
+	const uint32_t b = MakeCollider(s, "B", { 0.6f, 50.0f, 0.0f }, true, 1.0f);
+	// A box + a sphere on one object must still give a single contact per pair
+	s.FindGameObjectById(b, false)->hasBoxCollider = true;
+
+	A::Physics(s, 1.0f / 60.0f);
+	auto ev = A::CollisionEvents(s);
+	CHECK_MSG(ev.enter == 2 && ev.stay == 2 && ev.exit == 0, std::format("frame 1: {}/{}/{}", ev.enter, ev.stay, ev.exit));
+
+	A::Physics(s, 1.0f / 60.0f);
+	ev = A::CollisionEvents(s);
+	CHECK_MSG(ev.enter == 0 && ev.stay == 2 && ev.exit == 0, std::format("frame 2: {}/{}/{}", ev.enter, ev.stay, ev.exit));
+
+	s.FindGameObjectById(b, false)->translation = { 5.0f, 50.0f, 0.0f };
+	A::Physics(s, 1.0f / 60.0f);
+	ev = A::CollisionEvents(s);
+	CHECK_MSG(ev.enter == 0 && ev.stay == 0 && ev.exit == 2, std::format("separated: {}/{}/{}", ev.enter, ev.stay, ev.exit));
+
+	// Deactivating (despawning) one side ends the contact too
+	s.FindGameObjectById(b, false)->translation = { 0.6f, 50.0f, 0.0f };
+	A::Physics(s, 1.0f / 60.0f);
+	CHECK(A::CollisionEvents(s).enter == 2);
+	s.FindGameObjectById(a, false)->isActive = false;
+	A::Physics(s, 1.0f / 60.0f);
+	CHECK(A::CollisionEvents(s).exit == 2);
+
+	// Stop / scene load forgets old contacts: nothing "exits" in the next session
+	s.FindGameObjectById(a, false)->isActive = true;
+	A::Physics(s, 1.0f / 60.0f);
+	s.ResetScriptRuntimeState();
+	A::Physics(s, 1.0f / 60.0f);
+	CHECK(A::CollisionEvents(s).enter == 2);
+	A::State(s) = EditorSceneState::Edit;
+	s.ResetScriptRuntimeState();
+}
+
+TEST_CASE(ScriptAPI, RaycastOverlapAndTagQueries)
+{
+	EngineAPI& api = A::Api(s);
+	const uint32_t wall = MakeCollider(s, "Wall", { 5.0f, 50.0f, 0.0f }, false, 1.0f, LAYER_WALL);
+	const uint32_t farWall = MakeCollider(s, "FarWall", { 10.0f, 50.0f, 0.0f }, false, 1.0f, LAYER_ENEMY);
+	const uint32_t ball = MakeCollider(s, "Ball", { -5.0f, 50.0f, 0.0f }, true, 1.0f, LAYER_ENEMY);
+	const uint32_t shooter = MakeCollider(s, "Shooter", { 0.0f, 50.0f, 0.0f }, true, 1.0f, LAYER_PLAYER);
+	s.FindGameObjectById(farWall, false)->tag = "Enemy";
+	s.FindGameObjectById(ball, false)->tag = "Enemy";
+
+	// Box hit: entry face at x = 4.5, normal -X. The shooter's own collider contains the origin (ignored).
+	ScriptRaycastHit hit{};
+	REQUIRE(api.raycast(&s, { 0.0f, 50.0f, 0.0f }, { 2.0f, 0.0f, 0.0f }, 100.0f, kCollideWithAll, 0, &hit));
+	CHECK(hit.objectId == wall);
+	CHECK_NEAR(hit.distance, 4.5f, 1e-4f);
+	CHECK_NEAR(hit.normal.x, -1.0f, 1e-5f);
+
+	// Layer mask skips the wall; maxDistance cuts the far one off
+	REQUIRE(api.raycast(&s, { 0.0f, 50.0f, 0.0f }, { 1.0f, 0.0f, 0.0f }, 100.0f, LayerBit(LAYER_ENEMY), 0, &hit));
+	CHECK(hit.objectId == farWall);
+	CHECK(!api.raycast(&s, { 0.0f, 50.0f, 0.0f }, { 1.0f, 0.0f, 0.0f }, 4.0f, kCollideWithAll, 0, &hit));
+	CHECK(!api.raycast(&s, { 0.0f, 50.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, 4.0f, kCollideWithAll, 0, &hit));
+
+	// Sphere hit: x = -4.5, normal +X
+	REQUIRE(api.raycast(&s, { 0.0f, 50.0f, 0.0f }, { -1.0f, 0.0f, 0.0f }, 100.0f, kCollideWithAll, shooter, &hit));
+	CHECK(hit.objectId == ball);
+	CHECK_NEAR(hit.point.x, -4.5f, 1e-4f);
+	CHECK_NEAR(hit.normal.x, 1.0f, 1e-4f);
+
+	// Overlap sphere (box and sphere colliders), with mask
+	uint32_t ids[8]{};
+	CHECK(api.overlapSphere(&s, { 4.0f, 50.0f, 0.0f }, 0.6f, kCollideWithAll, ids, 8) == 1);
+	CHECK(ids[0] == wall);
+	CHECK(api.overlapSphere(&s, { 4.0f, 50.0f, 0.0f }, 0.6f, LayerBit(LAYER_ENEMY), ids, 8) == 0);
+	CHECK(api.overlapSphere(&s, { 0.0f, 50.0f, 0.0f }, 20.0f, kCollideWithAll, ids, 2) == 2); // maxCount respected
+
+	// Tags and nearest
+	CHECK(api.findAllWithTag(&s, "Enemy", ids, 8) == 2);
+	ScriptGameObjectView* nearest = api.findNearest(&s, { -1.0f, 50.0f, 0.0f }, "Enemy", 1.0e30f, 0);
+	REQUIRE(nearest != nullptr);
+	CHECK(nearest->id == ball);
+	CHECK(api.findNearest(&s, { -1.0f, 50.0f, 0.0f }, "Enemy", 2.0f, 0) == nullptr);
+	nearest = api.findNearest(&s, { 0.0f, 50.0f, 0.0f }, nullptr, 1.0e30f, shooter);
+	REQUIRE(nearest != nullptr);
+	CHECK(nearest->id != shooter);
+
+	// An object queued for deletion is invisible to queries
+	s.QueueDeleteGameObjectById(ball);
+	CHECK(!api.raycast(&s, { 0.0f, 50.0f, 0.0f }, { -1.0f, 0.0f, 0.0f }, 100.0f, kCollideWithAll, shooter, &hit));
+	CHECK(api.findAllWithTag(&s, "Enemy", ids, 8) == 1);
+	ScriptGameObjectView* firstEnemy = api.findWithTag(&s, "Enemy");
+	REQUIRE(firstEnemy != nullptr);
+	CHECK(firstEnemy->id == farWall);
+	s.ProcessPendingDeletes();
+}
+
+TEST_CASE(ScriptAPI, DespawnAfterTimers)
+{
+	EngineAPI& api = A::Api(s);
+	A::State(s) = EditorSceneState::Play;
+	const uint32_t shortLived = s.CreateCube("ShortLived", { 0.0f, 0.0f, 0.0f }).id;
+	const uint32_t cancelled = s.CreateCube("Cancelled", { 0.0f, 0.0f, 0.0f }).id;
+
+	api.despawnAfter(&s, shortLived, 0.5f);
+	api.despawnAfter(&s, shortLived, 0.5f); // replaces, does not stack
+	api.despawnAfter(&s, cancelled, 0.5f);
+	CHECK(s.GetDelayedDespawnCount() == 2);
+	api.deleteObject(&s, cancelled);        // destroying an object cancels its timer
+	CHECK(s.GetDelayedDespawnCount() == 1);
+	s.ProcessPendingSpawns();
+	s.ProcessPendingDeletes();
+
+	s.TickScriptTimers(0.3f);
+	s.ProcessPendingSpawns();
+	s.ProcessPendingDeletes();
+	CHECK(s.FindGameObjectById(shortLived, false) != nullptr);
+	s.TickScriptTimers(0.0f);               // paused game time does not advance timers
+	CHECK(s.GetDelayedDespawnCount() == 1);
+	s.TickScriptTimers(0.3f);
+	s.ProcessPendingSpawns();
+	s.ProcessPendingDeletes();
+	CHECK(s.FindGameObjectById(shortLived, false) == nullptr);
+	CHECK(s.GetDelayedDespawnCount() == 0);
+	A::State(s) = EditorSceneState::Edit;
+}
+
+TEST_CASE(ScriptAPI, HierarchyAndComponentAccess)
+{
+	EngineAPI& api = A::Api(s);
+	A::State(s) = EditorSceneState::Play;
+	const uint32_t parent = s.CreateCube("Parent", { 10.0f, 0.0f, 0.0f }).id;
+	const uint32_t child = s.CreateSphere("Child", { 12.0f, 1.0f, 0.0f }).id;
+
+	// SetParent is deferred and keeps the world position
+	CHECK(!api.setParent(&s, child, child, true));
+	CHECK(!api.setParent(&s, child, 999999u, true));
+	REQUIRE(api.setParent(&s, child, parent, true));
+	CHECK(api.getParent(&s, child) == 0u);
+	s.ProcessPendingSpawns();
+	CHECK(api.getParent(&s, child) == parent);
+	uint32_t kids[4]{};
+	CHECK(api.getChildren(&s, parent, kids, 4) == 1);
+	CHECK(kids[0] == child);
+	Vector3 world{};
+	REQUIRE(api.getWorldPosition(&s, child, &world));
+	CHECK_NEAR(world.x, 12.0f, 1e-4f);
+	CHECK_NEAR(s.FindGameObjectById(child, false)->translation.x, 2.0f, 1e-4f);
+	REQUIRE(api.setParent(&s, child, 0u, true));
+	s.ProcessPendingSpawns();
+	CHECK(api.getParent(&s, child) == 0u);
+	CHECK_NEAR(s.FindGameObjectById(child, false)->translation.x, 12.0f, 1e-4f);
+
+	// Material
+	ScriptMaterialData mat{};
+	REQUIRE(api.getMaterial(&s, parent, &mat));
+	mat.color = { 1.0f, 0.0f, 0.0f, 0.5f };
+	mat.visible = false;
+	mat.lightingType = 99;
+	REQUIRE(api.setMaterial(&s, parent, &mat));
+	const GameObject* p = s.FindGameObjectById(parent, false);
+	CHECK_NEAR(p->materialColor.w, 0.5f, 1e-6f);
+	CHECK(!p->meshEnabled);
+	CHECK(p->lightingType == 4); // clamped
+
+	// Components the object does not have report false
+	ScriptLightData light{};
+	CHECK(!api.getLight(&s, parent, &light));
+	ScriptRigidbodyData rb{};
+	CHECK(!api.getRigidbody(&s, parent, &rb));
+	s.FindGameObjectById(parent, false)->hasRigidbody = true;
+	REQUIRE(api.getRigidbody(&s, parent, &rb));
+	rb.mass = -3.0f;
+	rb.useGravity = false;
+	REQUIRE(api.setRigidbody(&s, parent, &rb));
+	CHECK(s.FindGameObjectById(parent, false)->mass > 0.0f);
+	CHECK(!s.FindGameObjectById(parent, false)->useGravity);
+
+	GameObject& lamp = s.CreateGameObject("Lamp", GameObjectType::Empty);
+	lamp.hasLight = true;
+	const uint32_t lampId = lamp.id;
+	light.type = 1;
+	light.intensity = 3.0f;
+	light.color = { 1.0f, 0.5f, 0.0f };
+	REQUIRE(api.setLight(&s, lampId, &light));
+	CHECK(s.FindGameObjectById(lampId, false)->lightType == GameObject::LightType::Point);
+	CHECK_NEAR(s.FindGameObjectById(lampId, false)->lightIntensity, 3.0f, 1e-6f);
+
+	// Missing audio files fail quietly
+	CHECK(api.playSound(&s, "Assets/Audio/does_not_exist.wav", 1.0f, false) == 0u);
+	api.playMusic(&s, "Assets/Audio/does_not_exist.wav", 1.0f);
+	CHECK(A::MusicVoice(s) == 0u);
+	A::State(s) = EditorSceneState::Edit;
+}
+
+TEST_CASE(ScriptAPI, PlayModeRestoresScriptChangedComponents)
+{
+	EngineAPI& api = A::Api(s);
+	const uint32_t cube = s.CreateCube("Tinted", { 0.0f, 0.0f, 0.0f }).id;
+	const Vector4 original = s.FindGameObjectById(cube, false)->materialColor;
+	s.StartPlayMode();
+	ScriptMaterialData mat{};
+	REQUIRE(api.getMaterial(&s, cube, &mat));
+	mat.color = { 1.0f, 0.0f, 0.0f, 1.0f };
+	REQUIRE(api.setMaterial(&s, cube, &mat));
+	s.Update(1.0f / 60.0f, RizeEngine::GetInput());
+	s.StopPlayMode();
+	const GameObject* after = s.FindGameObjectById(cube, false);
+	REQUIRE(after != nullptr);
+	CHECK_NEAR(after->materialColor.x, original.x, 1e-6f);
+	CHECK_NEAR(after->materialColor.y, original.y, 1e-6f);
+}
+
+TEST_CASE(ScriptAPI, ParticleBurstsAndOneShotPrefabs)
+{
+	EngineAPI& api = A::Api(s);
+	A::ProjectRoot(s) = A::TempRoot() / "ParticleProject";
+	GameObject& fx = s.CreateGameObject("Spark", GameObjectType::Empty);
+	fx.hasParticleSystem = true;
+	fx.particleEmitContinuously = false;
+	fx.particleBurstCount = 12;
+	fx.particleMaxParticles = 64;
+	fx.particleLifetimeMin = 5.0f;
+	fx.particleLifetimeMax = 5.0f;
+	const uint32_t fxId = fx.id;
+	REQUIRE(s.SavePrefab(fxId, "Spark"));
+	A::State(s) = EditorSceneState::Play;
+
+	// EmitParticles on a scene object (deferred to the end of the frame)
+	api.emitParticles(&s, fxId, 5);
+	GameObject* sceneFx = s.FindGameObjectById(fxId, false);
+	CHECK(!sceneFx->particleQuad || sceneFx->particleQuad->GetActiveCount() == 0);
+	s.ProcessPendingSpawns();
+	sceneFx = s.FindGameObjectById(fxId, false);
+	REQUIRE(sceneFx->particleQuad != nullptr);
+	CHECK(sceneFx->particleQuad->GetActiveCount() == 5);
+
+	// One-shot prefab: bursts particleBurstCount on spawn, and again (fresh) when reused from the pool
+	ScriptGameObjectView* view = s.QueuePrefabSpawn("Spark", { 3.0f, 0.0f, 0.0f });
+	REQUIRE(view != nullptr);
+	const uint32_t instance = view->id;
+	s.ProcessPendingSpawns();
+	GameObject* inst = s.FindGameObjectById(instance, false);
+	REQUIRE(inst != nullptr);
+	REQUIRE(inst->particleQuad != nullptr);
+	CHECK_MSG(inst->particleQuad->GetActiveCount() == 12, "spawn burst: " + std::to_string(inst->particleQuad->GetActiveCount()));
+	s.QueueDespawn(instance);
+	s.ProcessPendingSpawns();
+	REQUIRE(s.QueuePrefabSpawn("Spark", { 0.0f, 0.0f, 0.0f }) != nullptr);
+	s.ProcessPendingSpawns();
+	inst = s.FindGameObjectById(instance, false);
+	CHECK_MSG(inst->particleQuad->GetActiveCount() == 12, "reuse burst: " + std::to_string(inst->particleQuad->GetActiveCount()));
+
+	// Continuous flag from script
+	api.setParticlesEmitting(&s, fxId, true);
+	CHECK(s.FindGameObjectById(fxId, false)->particleEmitContinuously);
+	A::State(s) = EditorSceneState::Edit;
+	s.ResetPrefabPools();
+}
+
+// ===========================================================================
+// Component registry (roadmap 4.1)
+// ===========================================================================
+
+namespace {
+struct TestHealthComponent {
+	float hp = 10.0f;
+	int lives = 3;
+	bool invincible = false;
+	Vector3 knockback = { 0.0f, 1.0f, 0.0f };
+	Vector4 tint = { 1.0f, 1.0f, 1.0f, 1.0f };
+	char label[32] = "hero";
+};
+constexpr const char* kTestHealth = "Test Health";
+
+// Registers the test-only data component for the lifetime of one test
+struct ScopedTestHealthComponent {
+	ScopedTestHealthComponent()
+	{
+		RegisterDataComponent<TestHealthComponent>(kTestHealth, "Tests", {
+			RIZE_FIELD(TestHealthComponent, hp, ComponentFieldType::Float, 0.0f, 100.0f),
+			RIZE_FIELD(TestHealthComponent, lives, ComponentFieldType::Int, 0.0f, 9.0f),
+			RIZE_FIELD(TestHealthComponent, invincible, ComponentFieldType::Bool, 0.0f, 0.0f),
+			RIZE_FIELD(TestHealthComponent, knockback, ComponentFieldType::Vector3, 0.0f, 0.0f),
+			RIZE_FIELD(TestHealthComponent, tint, ComponentFieldType::Color, 0.0f, 0.0f),
+			RIZE_FIELD(TestHealthComponent, label, ComponentFieldType::Text, 0.0f, 0.0f) });
+	}
+	~ScopedTestHealthComponent() { ComponentRegistry::Get().Unregister(kTestHealth); }
+};
+
+TestHealthComponent* HealthOf(EditorSuite& s, uint32_t id)
+{
+	GameObject* obj = s.FindGameObjectById(id, false);
+	return obj ? obj->components.Get<TestHealthComponent>(kTestHealth) : nullptr;
+}
+} // namespace
+
+TEST_CASE(Components, RegistryDrivesBuiltins)
+{
+	const ComponentRegistry& registry = ComponentRegistry::Get();
+	const char* expected[] = { "Mesh Filter & Renderer", "Box Collider", "Sphere Collider", "Rigidbody", "Camera",
+		"Light", "Particle System", "Mapchip Level Editor", "Audio Source" };
+	REQUIRE(registry.All().size() >= std::size(expected));
+	for (size_t i = 0; i < std::size(expected); ++i) {
+		CHECK_MSG(registry.All()[i].name == expected[i], "registry[" + std::to_string(i) + "] = " + registry.All()[i].name);
+		CHECK(!registry.All()[i].IsDataComponent());
+	}
+
+	const uint32_t cube = s.CreateCube("RegistryCube", { 0.0f, 0.0f, 0.0f }).id;
+	GameObject* obj = s.FindGameObjectById(cube, false);
+	CHECK(s.HasComponentByName(*obj, "Mesh Filter & Renderer"));
+	CHECK(s.HasComponentByName(*obj, "Box Collider"));
+	CHECK(!s.HasComponentByName(*obj, "Rigidbody"));
+	CHECK(!s.HasComponentByName(*obj, "No Such Component"));
+
+	REQUIRE(s.AddComponentByName(*obj, "Rigidbody"));
+	obj = s.FindGameObjectById(cube, false);
+	CHECK(obj->hasRigidbody && obj->rbEnabled);
+	CHECK(!s.AddComponentByName(*obj, "Rigidbody")); // already present
+	CHECK(!s.AddComponentByName(*obj, "No Such Component"));
+
+	A::MergeAllowed(s) = false;
+	REQUIRE(s.RemoveComponentByName(*obj, "Box Collider"));
+	obj = s.FindGameObjectById(cube, false);
+	CHECK(!obj->hasBoxCollider);
+	CHECK(!s.RemoveComponentByName(*obj, "Box Collider"));
+	s.Undo();
+	CHECK(s.FindGameObjectById(cube, false)->hasBoxCollider);
+}
+
+TEST_CASE(Components, DataComponentSaveUndoCopyPrefab)
+{
+	ScopedTestHealthComponent registration;
+	const uint32_t id = s.CreateCube("Hero", { 0.0f, 0.0f, 0.0f }).id;
+	s.PushUndoSnapshot();
+
+	A::MergeAllowed(s) = false;
+	REQUIRE(s.AddComponentByName(*s.FindGameObjectById(id, false), kTestHealth));
+	TestHealthComponent* hp = HealthOf(s, id);
+	REQUIRE(hp != nullptr);
+	CHECK_NEAR(hp->hp, 10.0f, 1e-6f); // starts from the struct defaults
+	hp->hp = 42.5f;
+	hp->lives = 7;
+	hp->invincible = true;
+	hp->knockback = { 1.0f, 2.0f, 3.0f };
+	hp->tint = { 0.5f, 0.25f, 0.125f, 1.0f };
+	strcpy_s(hp->label, "boss");
+
+	// Scene JSON round trip
+	const std::string saved = s.SerializeSceneToString();
+	CHECK(saved.find("\"components\"") != std::string::npos);
+	REQUIRE(s.DeserializeSceneFromString(saved));
+	hp = HealthOf(s, id);
+	REQUIRE(hp != nullptr);
+	CHECK_NEAR(hp->hp, 42.5f, 1e-5f);
+	CHECK(hp->lives == 7);
+	CHECK(hp->invincible);
+	CHECK_NEAR(hp->knockback.z, 3.0f, 1e-6f);
+	CHECK_NEAR(hp->tint.y, 0.25f, 1e-6f);
+	CHECK(std::string(hp->label) == "boss");
+	CHECK(s.SerializeSceneToString() == saved);
+
+	// Copies are deep (Play-mode snapshots, undo states)
+	{
+		GameObject copy = *s.FindGameObjectById(id, false);
+		copy.components.Get<TestHealthComponent>(kTestHealth)->hp = 1.0f;
+		CHECK_NEAR(HealthOf(s, id)->hp, 42.5f, 1e-5f);
+	}
+
+	// Undo removes the added component again
+	s.ResetUndoHistory();
+	A::MergeAllowed(s) = false;
+	REQUIRE(s.RemoveComponentByName(*s.FindGameObjectById(id, false), kTestHealth));
+	CHECK(HealthOf(s, id) == nullptr);
+	s.Undo();
+	REQUIRE(HealthOf(s, id) != nullptr);
+	CHECK_NEAR(HealthOf(s, id)->hp, 42.5f, 1e-5f);
+
+	// Prefab instances carry the component; a pooled instance gets the prefab value back
+	A::ProjectRoot(s) = A::TempRoot() / "ComponentPrefabProject";
+	REQUIRE(s.SavePrefab(id, "Hero"));
+	A::State(s) = EditorSceneState::Play;
+	ScriptGameObjectView* view = s.QueuePrefabSpawn("Hero", { 5.0f, 0.0f, 0.0f });
+	REQUIRE(view != nullptr);
+	const uint32_t instance = view->id;
+	s.ProcessPendingSpawns();
+	REQUIRE(HealthOf(s, instance) != nullptr);
+	CHECK_NEAR(HealthOf(s, instance)->hp, 42.5f, 1e-5f);
+	HealthOf(s, instance)->hp = 0.0f; // "killed"
+	s.QueueDespawn(instance);
+	s.ProcessPendingSpawns();
+	REQUIRE(s.QueuePrefabSpawn("Hero", { 0.0f, 0.0f, 0.0f }) != nullptr);
+	s.ProcessPendingSpawns();
+	CHECK_NEAR(HealthOf(s, instance)->hp, 42.5f, 1e-5f);
+	A::State(s) = EditorSceneState::Edit;
+	s.ResetPrefabPools();
+}
+
+TEST_CASE(Components, UnknownComponentIsPreserved)
+{
+	std::string saved;
+	uint32_t id = 0;
+	{
+		ScopedTestHealthComponent registration;
+		id = s.CreateGameObject("Keeper", GameObjectType::Empty).id;
+		REQUIRE(s.AddComponentByName(*s.FindGameObjectById(id, false), kTestHealth));
+		HealthOf(s, id)->lives = 5;
+		saved = s.SerializeSceneToString();
+	}
+
+	// A build without the component keeps its data and writes it back unchanged
+	REQUIRE(s.DeserializeSceneFromString(saved));
+	const GameObject* obj = s.FindGameObjectById(id, false);
+	REQUIRE(obj != nullptr);
+	CHECK(obj->components.Entries().empty());
+	CHECK(obj->components.Unknown().count(kTestHealth) == 1);
+	CHECK(s.SerializeSceneToString() == saved);
+
+	// Registered again: the values come back
+	ScopedTestHealthComponent registration;
+	REQUIRE(s.DeserializeSceneFromString(saved));
+	REQUIRE(HealthOf(s, id) != nullptr);
+	CHECK(HealthOf(s, id)->lives == 5);
+}
+
+// ===========================================================================
+// Asset database (4.2)
+// ===========================================================================
+
+namespace {
+	// Copies a real engine texture into the test project so loading it works like a user asset
+	bool PlaceTestTexture(const std::filesystem::path& projectRoot, const std::string& assetPath)
+	{
+		std::error_code ec;
+		const std::filesystem::path dst = projectRoot / assetPath;
+		std::filesystem::create_directories(dst.parent_path(), ec);
+		std::filesystem::copy_file("Resources/circle.png", dst, std::filesystem::copy_options::overwrite_existing, ec);
+		return !ec;
+	}
+}
+
+TEST_CASE(Assets, PathRulesAndMetaFiles)
+{
+	const std::filesystem::path root = A::TempRoot() / "AssetRulesProject";
+	A::ProjectRoot(s) = root;
+	REQUIRE(PlaceTestTexture(root, "Assets/Textures/rock.png"));
+	AssetDatabase& db = s.AssetDb();
+	db.Refresh();
+
+	CHECK(db.ToAssetPath("Assets/Textures/rock.png") == "Assets/Textures/rock.png");
+	CHECK(db.ToAssetPath((root / "Assets" / "Textures" / "rock.png").string()) == "Assets/Textures/rock.png");
+	CHECK(db.ToAssetPath("Resources/circle.png").empty()); // engine assets are not managed
+	CHECK(db.ToAssetPath("Assets/../secret.txt").empty());
+
+	const std::string guid = db.GuidForPath("Assets/Textures/rock.png");
+	CHECK(AssetDatabase::IsValidGuid(guid));
+	CHECK(std::filesystem::exists(root / "Assets" / "Textures" / "rock.png.meta"));
+	CHECK(db.GuidForPath("assets/textures/ROCK.png") == guid); // case-insensitive like Windows
+	CHECK(db.PathForGuid(guid) == "Assets/Textures/rock.png");
+	CHECK(db.GuidForPath("Resources/circle.png").empty());
+
+	// The GUID is stable across rescans (it comes from the .meta, not from the path)
+	db.Refresh();
+	CHECK(db.GuidForPath("Assets/Textures/rock.png") == guid);
+	CHECK(db.Count() == 1); // the .meta itself is not an asset
+}
+
+TEST_CASE(Assets, DuplicateMetaGetsNewGuid)
+{
+	const std::filesystem::path root = A::TempRoot() / "AssetDuplicateProject";
+	A::ProjectRoot(s) = root;
+	REQUIRE(PlaceTestTexture(root, "Assets/grass.png"));
+	AssetDatabase& db = s.AssetDb();
+	db.Refresh();
+	const std::string original = db.GuidForPath("Assets/grass.png");
+	REQUIRE(!original.empty());
+
+	// Copy in Explorer: the copy carries the same .meta content
+	std::error_code ec;
+	std::filesystem::copy_file(root / "Assets/grass.png", root / "Assets/grass - Copy.png", ec);
+	std::filesystem::copy_file(root / "Assets/grass.png.meta", root / "Assets/grass - Copy.png.meta", ec);
+	db.Refresh();
+	CHECK(db.GuidForPath("Assets/grass.png") == original);
+	const std::string copy = db.GuidForPath("Assets/grass - Copy.png");
+	CHECK(AssetDatabase::IsValidGuid(copy));
+	CHECK(copy != original);
+}
+
+TEST_CASE(Assets, GuidSurvivesRenameAndFolderMove)
+{
+	const std::filesystem::path root = A::TempRoot() / "AssetMoveProject";
+	A::ProjectRoot(s) = root;
+	REQUIRE(PlaceTestTexture(root, "Assets/Textures/wall.png"));
+	s.AssetDb().Refresh();
+
+	GameObject& cube = s.CreateCube("Wall", { 0.0f, 50.0f, 0.0f });
+	cube.texturePath = "Assets/Textures/wall.png";
+	const uint32_t id = cube.id;
+	const std::string savedBefore = s.SerializeSceneToString();
+	const std::string guid = s.AssetDb().FindGuid("Assets/Textures/wall.png");
+	REQUIRE(!guid.empty());
+	CHECK(savedBefore.find(guid) != std::string::npos); // "textureGuid" is written next to "texturePath"
+
+	// Rename in the Project panel: the open scene follows right away
+	REQUIRE(s.MoveAssetAndUpdateReferences("Assets/Textures/wall.png", "Assets/Textures/brick.png"));
+	CHECK(std::filesystem::exists(root / "Assets/Textures/brick.png"));
+	CHECK(std::filesystem::exists(root / "Assets/Textures/brick.png.meta"));
+	CHECK(!std::filesystem::exists(root / "Assets/Textures/wall.png.meta"));
+	CHECK(s.FindGameObjectById(id, false)->texturePath == "Assets/Textures/brick.png");
+
+	// Moving the whole folder repoints everything inside it
+	REQUIRE(s.MoveAssetAndUpdateReferences("Assets/Textures", "Assets/Art/Textures"));
+	CHECK(s.FindGameObjectById(id, false)->texturePath == "Assets/Art/Textures/brick.png");
+	CHECK(s.AssetDb().PathForGuid(guid) == "Assets/Art/Textures/brick.png");
+
+	// A scene saved before both moves still finds the texture through its GUID (even after a rescan)
+	s.AssetDb().Refresh();
+	REQUIRE(s.DeserializeSceneFromString(savedBefore));
+	CHECK(s.FindGameObjectById(id, false)->texturePath == "Assets/Art/Textures/brick.png");
+
+	// A legacy scene (path only, no GUID) keeps its path untouched
+	std::string legacy = savedBefore;
+	const size_t guidPos = legacy.find(guid);
+	legacy.replace(guidPos, guid.size(), "");
+	REQUIRE(s.DeserializeSceneFromString(legacy));
+	CHECK(s.FindGameObjectById(id, false)->texturePath == "Assets/Textures/wall.png");
+
+	// Invalid moves are refused and change nothing
+	CHECK(!s.MoveAssetAndUpdateReferences("Assets/Art", "Assets/Art/Inside"));
+	CHECK(!s.MoveAssetAndUpdateReferences("Assets/Art/Textures/brick.png", "../outside.png"));
+	CHECK(std::filesystem::exists(root / "Assets/Art/Textures/brick.png"));
+}
+
+TEST_CASE(Assets, PrefabFoundAfterMove)
+{
+	const std::filesystem::path root = A::TempRoot() / "AssetPrefabProject";
+	A::ProjectRoot(s) = root;
+	const uint32_t crateId = s.CreateCube("Crate", { 0.0f, 50.0f, 0.0f }).id;
+	REQUIRE(s.SavePrefab(crateId, "Crate"));
+
+	REQUIRE(s.MoveAssetAndUpdateReferences("Assets/Prefabs/Crate.prefab.json", "Assets/Prefabs/Props/Crate.prefab.json"));
+	CHECK(s.HasPrefab("Crate"));
+	const uint32_t instance = s.InstantiatePrefabNow("Crate", { 3.0f, 50.0f, 0.0f });
+	CHECK(instance != 0);
+
+	// Saving again overwrites the moved file instead of creating a second "Crate" in Prefabs/
+	REQUIRE(s.SavePrefab(crateId, "Crate"));
+	CHECK(!std::filesystem::exists(root / "Assets/Prefabs/Crate.prefab.json"));
+	CHECK(std::filesystem::exists(root / "Assets/Prefabs/Props/Crate.prefab.json"));
+}
+
+// ===========================================================================
+// Japanese text: UTF-8 code page, Unicode paths, game UI glyphs, editor language
+// (Japanese test strings are written as UTF-8 escapes so the C++ source stays English-only)
+// ===========================================================================
+
+namespace {
+	// "テクスチャ" (texture), "岩.png" (rock), "日本語" (Japanese), "あ"
+	constexpr const char* kJpFolder = "\xE3\x83\x86\xE3\x82\xAF\xE3\x82\xB9\xE3\x83\x81\xE3\x83\xA3";
+	constexpr const char* kJpRock = "\xE5\xB2\xA9.png";
+	constexpr const char* kJpWord = "\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E";
+}
+
+TEST_CASE(Encoding, Utf8CodePageAndUnicodePaths)
+{
+	// Utf8CodePage.manifest: narrow strings are UTF-8 for every Windows API and std::filesystem
+	CHECK_MSG(GetACP() == CP_UTF8, "ACP: " + std::to_string(GetACP()));
+
+	const std::filesystem::path root = A::TempRoot() / std::filesystem::path(std::string("JpProject_") + kJpWord);
+	A::ProjectRoot(s) = root;
+	const std::string texturePath = std::string("Assets/") + kJpFolder + "/" + kJpRock;
+	REQUIRE(PlaceTestTexture(root, texturePath));
+	CHECK(std::filesystem::path(texturePath).string() == texturePath); // path <-> narrow string round-trips
+
+	// The asset database, references and texture loading all accept the Japanese path
+	s.AssetDb().Refresh();
+	const std::string guid = s.AssetDb().GuidForPath(texturePath);
+	REQUIRE(AssetDatabase::IsValidGuid(guid));
+	CHECK(s.AssetDb().PathForGuid(guid) == texturePath);
+	const uint32_t texture = TextureManager::GetInstance()->LoadTexture(s.ResolveAssetPath(texturePath));
+	CHECK(texture != TextureManager::GetInstance()->GetDefaultWhiteTexture());
+
+	GameObject& cube = s.CreateCube(kJpWord, { 0.0f, 50.0f, 0.0f });
+	cube.texturePath = texturePath;
+	const uint32_t id = cube.id;
+	const std::string renamed = std::string("Assets/") + kJpFolder + "/" + kJpWord + ".png";
+	REQUIRE(s.MoveAssetAndUpdateReferences(texturePath, renamed));
+	CHECK(s.FindGameObjectById(id, false)->texturePath == renamed);
+
+	// Object names survive a scene round trip
+	const std::string saved = s.SerializeSceneToString();
+	REQUIRE(s.DeserializeSceneFromString(saved));
+	CHECK(s.FindGameObjectById(id, false)->name == kJpWord);
+}
+
+TEST_CASE(UI, Utf8JapaneseText)
+{
+	// UTF-8 decoding: 1-4 byte forms, invalid and overlong input
+	auto decodeAll = [](const char* text) {
+		std::vector<uint32_t> out;
+		for (const char* p = text, *end = text + std::strlen(text); p < end;) out.push_back(UIRenderer::DecodeUtf8(p, end));
+		return out;
+	};
+	CHECK(decodeAll("A") == std::vector<uint32_t>{ 0x41 });
+	CHECK(decodeAll("\xC3\xA9") == std::vector<uint32_t>{ 0xE9 });              // e acute
+	CHECK(decodeAll(kJpWord) == (std::vector<uint32_t>{ 0x65E5, 0x672C, 0x8A9E }));
+	CHECK(decodeAll("\xF0\x9F\x98\x80") == std::vector<uint32_t>{ 0x1F600 });   // 4-byte form
+	CHECK(decodeAll("\xFF") == std::vector<uint32_t>{ 0xFFFD });
+	CHECK(decodeAll("\xC0\xAF") == std::vector<uint32_t>{ 0xFFFD });            // overlong '/'
+	CHECK(decodeAll("\xE3\x81") == (std::vector<uint32_t>{ 0xFFFD }));          // truncated
+
+	UIRenderer* ui = UIRenderer::GetInstance();
+	ui->Clear();
+	const size_t glyphsBefore = ui->GetGlyphCount();
+	ui->DrawString(kJpWord, 10.0f, 10.0f, 32.0f, { 1.0f, 1.0f, 1.0f, 1.0f });
+	CHECK(ui->GetQuadCount() == 3); // one quad per character
+	CHECK(ui->GetGlyphCount() >= glyphsBefore); // new glyphs are cached (unless an earlier test drew them)
+	CHECK(ui->GetFontPageCount() >= 1);
+	ui->Clear();
+	ui->DrawString("A\xE3\x80\x80" "B", 10.0f, 10.0f, 32.0f, { 1.0f, 1.0f, 1.0f, 1.0f }); // ideographic space
+	CHECK(ui->GetQuadCount() == 2);
+	ui->Clear();
+
+	const float w = ui->MeasureText(kJpWord, 32.0f);
+	CHECK(w > 30.0f);
+	CHECK_NEAR(ui->MeasureText(kJpWord, 64.0f), w * 2.0f, 0.01f);
+
+	// A real Japanese glyph needs a Japanese UI font; Windows installs one by default (CI runners may not)
+	std::error_code ec;
+	if (std::filesystem::exists("C:/Windows/Fonts/YuGothM.ttc", ec) || std::filesystem::exists("C:/Windows/Fonts/meiryo.ttc", ec)) {
+		CHECK(ui->HasGlyph(0x3042)); // hiragana a
+		CHECK(ui->HasGlyph(0x65E5));
+	} else {
+		A::Log(s, "[Tests] No Japanese font on this machine: glyph presence not checked.", 1);
+	}
+	CHECK(ui->HasGlyph('A'));
+
+	// Atlas pages are updated in place: the handle stays valid
+	const uint8_t pixels[4 * 4 * 4] = {};
+	TextureManager* textures = TextureManager::GetInstance();
+	const uint32_t handle = textures->CreateTextureFromRGBA("Tests/UpdatableTexture", pixels, 4, 4);
+	REQUIRE(handle != textures->GetDefaultWhiteTexture());
+	CHECK(textures->UpdateTextureFromRGBA(handle, pixels, 4, 4));
+	CHECK(!textures->UpdateTextureFromRGBA(textures->GetDefaultWhiteTexture(), pixels, 4, 4));
+}
+
+TEST_CASE(UI, EditorFontHasJapaneseGlyphs)
+{
+	ImFont* font = ImGui::GetIO().FontDefault ? ImGui::GetIO().FontDefault : ImGui::GetFont();
+	REQUIRE(font != nullptr);
+	CHECK(font->IsGlyphInFont('A'));
+	std::error_code ec;
+	if (!std::filesystem::exists("C:/Windows/Fonts/YuGothM.ttc", ec) && !std::filesystem::exists("C:/Windows/Fonts/meiryo.ttc", ec)
+		&& !std::filesystem::exists("C:/Windows/Fonts/msgothic.ttc", ec)) {
+		A::Log(s, "[Tests] No Japanese font on this machine: editor glyphs not checked.", 1);
+		return;
+	}
+	A::Log(s, std::format("[Tests] Editor font sources: {}", font->Sources.Size), 0);
+	CHECK_MSG(font->IsGlyphInFont(0x30D5), "katakana fu missing from the editor font"); // first character of the Japanese "File"
+	CHECK(font->IsGlyphInFont(0x65E5));
+	// What text rendering actually uses: the glyph baked at the UI size must be the real one, not the fallback
+	ImFontBaked* baked = font->GetFontBaked(ImGui::GetStyle().FontSizeBase > 0.0f ? ImGui::GetStyle().FontSizeBase : 16.0f);
+	REQUIRE(baked != nullptr);
+	const ImFontGlyph* glyph = baked->FindGlyph(0x30D5);
+	REQUIRE(glyph != nullptr);
+	CHECK_MSG(glyph->Codepoint == 0x30D5, std::format("baked glyph is U+{:04X} (fallback), visible={}, hasTextures={}, locked={}, noLoad={}, sources={}",
+		static_cast<unsigned>(glyph->Codepoint), glyph->Visible != 0,
+		(ImGui::GetIO().BackendFlags & ImGuiBackendFlags_RendererHasTextures) != 0, font->OwnerAtlas->Locked,
+		(font->Flags & ImFontFlags_NoLoadGlyphs) != 0, font->Sources.Size));
+}
+
+TEST_CASE(Localization, TranslateWithEnglishFallbackAndStableIds)
+{
+	const std::filesystem::path savedDir = Localization::GetLanguageDirectory();
+	const std::string savedLanguage = Localization::CurrentLanguage();
+
+	const std::filesystem::path dir = A::TempRoot() / "Lang";
+	std::error_code ec;
+	std::filesystem::create_directories(dir, ec);
+	{
+		std::ofstream out(dir / "tt.json", std::ios::binary);
+		out << R"({ "_language": "Test Language", "File": "Berkas", "Save": "Simpan", "Hierarchy": "Hierarki" })";
+	}
+	Localization::SetLanguageDirectory(dir);
+	const auto languages = Localization::AvailableLanguages();
+	REQUIRE(!languages.empty());
+	CHECK(languages[0].code == "en");
+	CHECK(std::any_of(languages.begin(), languages.end(), [](const auto& l) { return l.code == "tt" && l.displayName == "Test Language"; }));
+
+	REQUIRE(Localization::SetLanguage("tt"));
+	CHECK(Localization::TranslationCount() == 3); // "_language" is metadata, not a translation
+	CHECK(std::string(Tr("File")) == "Berkas");
+	CHECK(std::string(Tr("Not translated")) == "Not translated");
+	CHECK(std::string(TrId("Hierarchy")) == "Hierarki###Hierarchy"); // same ImGui ID as English
+	CHECK(std::string(TrId("Save##scene")) == "Simpan###Save##scene");
+	CHECK(std::string(TrId("Not translated")) == "Not translated");
+	CHECK(!Localization::SetLanguage("missing"));
+	CHECK(Localization::CurrentLanguage() == "tt"); // a failed switch keeps the current language
+
+	REQUIRE(Localization::SetLanguage("en"));
+	CHECK(std::string(Tr("File")) == "File");
+	CHECK(std::string(TrId("Hierarchy")) == "Hierarchy");
+
+	// The shipped language files parse and cover the main editor UI
+	Localization::SetLanguageDirectory(std::filesystem::path("Resources") / "Localization");
+	for (const char* code : { "ja", "id" }) {
+		CHECK_MSG(Localization::SetLanguage(code), std::string("cannot load ") + code + ".json");
+		CHECK_MSG(Localization::TranslationCount() > 100, std::string(code) + ": " + std::to_string(Localization::TranslationCount()));
+		CHECK(std::string(Tr("File")) != "File");
+	}
+
+	Localization::SetLanguageDirectory(savedDir);
+	Localization::SetLanguage(savedLanguage);
 }
 
 // ===========================================================================

@@ -78,6 +78,113 @@ void EditorSuite::ReleasePreviewResources()
 	currentPreviewAssetPath_.clear();
 }
 
+
+AssetDatabase& EditorSuite::AssetDb() const
+{
+#ifndef USE_IMGUI
+	assetDatabase_.SetReadOnly(true); // exported games never write .meta files
+#endif
+	assetDatabase_.SetRoot(currentProjectRoot_);
+	return assetDatabase_;
+}
+
+int EditorSuite::RepointAssetReferences(const std::string& from, const std::string& to)
+{
+	AssetDatabase& db = AssetDb();
+	auto lower = [](std::string s) {
+		std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+		return s;
+	};
+	const std::string fromKey = lower(from);
+	// Returns the new path when `path` is `from` itself or lies inside the moved folder
+	auto repoint = [&](const std::string& path, std::string& outNew) {
+		const std::string assetPath = db.ToAssetPath(path);
+		if (assetPath.empty()) return false;
+		const std::string key = lower(assetPath);
+		if (key != fromKey && !(key.starts_with(fromKey) && key.size() > fromKey.size() && key[fromKey.size()] == '/')) return false;
+		outNew = to + assetPath.substr(from.size());
+		return true;
+	};
+
+	int changed = 0;
+	std::string moved;
+	for (GameObject& obj : gameObjects_) {
+		for (std::string* path : { &obj.texturePath, &obj.modelPath, &obj.audioClipName }) {
+			if (repoint(*path, moved)) {
+				*path = moved;
+				++changed;
+			}
+		}
+	}
+	if (repoint(skybox_.GetCubemapPath(), moved)) {
+		skybox_.SetCubemapPath(moved);
+		++changed;
+	}
+	// File-path state of the editor itself (not part of the scene content)
+	if (repoint(currentScenePath_, moved)) {
+		currentScenePath_ = db.ToAbsolute(moved).string();
+		strncpy_s(openScenePathBuf_, currentScenePath_.c_str(), sizeof(openScenePathBuf_) - 1);
+	}
+	if (repoint(buildStartupSceneBuf_, moved)) {
+		strncpy_s(buildStartupSceneBuf_, db.ToAbsolute(moved).string().c_str(), sizeof(buildStartupSceneBuf_) - 1);
+	}
+	resolvedAssetCache_.clear();
+	ClearPrefabCache();
+	return changed;
+}
+
+bool EditorSuite::MoveAssetAndUpdateReferences(const std::string& from, const std::string& to)
+{
+	if (sceneState_ != EditorSceneState::Edit) {
+		LogMessage("[Assets] Stop Play mode before moving or renaming assets.", 1);
+		return false;
+	}
+	AssetDatabase& db = AssetDb();
+	const std::string src = db.ToAssetPath(from);
+	const std::string dst = db.ToAssetPath(to);
+	const bool wasSelected = !selectedAssetPath_.empty() && db.ToAssetPath(std::filesystem::absolute(selectedAssetPath_).string()) == src;
+	if (wasSelected) ReleasePreviewResources();
+
+	std::string error;
+	if (!db.MoveAsset(src.empty() ? from : src, dst.empty() ? to : dst, &error)) {
+		LogMessage(std::format("[Assets] Cannot move '{}': {}", from, error), 2);
+		return false;
+	}
+	const int changed = RepointAssetReferences(src, dst);
+	if (changed > 0) isSceneDirty_ = true;
+	if (wasSelected) selectedAssetPath_ = db.ToAbsolute(dst);
+	// Keep browsing the same folder when it (or one of its parents) was the one moved
+	const std::string browsing = db.ToAssetPath(std::filesystem::absolute(currentDirectory_).string());
+	if (!browsing.empty() && (browsing == src || browsing.starts_with(src + "/"))) {
+		currentDirectory_ = db.ToAbsolute(dst + browsing.substr(src.size()));
+	}
+	LogMessage(std::format("[Assets] Moved '{}' -> '{}' ({} reference(s) in this scene updated).", src, dst, changed), 0);
+	return true;
+}
+
+bool EditorSuite::DeleteAssetToRecycleBin(const std::string& path)
+{
+	if (sceneState_ != EditorSceneState::Edit) {
+		LogMessage("[Assets] Stop Play mode before deleting assets.", 1);
+		return false;
+	}
+	AssetDatabase& db = AssetDb();
+	const std::string assetPath = db.ToAssetPath(path);
+	if (!selectedAssetPath_.empty() && db.ToAssetPath(std::filesystem::absolute(selectedAssetPath_).string()) == assetPath) {
+		ReleasePreviewResources();
+		selectedAssetPath_.clear();
+	}
+	std::string error;
+	if (!db.DeleteAsset(path, &error)) {
+		LogMessage(std::format("[Assets] Cannot delete '{}': {}", path, error), 2);
+		return false;
+	}
+	resolvedAssetCache_.clear();
+	ClearPrefabCache();
+	LogMessage(std::format("[Assets] Moved '{}' to the recycle bin.", assetPath), 0);
+	return true;
+}
+
 void EditorSuite::DrawProjectAndConsolePanel()
 {
 #ifdef USE_IMGUI
@@ -92,13 +199,53 @@ void EditorSuite::DrawProjectAndConsolePanel()
 	ImGui::SetNextWindowSize(ImVec2(screenW, bottomH));
 	ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
 
-	if (ImGui::Begin("Project / Console", nullptr, flags)) {
+	if (ImGui::Begin(TrId("Project / Console"), nullptr, flags)) {
 		if (ImGui::BeginTabBar("BottomPanelTabs")) {
 			// TAB 1: PROJECT (Asset Browser with Subfolder Navigation)
-			if (ImGui::BeginTabItem("Project")) {
+			if (ImGui::BeginTabItem(TrId("Project"))) {
 				bottomPanelTab_ = 0;
+				// Moves requested by drag & drop run after the listing (the entries are being iterated)
+				std::string pendingMoveFrom;
+				std::string pendingMoveTo;
+				AssetDatabase& assetDb = AssetDb();
+				// "Assets/..." path of a Project panel entry, "" when it is not a managed asset (engine folders, scripts)
+				auto managedAssetPath = [&](const std::filesystem::path& p) {
+					std::error_code aec;
+					return assetDb.ToAssetPath(std::filesystem::absolute(p, aec).string());
+				};
+				// Right-click menu, drag source and folder drop target of one entry
+				auto assetItemInteractions = [&](const std::filesystem::path& p, const std::string& assetPath, bool isDirectory) {
+					if (assetPath.empty() || assetPath == "Assets") return;
+					if (ImGui::BeginPopupContextItem()) {
+						if (ImGui::MenuItem(TrId("Rename..."))) {
+							assetRenameTarget_ = p;
+							strncpy_s(assetRenameBuf_, p.filename().string().c_str(), sizeof(assetRenameBuf_) - 1);
+							openAssetRenamePopup_ = true;
+						}
+						if (ImGui::MenuItem(TrId("Delete"))) {
+							assetDeleteTarget_ = p;
+							openAssetDeletePopup_ = true;
+						}
+						ImGui::Separator();
+						ImGui::TextDisabled("GUID: %s", isDirectory ? "(folder)" : assetDb.FindGuid(assetPath).c_str());
+						ImGui::EndPopup();
+					}
+					if (ImGui::BeginDragDropSource()) {
+						ImGui::SetDragDropPayload("RIZE_ASSET_PATH", assetPath.c_str(), assetPath.size() + 1);
+						ImGui::Text("Move %s", p.filename().string().c_str());
+						ImGui::EndDragDropSource();
+					}
+					if (isDirectory && ImGui::BeginDragDropTarget()) {
+						if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("RIZE_ASSET_PATH")) {
+							const std::string from = static_cast<const char*>(payload->Data);
+							pendingMoveFrom = from;
+							pendingMoveTo = assetPath + "/" + std::filesystem::path(from).filename().string();
+						}
+						ImGui::EndDragDropTarget();
+					}
+				};
 
-				if (ImGui::Button("< Back")) {
+				if (ImGui::Button(TrId("< Back"))) {
 					std::filesystem::path parent = currentDirectory_.parent_path();
 					if (!parent.empty() && parent != currentDirectory_) {
 						currentDirectory_ = parent;
@@ -106,35 +253,53 @@ void EditorSuite::DrawProjectAndConsolePanel()
 						currentDirectory_ = ".";
 					}
 				}
-				ImGui::SetItemTooltip("Navigate to parent directory");
+				ImGui::SetItemTooltip("%s", Tr("Navigate to parent directory (drop an asset here to move it up one folder)"));
+				if (ImGui::BeginDragDropTarget()) {
+					if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("RIZE_ASSET_PATH")) {
+						const std::filesystem::path from = static_cast<const char*>(payload->Data);
+						const std::filesystem::path parentFolder = from.parent_path().parent_path();
+						if (!managedAssetPath(assetDb.ToAbsolute(parentFolder.generic_string())).empty()) {
+							pendingMoveFrom = from.generic_string();
+							pendingMoveTo = (parentFolder / from.filename()).generic_string();
+						}
+					}
+					ImGui::EndDragDropTarget();
+				}
 
 				ImGui::SameLine();
-				if (ImGui::Button("Root")) {
+				if (ImGui::Button(TrId("Refresh"))) {
+					assetDb.Refresh();
+					LogMessage(std::format("[Assets] Rescanned Assets/: {} asset(s) with a GUID.", assetDb.Count()), 0);
+				}
+				ImGui::SetItemTooltip("%s", Tr("Rescan the project's Assets folder (.meta GUID files)"));
+
+				ImGui::SameLine();
+				if (ImGui::Button(TrId("Root"))) {
 					currentDirectory_ = ".";
 				}
-				ImGui::SetItemTooltip("Browse workspace root (Resources, shaders, Assets)");
+				ImGui::SetItemTooltip("%s", Tr("Browse workspace root (Resources, shaders, Assets)"));
 
 				ImGui::SameLine();
-				if (ImGui::Button("Resources")) {
+				if (ImGui::Button(TrId("Resources"))) {
 					if (std::filesystem::exists("Resources")) currentDirectory_ = "Resources";
 				}
 				ImGui::SameLine();
-				if (ImGui::Button("Scripts")) {
+				if (ImGui::Button(TrId("Scripts"))) {
 					std::filesystem::path scriptsDir = ResolveGameScriptsDir() / "Scripts";
 					if (std::filesystem::exists(scriptsDir)) {
 						currentDirectory_ = scriptsDir;
 					}
 				}
-				ImGui::SetItemTooltip("Browse GameScripts/Scripts (.cpp / .h)");
+				ImGui::SetItemTooltip("%s", Tr("Browse GameScripts/Scripts (.cpp / .h)"));
 
 				ImGui::SameLine();
-				if (ImGui::Button("shaders")) {
+				if (ImGui::Button(TrId("shaders"))) {
 					if (std::filesystem::exists("shaders")) currentDirectory_ = "shaders";
 					else if (std::filesystem::exists("../RizealldayEngine/shaders")) currentDirectory_ = "../RizealldayEngine/shaders";
 				}
 				if (!currentProjectRoot_.empty() && std::filesystem::exists(currentProjectRoot_)) {
 					ImGui::SameLine();
-					if (ImGui::Button("Project Root")) {
+					if (ImGui::Button(TrId("Project Root"))) {
 						currentDirectory_ = currentProjectRoot_;
 					}
 				}
@@ -154,6 +319,7 @@ void EditorSuite::DrawProjectAndConsolePanel()
 						std::vector<std::filesystem::directory_entry> files;
 						for (const auto& entry : std::filesystem::directory_iterator(currentDirectory_)) {
 							std::string filename = entry.path().filename().string();
+							if (AssetDatabase::IsMetaFile(entry.path())) continue;
 							if (assetSearchBuf_[0] != '\0' && filename.find(assetSearchBuf_) == std::string::npos) continue;
 							if (entry.is_directory()) dirs.push_back(entry);
 							else files.push_back(entry);
@@ -174,7 +340,8 @@ void EditorSuite::DrawProjectAndConsolePanel()
 									currentDirectory_ = entry.path();
 								}
 							}
-							ImGui::SetItemTooltip("Double-click to open folder '%s'", filename.c_str());
+							ImGui::SetItemTooltip("Double-click to open folder '%s'. Drop assets here to move them.", filename.c_str());
+							assetItemInteractions(entry.path(), managedAssetPath(entry.path()), true);
 						}
 
 						// Render files
@@ -242,18 +409,65 @@ void EditorSuite::DrawProjectAndConsolePanel()
 										filename.substr(0, filename.size() - 12).c_str());
 								}
 							}
+							const std::string assetPath = managedAssetPath(entry.path());
+							if (!assetPath.empty()) assetDb.GuidForPath(assetPath); // files dropped in from Explorer get their .meta here
+							assetItemInteractions(entry.path(), assetPath, false);
 						}
 					}
 				} catch (...) {}
 				ImGui::EndChild();
 
+				if (!pendingMoveFrom.empty()) {
+					MoveAssetAndUpdateReferences(pendingMoveFrom, pendingMoveTo);
+				}
+
+				if (openAssetRenamePopup_) {
+					ImGui::OpenPopup(TrId("Rename Asset"));
+					openAssetRenamePopup_ = false;
+				}
+				if (ImGui::BeginPopupModal(TrId("Rename Asset"), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+					ImGui::Text("Rename '%s'", assetRenameTarget_.filename().string().c_str());
+					if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+					const bool submitted = ImGui::InputText("##AssetRename", assetRenameBuf_, sizeof(assetRenameBuf_), ImGuiInputTextFlags_EnterReturnsTrue);
+					ImGui::TextDisabled("References in scenes and prefabs follow the asset (GUID).");
+					if (submitted || ImGui::Button(TrId("Rename"), ImVec2(120.0f, 0.0f))) {
+						const std::string newName = assetRenameBuf_;
+						if (!newName.empty() && newName.find_first_of("/\\:*?\"<>|") == std::string::npos) {
+							MoveAssetAndUpdateReferences(managedAssetPath(assetRenameTarget_),
+								managedAssetPath(assetRenameTarget_.parent_path() / newName));
+							ImGui::CloseCurrentPopup();
+						} else {
+							LogMessage("[Assets] Invalid file name.", 1);
+						}
+					}
+					ImGui::SameLine();
+					if (ImGui::Button(TrId("Cancel"), ImVec2(120.0f, 0.0f))) ImGui::CloseCurrentPopup();
+					ImGui::EndPopup();
+				}
+
+				if (openAssetDeletePopup_) {
+					ImGui::OpenPopup(TrId("Delete Asset"));
+					openAssetDeletePopup_ = false;
+				}
+				if (ImGui::BeginPopupModal(TrId("Delete Asset"), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+					ImGui::Text("Move '%s' to the recycle bin?", assetDeleteTarget_.filename().string().c_str());
+					ImGui::TextDisabled("Objects that use it keep the path but show nothing until it is restored.");
+					if (ImGui::Button(TrId("Delete"), ImVec2(120.0f, 0.0f))) {
+						DeleteAssetToRecycleBin(managedAssetPath(assetDeleteTarget_));
+						ImGui::CloseCurrentPopup();
+					}
+					ImGui::SameLine();
+					if (ImGui::Button(TrId("Cancel"), ImVec2(120.0f, 0.0f))) ImGui::CloseCurrentPopup();
+					ImGui::EndPopup();
+				}
+
 				ImGui::EndTabItem();
 			}
 
 			// TAB 2: CONSOLE
-			if (ImGui::BeginTabItem("Console")) {
+			if (ImGui::BeginTabItem(TrId("Console"))) {
 				bottomPanelTab_ = 1;
-				if (ImGui::Button("Clear")) {
+				if (ImGui::Button(TrId("Clear"))) {
 					consoleLogs_.clear();
 					infoCount_ = 0; warningCount_ = 0; errorCount_ = 0;
 				}

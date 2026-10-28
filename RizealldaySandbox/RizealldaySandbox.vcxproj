@@ -87,6 +87,7 @@
     </Link>
     <Manifest>
       <EnableDpiAwareness>PerMonitorHighDPIAware</EnableDpiAwareness>
+      <AdditionalManifestFiles>$(ProjectDir)Utf8CodePage.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
     </Manifest>
     <PostBuildEvent>
       <Command>
@@ -123,6 +124,7 @@ if exist "$(ProjectDir)Resources" xcopy "$(ProjectDir)Resources" "$(OutDir)Resou
     </Link>
     <Manifest>
       <EnableDpiAwareness>PerMonitorHighDPIAware</EnableDpiAwareness>
+      <AdditionalManifestFiles>$(ProjectDir)Utf8CodePage.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
     </Manifest>
     <PostBuildEvent>
       <Command>
@@ -162,6 +164,7 @@ if exist "$(ProjectDir)Resources" xcopy "$(ProjectDir)Resources" "$(OutDir)Resou
     </Link>
     <Manifest>
       <EnableDpiAwareness>PerMonitorHighDPIAware</EnableDpiAwareness>
+      <AdditionalManifestFiles>$(ProjectDir)Utf8CodePage.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
     </Manifest>
     <PostBuildEvent>
       <Command>
@@ -197,6 +200,12 @@ if exist "$(ProjectDir)Resources" xcopy "$(ProjectDir)Resources" "$(OutDir)Resou
     <ClCompile Include="EditorSuite_ScriptBuild.cpp" />
     <ClCompile Include="EditorSuite_PlayMode.cpp" />
     <ClCompile Include="EditorSuite_Scripting.cpp" />
+    <ClCompile Include="EditorSuite_Components.cpp" />
+    <ClCompile Include="EditorSuite_InspectorComponents.cpp" />
+    <ClCompile Include="AssetDatabase.cpp" />
+    <ClCompile Include="Localization.cpp" />
+    <ClCompile Include="ComponentRegistry.cpp" />
+    <ClCompile Include="EditorSuite_ScriptQueries.cpp" />
     <ClCompile Include="EditorSuite_Particles.cpp" />
     <ClCompile Include="EditorSuite_Environment.cpp" />
     <ClCompile Include="EditorSuite_Hierarchy.cpp" />
@@ -220,6 +229,9 @@ if exist "$(ProjectDir)Resources" xcopy "$(ProjectDir)Resources" "$(OutDir)Resou
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ParticleQuad.h" />
+    <ClInclude Include="AssetDatabase.h" />
+    <ClInclude Include="Localization.h" />
+    <ClInclude Include="ComponentRegistry.h" />
     <ClInclude Include="EditorSuite.h" />
     <ClInclude Include="EditorSuiteInternal.h" />
     <ClInclude Include="SceneJson.h" />
@@ -228,6 +240,9 @@ if exist "$(ProjectDir)Resources" xcopy "$(ProjectDir)Resources" "$(OutDir)Resou
     <ClInclude Include="EditorApp.h" />
     <ClInclude Include="scene\EditorScene.h" />
     <ClInclude Include="scene\TitleScene.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Utf8CodePage.manifest" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>
