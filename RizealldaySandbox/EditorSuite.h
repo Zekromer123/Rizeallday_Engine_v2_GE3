@@ -18,6 +18,7 @@
 #include "base/ScriptModule.h"
 #include "ComponentRegistry.h"
 #include "AssetDatabase.h"
+#include "AnimatorController.h"
 #ifdef USE_IMGUI
 #include <imgui.h>
 #else
@@ -35,6 +36,7 @@ struct ImVec2 {
 #include <unordered_set>
 #include <cstdint>
 #include <memory>
+#include <chrono>
 #include <filesystem>
 #include <mutex>
 #include <atomic>
@@ -371,6 +373,28 @@ public:
 	void DispatchCollisionEvents();
 	enum class CollisionEvent { Stay, Enter, Exit };
 	void DispatchScriptCollision(uint32_t selfId, uint32_t otherId, CollisionEvent kind = CollisionEvent::Stay);
+	// Animator (EditorSuite_Animator.cpp, roadmap 5.1)
+	static void RegisterAnimatorComponent();
+	/// Moves skeletal animation time: Animator state machines when `runStateMachines` (Play), else the Inspector clip
+	/// (or the Animator's entry / previewed state). Called from Update with game time, never from rendering.
+	void UpdateAnimations(float deltaTime, bool runStateMachines);
+	AnimatorComponent* GetAnimator(GameObject& obj);
+	/// Shared controller asset (cached, reloaded when the file changes on disk). nullptr when missing or invalid.
+	std::shared_ptr<AnimatorController> GetAnimatorController(const std::string& assetPath);
+	bool SaveAnimatorController(const std::string& assetPath, const AnimatorController& controller);
+	/// Creates Assets/Animators/<name>.animator.json (unique name) and returns its project-relative path ("" on failure)
+	std::string CreateAnimatorControllerAsset(const std::string& name);
+	void ApplyAnimatorState(GameObject& obj, const AnimatorComponent& animator, const AnimState& state, float fadeSeconds);
+	/// Model that owns a state's clip: nullptr = the object's own model
+	Model* ResolveClipModel(const AnimState& state);
+	void DispatchScriptAnimationEvent(uint32_t objectId, const char* eventName);
+	void DrawAnimatorWindow();
+	void DrawSkeletonOverlay(const ImVec2& vpPos, const ImVec2& vpSize);
+	// Animator window helpers (EditorSuite_AnimatorWindow.cpp)
+	void AnimatorCommit();
+	void AnimatorLoadWorking(const std::string& assetPath);
+	void DrawAnimatorCanvas(AnimatorController& c, const AnimatorRuntime* live, const ImVec2& size);
+	void DrawAnimatorSidePanel(AnimatorController& c, AnimatorComponent* liveAnimator, GameObject* liveObject);
 	// World-space collider shapes shared by physics and script queries
 	void ComputeBoxColliderBounds(const GameObject& obj, bool useAbsSize, Vector3& outMin, Vector3& outMax) const;
 	void ComputeSphereColliderWorld(const GameObject& obj, Vector3& outCenter, float& outRadius) const;
@@ -472,6 +496,16 @@ public:
 
 	// Project Management & Native Folder Picker
 	static std::string OpenNativeFolderDialog();
+	// Asset import (EditorSuite_Import.cpp): copies files / folders into <project>/Assets without Explorer
+	static std::vector<std::string> OpenNativeFilesDialog();
+	/// Folder an imported file goes to: the Project panel folder when it is inside Assets/, else Assets/<Textures|Models|Audio|...>
+	std::filesystem::path DefaultImportFolder(const std::filesystem::path& source) const;
+	/// Copies `sources` (files or folders) into `targetDir` (empty = DefaultImportFolder per file), with companion files
+	/// (.mtl + textures of .obj, .bin + images of .gltf, <name>.fbm of .fbx). Returns the imported project-relative paths.
+	std::vector<std::string> ImportAssets(const std::vector<std::filesystem::path>& sources, const std::filesystem::path& targetDir = {});
+	void ProcessPendingImports();
+	/// Recent projects list (Project Hub, Open Project, File > Open Recent). True when a project was opened.
+	bool DrawRecentProjectsList(float height);
 	bool CreateNewProject(const std::string& parentFolder, const std::string& projectName);
 	bool OpenProject(const std::string& folderPath);
 
@@ -945,6 +979,34 @@ private:
 	std::filesystem::path selectedAssetPath_ = "";
 	char assetSearchBuf_[128] = "";
 	mutable AssetDatabase assetDatabase_;
+	// Animator (EditorSuite_Animator.cpp / EditorSuite_AnimatorWindow.cpp)
+	struct CachedAnimatorController {
+		std::shared_ptr<AnimatorController> controller;
+		std::filesystem::file_time_type stamp{};
+		std::chrono::steady_clock::time_point checkedAt{};
+	};
+	std::unordered_map<std::string, CachedAnimatorController> animatorControllers_;
+	bool showAnimatorWindow_ = false;
+	bool showSkeletonOverlay_ = false;
+	uint32_t animatorPreviewObject_ = 0; // Edit mode: object whose Animator previews animatorPreviewState_
+	uint32_t animatorPreviewState_ = 0;
+	// Animator window (canvas state and selection)
+	std::string animatorWindowAsset_;     // controller being edited
+	Vector2 animatorPan_{ 300.0f, 200.0f };
+	float animatorZoom_ = 1.0f;
+	uint32_t animatorSelectedState_ = 0;
+	int animatorSelectedTransition_ = -1;
+	bool animatorSelectedEntry_ = false;
+	uint32_t animatorLinkFrom_ = 0;       // dragging a new transition from this state (or AnimTransition::kAnyState)
+	bool animatorLinking_ = false;
+	bool animatorDraggingNode_ = false;
+	std::vector<std::string> animatorUndo_; // controller JSON snapshots (window-local undo)
+	std::vector<std::string> animatorRedo_;
+	std::string animatorCommittedJson_;   // JSON of the version on disk (undo baseline)
+	std::optional<AnimatorController> animatorWorking_; // edited copy; saved by AnimatorCommit()
+	std::string animatorWorkingAsset_;
+	bool animatorDirty_ = false;
+	std::vector<std::string> pendingImports_; // dropped from Explorer, imported in Update
 	std::filesystem::path assetRenameTarget_;
 	char assetRenameBuf_[260] = "";
 	std::filesystem::path assetDeleteTarget_;

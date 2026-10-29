@@ -274,6 +274,15 @@ void EditorSuite::DrawProjectAndConsolePanel()
 				ImGui::SetItemTooltip("%s", Tr("Rescan the project's Assets folder (.meta GUID files)"));
 
 				ImGui::SameLine();
+				ImGui::BeginDisabled(currentProjectRoot_.empty());
+				if (ImGui::Button(TrId("Import..."))) {
+					const std::vector<std::string> files = OpenNativeFilesDialog();
+					ImportAssets(std::vector<std::filesystem::path>(files.begin(), files.end()));
+				}
+				ImGui::EndDisabled();
+				ImGui::SetItemTooltip("%s", Tr("Copy files into this folder (or drag files from Explorer onto the editor window)"));
+
+				ImGui::SameLine();
 				if (ImGui::Button(TrId("Root"))) {
 					currentDirectory_ = ".";
 				}

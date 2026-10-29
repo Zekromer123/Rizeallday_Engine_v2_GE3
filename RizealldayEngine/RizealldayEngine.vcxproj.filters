@@ -75,6 +75,9 @@
     <ClCompile Include="base\ScriptModule.cpp">
       <Filter>base</Filter>
     </ClCompile>
+    <ClCompile Include="3d\AnimationPlayer.cpp">
+      <Filter>3d</Filter>
+    </ClCompile>
     <ClCompile Include="3d\Model.cpp">
       <Filter>3d</Filter>
     </ClCompile>
@@ -202,6 +205,9 @@
     </ClInclude>
     <ClInclude Include="base\ScriptModule.h">
       <Filter>base</Filter>
+    </ClInclude>
+    <ClInclude Include="3d\AnimationPlayer.h">
+      <Filter>3d</Filter>
     </ClInclude>
     <ClInclude Include="3d\Model.h">
       <Filter>3d</Filter>

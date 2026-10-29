@@ -105,6 +105,18 @@
     <ClCompile Include="Localization.cpp">
       <Filter>editor</Filter>
     </ClCompile>
+    <ClCompile Include="AnimatorController.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorSuite_Import.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorSuite_Animator.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorSuite_AnimatorWindow.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
     <ClCompile Include="AssetDatabase.cpp">
       <Filter>editor</Filter>
     </ClCompile>
@@ -141,6 +153,9 @@
       <Filter>editor</Filter>
     </ClInclude>
     <ClInclude Include="Localization.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="AnimatorController.h">
       <Filter>editor</Filter>
     </ClInclude>
     <ClInclude Include="AssetDatabase.h">

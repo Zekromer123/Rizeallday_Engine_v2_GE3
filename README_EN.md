@@ -24,6 +24,8 @@ and a game build/export pipeline. Designed for making 3D games directly, from pr
 - Undo/redo, JSON scenes, prefabs, Play / Pause / Step, full-window game preview (F11)
 - GUID asset database (`.meta` files): renaming or moving assets in the Project panel keeps scenes and prefabs intact
 - Japanese text (editor, game UI, file names) and an editor language option: English / 日本語 / Bahasa Indonesia (Options > Language)
+- Animator: animation state machine with a node editor (Window > Animator), crossfades, parameters and events from scripts
+- Asset import from inside the editor (dialog or drag from Explorer) and a recent-projects list (File > Open Recent)
 - Profiler (CPU & GPU per pass, draw calls, upload memory), game Build & Export
 
 **Gameplay & scripting**

@@ -29,6 +29,7 @@ void EditorSuite::DrawSceneViewOverlays(const ImVec2& vpPos, const ImVec2& vpSiz
 #ifdef USE_IMGUI
 	// The ground grid is rendered in 3D with depth testing (see RenderViewports), not as an overlay
 	if (showWireframe_ || isEditingColliderBounds_) DrawColliderWireframes(vpPos, vpSize);
+	if (showSkeletonOverlay_) DrawSkeletonOverlay(vpPos, vpSize);
 
 	if (selectedObjectIndex_ >= 0 && selectedObjectIndex_ < static_cast<int>(gameObjects_.size())) {
 		const auto& sel = gameObjects_[selectedObjectIndex_];
@@ -137,6 +138,9 @@ void EditorSuite::DrawFloatingBottomBar(const ImVec2& vpPos, const ImVec2& vpSiz
 	ImGui::SameLine();
 	ImGui::Checkbox("Wire", &showWireframe_);
 	ImGui::SetItemTooltip("Toggle collider wireframe rendering");
+	ImGui::SameLine();
+	ImGui::Checkbox("Bones", &showSkeletonOverlay_);
+	ImGui::SetItemTooltip("%s", Tr("Show the skeleton of the selected animated object"));
 	ImGui::SameLine();
 	ImGui::Checkbox("Light", &enableLighting_);
 	ImGui::SetItemTooltip("Toggle viewport scene lighting");

@@ -46,6 +46,9 @@ void Object3d::Initialize() {
 
     // 3. World Transform
     worldTransform.Initialize();
+
+    // 4. Animation: the first clip of the model (as before the AnimationPlayer)
+    player_.Play(nullptr, 0);
 }
 
 void Object3d::ResetBonePalette() {
@@ -56,42 +59,44 @@ void Object3d::SetModel(Model* model, bool resetAnim) {
     if (model_ != model) {
         model_ = model;
         if (resetAnim) {
-            animationTime_ = 0.0f;
+            SetAnimationTime(0.0f);
         }
         ResetBonePalette();
     }
 }
 
 void Object3d::PlayAnimation(int animIndex, bool loop, float speed) {
-    currentAnimationIndex_ = animIndex;
-    isAnimationLoop_ = loop;
-    animationSpeed_ = speed;
-    animationTime_ = 0.0f;
+    player_.Play(nullptr, animIndex, loop, speed);
 }
 
 void Object3d::SetCurrentAnimationIndex(int animIndex) {
-    if (currentAnimationIndex_ != animIndex) {
-        currentAnimationIndex_ = animIndex;
-        animationTime_ = 0.0f;
+    const AnimationPlayer::Track& current = player_.Current();
+    if (current.clip != animIndex || current.source != nullptr) {
+        player_.Play(nullptr, animIndex, current.loop, current.speed);
     }
+}
+
+void Object3d::CrossFade(const Model* source, int clip, float seconds, bool loop, float speed) {
+    player_.Play(source == model_ ? nullptr : source, clip, loop, speed, seconds);
 }
 
 void Object3d::SetAnimationTime(float time) {
-    animationTime_ = time;
+    player_.Current().time = time;
+    player_.Current().elapsed = time;
 }
 
 float Object3d::GetAnimationDuration() const {
-    if (model_) {
-        return model_->GetAnimationDuration(currentAnimationIndex_);
+    return AnimationPlayer::Duration(player_.Current(), model_);
+}
+
+void Object3d::AdvanceAnimation(float deltaTime) {
+    if (model_ && model_->HasBones()) {
+        player_.Advance(deltaTime, model_);
     }
-    return 0.0f;
 }
 
 void Object3d::CopyBonePaletteFrom(const Object3d& other) {
-    animationTime_ = other.animationTime_;
-    currentAnimationIndex_ = other.currentAnimationIndex_;
-    animationSpeed_ = other.animationSpeed_;
-    isAnimationLoop_ = other.isAnimationLoop_;
+    player_ = other.player_;
     boneTransforms_ = other.boneTransforms_;
     bonePalette_ = other.bonePalette_;
 }
@@ -104,19 +109,8 @@ void Object3d::Update(float deltaTime) {
     }
 
     if (model_ && model_->HasBones()) {
-        animationTime_ += deltaTime * animationSpeed_;
-        float duration = model_->GetAnimationDuration(currentAnimationIndex_);
-        if (duration > 0.0f) {
-            if (isAnimationLoop_) {
-                animationTime_ = std::fmod(animationTime_, duration);
-                if (animationTime_ < 0.0f) {
-                    animationTime_ += duration;
-                }
-            } else if (animationTime_ > duration) {
-                animationTime_ = duration;
-            }
-        }
-        model_->CalculateBoneTransforms(animationTime_, currentAnimationIndex_, boneTransforms_);
+        if (deltaTime != 0.0f) player_.Advance(deltaTime, model_);
+        player_.Evaluate(*model_, boneTransforms_);
 
         if (bonePalette_.size() != kMaxBones) {
             ResetBonePalette();

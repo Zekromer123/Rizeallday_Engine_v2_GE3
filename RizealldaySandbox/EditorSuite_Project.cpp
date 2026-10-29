@@ -244,6 +244,18 @@ namespace {
 	}
 
 	constexpr size_t kMaxRecentProjects = 10;
+
+	void SaveRecentProjectsFile(const std::vector<std::filesystem::path>& projects)
+	{
+		const std::filesystem::path file = RecentProjectsFilePath();
+		if (file.empty()) return;
+		std::error_code ec;
+		std::filesystem::create_directories(file.parent_path(), ec);
+		std::ofstream out(file, std::ios::trunc);
+		for (const auto& p : projects) {
+			out << p.string() << "\n";
+		}
+	}
 }
 
 void EditorSuite::LoadRecentProjects()
@@ -265,7 +277,7 @@ void EditorSuite::LoadRecentProjects()
 			recentProjects_.push_back(projPath);
 		}
 	}
-	if (!recentProjects_.empty()) selectedRecentProject_ = 0;
+	// Nothing is preselected: "Open Selected" only opens what the user clicked
 }
 
 void EditorSuite::AddRecentProject(const std::filesystem::path& projectRoot)
@@ -275,6 +287,12 @@ void EditorSuite::AddRecentProject(const std::filesystem::path& projectRoot)
 	LoadRecentProjects();
 	std::error_code ec;
 	const std::filesystem::path root = std::filesystem::weakly_canonical(projectRoot, ec);
+	// Throw-away folders (tests, demos in %TEMP%) are not projects the user wants to reopen
+	const std::filesystem::path temp = std::filesystem::weakly_canonical(std::filesystem::temp_directory_path(ec), ec);
+	if (!temp.empty()) {
+		const std::filesystem::path rel = root.lexically_relative(temp);
+		if (!rel.empty() && !rel.native().starts_with(L"..")) return;
+	}
 	std::erase_if(recentProjects_, [&](const std::filesystem::path& p) {
 		std::error_code eqEc;
 		return std::filesystem::equivalent(p, root, eqEc);
@@ -282,13 +300,51 @@ void EditorSuite::AddRecentProject(const std::filesystem::path& projectRoot)
 	recentProjects_.insert(recentProjects_.begin(), root);
 	if (recentProjects_.size() > kMaxRecentProjects) recentProjects_.resize(kMaxRecentProjects);
 
-	const std::filesystem::path file = RecentProjectsFilePath();
-	if (file.empty()) return;
-	std::filesystem::create_directories(file.parent_path(), ec);
-	std::ofstream out(file, std::ios::trunc);
-	for (const auto& p : recentProjects_) {
-		out << p.string() << "\n";
+	SaveRecentProjectsFile(recentProjects_);
+}
+
+bool EditorSuite::DrawRecentProjectsList(float height)
+{
+	bool opened = false;
+#ifdef USE_IMGUI
+	ImGui::BeginChild("##RecentProjects", ImVec2(0.0f, height), ImGuiChildFlags_Borders);
+	if (recentProjects_.empty()) {
+		ImGui::TextDisabled("%s", Tr("No recent projects."));
+		ImGui::TextDisabled("%s", Tr("Use \"Browse...\" to open a project folder."));
 	}
+	int removeIndex = -1;
+	for (int i = 0; i < static_cast<int>(recentProjects_.size()); ++i) {
+		const auto& proj = recentProjects_[i];
+		std::error_code ec;
+		const bool exists = std::filesystem::exists(proj, ec);
+		ImGui::PushID(i);
+		const std::string name = proj.filename().string() + (exists ? "" : std::string("  ") + Tr("(missing)"));
+		if (!exists) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+		if (ImGui::Selectable(name.c_str(), selectedRecentProject_ == i, ImGuiSelectableFlags_AllowDoubleClick)) {
+			selectedRecentProject_ = i;
+			if (ImGui::IsMouseDoubleClicked(0) && exists) opened = OpenProject(proj.string());
+		}
+		if (!exists) ImGui::PopStyleColor();
+		if (ImGui::BeginPopupContextItem()) {
+			if (ImGui::MenuItem(TrId("Remove from List"))) removeIndex = i;
+			ImGui::EndPopup();
+		}
+		ImGui::Indent(12.0f);
+		ImGui::TextDisabled("%s", proj.string().c_str());
+		ImGui::Unindent(12.0f);
+		ImGui::PopID();
+		if (opened) break; // OpenProject reorders the list
+	}
+	ImGui::EndChild();
+	if (removeIndex >= 0 && removeIndex < static_cast<int>(recentProjects_.size())) {
+		recentProjects_.erase(recentProjects_.begin() + removeIndex);
+		selectedRecentProject_ = recentProjects_.empty() ? -1 : 0;
+		if (!isRunningTests_) SaveRecentProjectsFile(recentProjects_);
+	}
+#else
+	(void)height;
+#endif
+	return opened;
 }
 
 void EditorSuite::DrawProjectHub()
@@ -317,31 +373,11 @@ void EditorSuite::DrawProjectHub()
 		// Left: open an existing project
 		ImGui::TableSetColumnIndex(0);
 		ImGui::SeparatorText("Open Project");
-		ImGui::BeginChild("##RecentProjects", ImVec2(0.0f, 210.0f), ImGuiChildFlags_Borders);
-		if (recentProjects_.empty()) {
-			ImGui::TextDisabled("No recent projects.");
-			ImGui::TextDisabled("Use \"Browse...\" to open a project folder.");
-		}
-		for (int i = 0; i < static_cast<int>(recentProjects_.size()); ++i) {
-			const auto& proj = recentProjects_[i];
-			ImGui::PushID(i);
-			const std::string name = proj.filename().string();
-			if (ImGui::Selectable(name.c_str(), selectedRecentProject_ == i, ImGuiSelectableFlags_AllowDoubleClick)) {
-				selectedRecentProject_ = i;
-				if (ImGui::IsMouseDoubleClicked(0)) {
-					opened = OpenProject(proj.string());
-				}
-			}
-			ImGui::Indent(12.0f);
-			ImGui::TextDisabled("%s", proj.string().c_str());
-			ImGui::Unindent(12.0f);
-			ImGui::PopID();
-		}
-		ImGui::EndChild();
+		opened = DrawRecentProjectsList(210.0f);
 
 		const bool hasSelection = selectedRecentProject_ >= 0 && selectedRecentProject_ < static_cast<int>(recentProjects_.size());
 		ImGui::BeginDisabled(!hasSelection);
-		if (ImGui::Button("Open Selected") && hasSelection) {
+		if (ImGui::Button(TrId("Open Selected")) && hasSelection) {
 			opened = OpenProject(recentProjects_[selectedRecentProject_].string());
 		}
 		ImGui::EndDisabled();
@@ -453,6 +489,20 @@ bool EditorSuite::OpenProject(const std::string& folderPath)
 	std::filesystem::path sceneFullPath = currentProjectRoot_ / startupScene;
 	if (!std::filesystem::exists(sceneFullPath)) {
 		sceneFullPath = currentProjectRoot_ / "Assets" / "Scenes" / "SampleScene.scene.json";
+	}
+	if (!std::filesystem::exists(sceneFullPath)) {
+		// No startup scene: open the first scene the project has (Assets/Scenes first) instead of an empty one
+		std::vector<std::filesystem::path> scenes;
+		std::error_code ec;
+		for (const std::filesystem::path& dir : { currentProjectRoot_ / "Assets" / "Scenes", currentProjectRoot_ / "Assets" }) {
+			for (auto it = std::filesystem::recursive_directory_iterator(dir, ec); !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+				if (it->is_regular_file() && it->path().filename().string().ends_with(".scene.json")) scenes.push_back(it->path());
+			}
+			if (!scenes.empty()) break;
+			ec.clear();
+		}
+		std::sort(scenes.begin(), scenes.end());
+		if (!scenes.empty()) sceneFullPath = scenes.front();
 	}
 	if (std::filesystem::exists(sceneFullPath)) {
 		LoadScene(sceneFullPath.string());

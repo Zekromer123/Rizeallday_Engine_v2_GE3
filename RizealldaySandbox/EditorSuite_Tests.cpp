@@ -8,6 +8,8 @@
 #include "SceneJson.h"
 #include "Tests/TestFramework.h"
 #include "base/DirectXCommon.h"
+#include "3d/Object3d.h"
+#include "3d/AnimationPlayer.h"
 #include <random>
 #include <set>
 
@@ -2003,6 +2005,454 @@ TEST_CASE(Localization, TranslateWithEnglishFallbackAndStableIds)
 
 	Localization::SetLanguageDirectory(savedDir);
 	Localization::SetLanguage(savedLanguage);
+}
+
+// ===========================================================================
+// Animation & Animator (5.1)
+// ===========================================================================
+
+namespace {
+	Model* LoadTestSkinnedModel() { return Model::CreateFromFile("Resources/Model", "walk.fbx"); }
+
+	float MaxMatrixDifference(const std::vector<Matrix4x4>& a, const std::vector<Matrix4x4>& b)
+	{
+		float worst = (a.size() == b.size()) ? 0.0f : 1e9f;
+		for (size_t i = 0; i < (std::min)(a.size(), b.size()); ++i)
+			for (int r = 0; r < 4; ++r)
+				for (int c = 0; c < 4; ++c) worst = (std::max)(worst, std::fabs(a[i].m[r][c] - b[i].m[r][c]));
+		return worst;
+	}
+
+	/// Idle / Walk / Attack / Die with the usual transitions
+	AnimatorController MakeTestController()
+	{
+		AnimatorController c;
+		c.parameters = { { "speed", AnimParamType::Float, 0.0f }, { "attack", AnimParamType::Trigger, 0.0f }, { "dead", AnimParamType::Bool, 0.0f } };
+		const uint32_t idle = c.AddState("Idle", { 0, 0 }).id;
+		const uint32_t walk = c.AddState("Walk", { 200, 0 }).id;
+		const uint32_t attack = c.AddState("Attack", { 100, 120 }).id;
+		const uint32_t die = c.AddState("Die", { 300, 120 }).id;
+		c.FindState(attack)->loop = false;
+		c.transitions.push_back({ idle, walk, { { "speed", AnimConditionOp::Greater, 0.1f } }, 0.2f });
+		c.transitions.push_back({ walk, idle, { { "speed", AnimConditionOp::Less, 0.1f } }, 0.2f });
+		c.transitions.push_back({ AnimTransition::kAnyState, attack, { { "attack", AnimConditionOp::IsTrue, 0.0f } }, 0.1f });
+		AnimTransition back{ attack, idle, {}, 0.2f };
+		back.hasExitTime = true;
+		back.exitTime = 1.0f;
+		c.transitions.push_back(back);
+		c.transitions.push_back({ AnimTransition::kAnyState, die, { { "dead", AnimConditionOp::IsTrue, 0.0f } }, 0.0f });
+		return c;
+	}
+}
+
+TEST_CASE(Animation, PosePipelineMatchesReference)
+{
+	Model* model = LoadTestSkinnedModel();
+	REQUIRE(model != nullptr);
+	REQUIRE(model->HasBones());
+	REQUIRE(model->GetAnimationCount() > 0);
+	const float duration = model->GetAnimationDuration(0);
+	REQUIRE(duration > 0.0f);
+	CHECK(model->GetNodeCount() >= model->GetBoneCount());
+
+	// Sample -> Build must reproduce the previous single-pass result exactly (up to float noise)
+	for (float t : { 0.0f, 0.3f, duration * 0.77f, duration + 0.4f }) {
+		std::vector<Matrix4x4> expected, actual;
+		model->CalculateBoneTransformsReference(t, 0, expected);
+		model->CalculateBoneTransforms(t, 0, actual);
+		CHECK_MSG(MaxMatrixDifference(expected, actual) < 1e-4f, std::format("t={} diff={}", t, MaxMatrixDifference(expected, actual)));
+	}
+
+	// Blending: weight 0 / 1 give the inputs, 0.5 lies between them
+	const AnimationClip* clip = model->GetAnimationClip(0);
+	LocalPose a, b, mixed;
+	model->SampleLocalPose(clip, 0.1f, true, a);
+	model->SampleLocalPose(clip, duration * 0.5f, true, b);
+	std::vector<Matrix4x4> ma, mb, m0, m1, mh;
+	model->BuildSkinMatrices(a, ma);
+	model->BuildSkinMatrices(b, mb);
+	model->BlendPoses(a, b, 0.0f, mixed);
+	model->BuildSkinMatrices(mixed, m0);
+	model->BlendPoses(a, b, 1.0f, mixed);
+	model->BuildSkinMatrices(mixed, m1);
+	model->BlendPoses(a, b, 0.5f, mixed);
+	model->BuildSkinMatrices(mixed, mh);
+	CHECK(MaxMatrixDifference(ma, m0) < 1e-4f);
+	CHECK(MaxMatrixDifference(mb, m1) < 1e-4f);
+	CHECK(MaxMatrixDifference(ma, mh) > 1e-4f);
+	CHECK(MaxMatrixDifference(mb, mh) > 1e-4f);
+
+	// A one-shot clip holds its last frame instead of wrapping to the first
+	LocalPose end, past;
+	model->SampleLocalPose(clip, duration, false, end);
+	model->SampleLocalPose(clip, duration * 3.0f, false, past);
+	std::vector<Matrix4x4> me, mp;
+	model->BuildSkinMatrices(end, me);
+	model->BuildSkinMatrices(past, mp);
+	CHECK(MaxMatrixDifference(me, mp) < 1e-5f);
+}
+
+namespace {
+	/// Largest distance a vertex moves when skinned with the bind pose, relative to the mesh size.
+	/// Bind pose = every node at its rest transform, so a correct rig leaves the mesh exactly where it was.
+	float BindPoseSkinError(const Model& model)
+	{
+		LocalPose bind(model.GetNodeCount()); // NodePose::bind = true for every node
+		std::vector<Matrix4x4> skin;
+		model.BuildSkinMatrices(bind, skin);
+		float worst = 0.0f;
+		Vector3 mn{ 1e30f, 1e30f, 1e30f }, mx{ -1e30f, -1e30f, -1e30f };
+		for (const MeshData& mesh : model.GetMeshes()) {
+			for (const VertexData& v : mesh.vertices) {
+				const Vector3 p{ v.position.x, v.position.y, v.position.z };
+				mn = { (std::min)(mn.x, p.x), (std::min)(mn.y, p.y), (std::min)(mn.z, p.z) };
+				mx = { (std::max)(mx.x, p.x), (std::max)(mx.y, p.y), (std::max)(mx.z, p.z) };
+				const float total = v.boneWeights[0] + v.boneWeights[1] + v.boneWeights[2] + v.boneWeights[3];
+				if (total <= 0.0001f) continue;
+				Vector3 s{ 0, 0, 0 };
+				for (int k = 0; k < 4; ++k) {
+					const Matrix4x4& m = skin[v.boneIndices[k] < skin.size() ? v.boneIndices[k] : 0];
+					const float w = v.boneWeights[k];
+					s.x += w * (p.x * m.m[0][0] + p.y * m.m[1][0] + p.z * m.m[2][0] + m.m[3][0]);
+					s.y += w * (p.x * m.m[0][1] + p.y * m.m[1][1] + p.z * m.m[2][1] + m.m[3][1]);
+					s.z += w * (p.x * m.m[0][2] + p.y * m.m[1][2] + p.z * m.m[2][2] + m.m[3][2]);
+				}
+				const Vector3 d = s - p;
+				worst = (std::max)(worst, std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z));
+			}
+		}
+		const Vector3 e = mx - mn;
+		const float size = (std::max)({ e.x, e.y, e.z, 1e-6f });
+		return worst / size;
+	}
+}
+
+TEST_CASE(Animation, BindPoseKeepsMeshInPlace)
+{
+	// glTF (known good) and Mixamo FBX: the skinned bind pose must not move vertices (< 1 % of the mesh size)
+	const char* const files[][2] = { { "Resources/boss", "Boss.gltf" }, { "Resources/Model", "walk.fbx" }, { "Resources/Model", "Idle.fbx" } };
+	for (const auto& entry : files) {
+		const char* file = entry[1];
+		Model* model = Model::CreateFromFile(entry[0], file);
+		REQUIRE(model != nullptr);
+		REQUIRE(model->HasBones());
+		const float error = BindPoseSkinError(*model);
+		CHECK_MSG(error < 0.01f, std::format("{}: bind pose moves vertices by {:.3f} of the mesh size", file, error));
+	}
+}
+
+TEST_CASE(Animation, MixamoFbxStaysUpright)
+{
+	// An animated character keeps roughly its height (crouching in a run or an attack stays above 80 %).
+	// (Pre-rotations of Mixamo bones applied twice / not at all make the skeleton lean and shrink.)
+	// walk.fbx is left out: a Blender re-export whose clip does not match its own rest pose (asset problem)
+	for (const char* file : { "Idle.fbx", "Running.fbx", "Two Hand Sword Combo.fbx" }) {
+		Model* model = Model::CreateFromFile("Resources/Model", file);
+		REQUIRE(model != nullptr);
+		auto height = [&](const LocalPose& pose) {
+			std::vector<Vector3> joints;
+			std::vector<int> parents;
+			std::vector<bool> isBone;
+			model->GetJointPositions(pose, joints, parents, isBone);
+			float lo = 1e30f, hi = -1e30f;
+			for (size_t i = 0; i < joints.size(); ++i) {
+				if (!isBone[i]) continue;
+				lo = (std::min)(lo, joints[i].y);
+				hi = (std::max)(hi, joints[i].y);
+			}
+			return hi - lo;
+		};
+		const float bindHeight = height(LocalPose(model->GetNodeCount()));
+		REQUIRE(bindHeight > 0.0f);
+		const float duration = model->GetAnimationDuration(0);
+		for (float k : { 0.0f, 0.25f, 0.5f, 0.75f }) {
+			LocalPose pose;
+			model->SampleLocalPose(model->GetAnimationClip(0), duration * k, true, pose);
+			const float ratio = height(pose) / bindHeight;
+			CHECK_MSG(ratio > 0.8f && ratio < 1.2f, std::format("{} at {:.0f}%: height {:.2f} of the bind pose", file, k * 100.0f, ratio));
+		}
+	}
+}
+
+TEST_CASE(Animation, CrossFadeTiming)
+{
+	Model* model = LoadTestSkinnedModel();
+	REQUIRE(model != nullptr);
+	AnimationPlayer player;
+	player.Play(nullptr, 0);
+	player.Advance(0.5f, model);
+	CHECK_NEAR(player.Current().time, 0.5f, 1e-5f);
+	CHECK(!player.IsFading());
+
+	player.Play(nullptr, 0, true, 2.0f, 0.25f); // fade into the same clip at double speed
+	CHECK(player.IsFading());
+	CHECK_NEAR(player.FadeProgress(), 0.0f, 1e-5f);
+	player.Advance(0.125f, model);
+	CHECK_NEAR(player.FadeProgress(), 0.5f, 1e-4f);
+	CHECK_NEAR(player.Current().time, 0.25f, 1e-4f);  // 0.125 s at 2x
+	CHECK_NEAR(player.Previous().time, 0.625f, 1e-4f); // the old track keeps playing during the fade
+	player.Advance(0.2f, model);
+	CHECK(!player.IsFading());
+	CHECK_NEAR(player.FadeProgress(), 1.0f, 1e-5f);
+
+	std::vector<Matrix4x4> skin;
+	player.Evaluate(*model, skin);
+	CHECK(skin.size() == 128);
+	CHECK_NEAR(player.NormalizedTime(model), player.Current().elapsed / model->GetAnimationDuration(0), 1e-5f);
+}
+
+TEST_CASE(Animator, TransitionsTriggersAndAnyState)
+{
+	const AnimatorController c = MakeTestController();
+	AnimatorRuntime rt;
+	AnimatorRuntime::Change ch = rt.Start(c);
+	REQUIRE(ch.changed);
+	CHECK(c.FindState(rt.currentState)->name == "Idle");
+
+	CHECK(!rt.Step(c, 0.016f, 0.3f).changed); // speed 0: stays
+	CHECK(!rt.SetValue(c, "missing", 1.0f));
+	REQUIRE(rt.SetValue(c, "speed", 0.5f));
+	ch = rt.Step(c, 0.016f, 0.3f);
+	CHECK(ch.changed);
+	CHECK(c.FindState(ch.state)->name == "Walk");
+	CHECK_NEAR(ch.fadeSeconds, 0.2f, 1e-6f);
+	CHECK(rt.InTransition());
+	REQUIRE(rt.SetValue(c, "speed", 0.0f));
+	CHECK(!rt.Step(c, 0.1f, 0.0f).changed);  // a running fade is not interrupted
+	CHECK(!rt.Step(c, 0.15f, 0.0f).changed); // fade ends
+	CHECK(!rt.InTransition());
+	ch = rt.Step(c, 0.016f, 0.1f);
+	CHECK(ch.changed && c.FindState(ch.state)->name == "Idle");
+	rt.Step(c, 0.3f, 0.0f);
+
+	// Trigger: consumed the moment the transition is taken
+	REQUIRE(rt.SetValue(c, "attack", 1.0f));
+	ch = rt.Step(c, 0.016f, 0.0f);
+	CHECK(ch.changed && c.FindState(ch.state)->name == "Attack");
+	CHECK(rt.GetValue("attack") == 0.0f);
+	rt.Step(c, 0.2f, 0.0f);
+	CHECK(!rt.Step(c, 0.016f, 0.5f).changed); // exit time 1.0 not reached
+	ch = rt.Step(c, 0.016f, 1.0f);
+	CHECK(ch.changed && c.FindState(ch.state)->name == "Idle");
+	rt.Step(c, 0.3f, 0.0f);
+
+	// Any State -> Die does not restart Die every frame (canTransitionToSelf = false)
+	REQUIRE(rt.SetValue(c, "dead", 1.0f));
+	ch = rt.Step(c, 0.016f, 0.0f);
+	CHECK(ch.changed && c.FindState(ch.state)->name == "Die");
+	CHECK(!rt.Step(c, 0.016f, 0.0f).changed);
+	CHECK(!rt.Step(c, 0.016f, 0.5f).changed);
+	// A trigger nobody uses stays set until reset
+	REQUIRE(rt.SetValue(c, "attack", 1.0f));
+	CHECK(rt.Step(c, 0.016f, 0.0f).changed); // Any -> Attack still wins over Die (listed first)
+	rt.SetValue(c, "attack", 1.0f);
+	rt.ResetTrigger("attack");
+	CHECK(rt.GetValue("attack") == 0.0f);
+
+	// Forced state (script CrossFadeAnimation)
+	ch = rt.ForceState(c, "Walk", 0.3f);
+	CHECK(ch.changed && c.FindState(ch.state)->name == "Walk" && rt.InTransition());
+	CHECK(!rt.ForceState(c, "Nope", 0.1f).changed);
+}
+
+TEST_CASE(Animator, EventsOncePerLoopAndJsonRoundTrip)
+{
+	AnimState looping;
+	looping.loop = true;
+	looping.events = { { "step", 0.5f } };
+	std::vector<std::string> fired;
+	AnimatorRuntime::CollectEvents(looping, 0.4f, 0.6f, true, fired);
+	CHECK(fired.size() == 1);
+	fired.clear();
+	AnimatorRuntime::CollectEvents(looping, 0.6f, 1.4f, true, fired);
+	CHECK(fired.empty());
+	AnimatorRuntime::CollectEvents(looping, 1.4f, 1.6f, true, fired);
+	CHECK(fired.size() == 1);
+	fired.clear();
+	AnimatorRuntime::CollectEvents(looping, 0.0f, 2.0f, true, fired); // a long frame covers two passes
+	CHECK(fired.size() == 2);
+	fired.clear();
+	AnimState once;
+	once.loop = false;
+	once.events = { { "end", 1.0f }, { "start", 0.0f } };
+	AnimatorRuntime::CollectEvents(once, 0.0f, 0.1f, false, fired);
+	CHECK(fired.size() == 1 && fired[0] == "start");
+	fired.clear();
+	AnimatorRuntime::CollectEvents(once, 0.9f, 1.0f, false, fired);
+	CHECK(fired.size() == 1 && fired[0] == "end");
+
+	AnimatorController c = MakeTestController();
+	c.FindState(1)->events.push_back({ "footstep", 0.25f });
+	const std::string json = c.ToJson();
+	std::string error;
+	auto back = AnimatorController::FromJson(json, &error);
+	CHECK_MSG(back.has_value(), error);
+	REQUIRE(back.has_value());
+	CHECK(back->ToJson() == json);
+	CHECK(back->transitions.size() == 5);
+	CHECK(back->transitions[2].from == AnimTransition::kAnyState);
+	CHECK(back->FindState(1)->events.size() == 1);
+	CHECK(!AnimatorController::FromJson("[1,2]").has_value());
+
+	// Removing a state drops its transitions; the next id never reuses an old one
+	back->RemoveState(back->FindStateByName("Walk")->id);
+	CHECK(back->transitions.size() == 3);
+	const uint32_t fresh = back->AddState("Run", { 0, 0 }).id;
+	CHECK(fresh > 4);
+}
+
+TEST_CASE(Animator, ComponentDrivesModelOnGameTime)
+{
+	A::ProjectRoot(s) = A::TempRoot() / "AnimatorProject";
+	Model* model = LoadTestSkinnedModel();
+	REQUIRE(model != nullptr);
+
+	// Controller asset: Idle (clip 0 slowed down) -> Walk (clip 0) when speed > 0.1
+	const std::string path = s.CreateAnimatorControllerAsset("Hero");
+	REQUIRE(!path.empty());
+	CHECK(std::filesystem::exists(A::TempRoot() / "AnimatorProject" / path));
+	auto shared = s.GetAnimatorController(path);
+	REQUIRE(shared != nullptr);
+	AnimatorController c = *shared;
+	c.parameters.push_back({ "speed", AnimParamType::Float, 0.0f });
+	c.states[0].speed = 0.5f;
+	const uint32_t walk = c.AddState("Walk", { 200, 0 }).id;
+	c.transitions.push_back({ c.states[0].id, walk, { { "speed", AnimConditionOp::Greater, 0.1f } }, 0.2f });
+	REQUIRE(s.SaveAnimatorController(path, c));
+
+	GameObject& hero = s.CreateGameObject("Hero", GameObjectType::Empty);
+	const uint32_t id = hero.id;
+	hero.editObject3d = std::make_unique<Object3d>();
+	hero.editObject3d->Initialize();
+	hero.editObject3d->SetModel(model);
+	REQUIRE(s.AddComponentByName(hero, "Animator"));
+	AnimatorComponent* animator = s.GetAnimator(*s.FindGameObjectById(id, false));
+	REQUIRE(animator != nullptr);
+	strncpy_s(animator->controller, path.c_str(), _TRUNCATE);
+
+	// Saved with the GUID next to the path
+	const std::string saved = s.SerializeSceneToString();
+	CHECK(saved.find("controllerGuid") != std::string::npos);
+
+	// Play: entry state starts, parameters from scripts drive transitions, pause freezes time
+	A::State(s) = EditorSceneState::Play;
+	EngineAPI& api = A::Api(s);
+	s.UpdateAnimations(0.1f, true);
+	REQUIRE(api.animIsState(api.hostContext, id, "Idle"));
+	const AnimationPlayer& player = s.FindGameObjectById(id, false)->editObject3d->GetAnimationPlayer();
+	CHECK_NEAR(player.Current().time, 0.05f, 1e-4f); // 0.1 s at state speed 0.5
+	CHECK(api.animSetParam(api.hostContext, id, "speed", 1.0f));
+	CHECK(!api.animSetParam(api.hostContext, id, "missing", 1.0f));
+	s.UpdateAnimations(0.05f, true);
+	CHECK(api.animIsState(api.hostContext, id, "Walk"));
+	CHECK(api.animIsInTransition(api.hostContext, id));
+	CHECK(player.IsFading());
+	char name[16]{};
+	CHECK(api.animGetState(api.hostContext, id, name, static_cast<int>(sizeof(name))) == 4);
+	CHECK(std::string(name) == "Walk");
+
+	const float before = player.Current().time;
+	s.UpdateAnimations(0.0f, true); // paused: game time does not move
+	CHECK_NEAR(player.Current().time, before, 1e-6f);
+	s.UpdateAnimations(0.3f, true);
+	CHECK(!player.IsFading());
+	CHECK(!api.animIsInTransition(api.hostContext, id));
+
+	CHECK(api.animCrossFade(api.hostContext, id, "Idle", 0.1f));
+	CHECK(api.animIsState(api.hostContext, id, "Idle"));
+	CHECK(!api.animCrossFade(api.hostContext, id, "Nope", 0.1f));
+
+	A::State(s) = EditorSceneState::Edit;
+	// Reload: the controller path survives and the runtime restarts on the next Play
+	REQUIRE(s.DeserializeSceneFromString(saved));
+	GameObject* reloaded = s.FindGameObjectById(id, false);
+	REQUIRE(reloaded != nullptr);
+	AnimatorComponent* again = s.GetAnimator(*reloaded);
+	REQUIRE(again != nullptr);
+	CHECK(std::string(again->controller) == path);
+	CHECK(!again->runtime.started);
+}
+
+// ===========================================================================
+// Asset import (copy into the project without Explorer)
+// ===========================================================================
+
+TEST_CASE(Assets, ImportFilesCompanionsAndFolders)
+{
+	namespace fs = std::filesystem;
+	const fs::path src = A::TempRoot() / "ImportSource";
+	const fs::path root = A::TempRoot() / "ImportProject";
+	std::error_code ec;
+	fs::create_directories(src / "tex", ec);
+	fs::create_directories(src / "img", ec);
+	fs::create_directories(src / "Pack", ec);
+	fs::create_directories(root / "Assets", ec);
+	auto write = [](const fs::path& p, const std::string& text) { std::ofstream(p, std::ios::binary) << text; };
+	fs::copy_file("Resources/circle.png", src / "rock.png", fs::copy_options::overwrite_existing, ec);
+	fs::copy_file("Resources/circle.png", src / "tex" / "crate.png", fs::copy_options::overwrite_existing, ec);
+	write(src / "crate.obj", "mtllib crate.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
+	write(src / "crate.mtl", "newmtl m\nmap_Kd tex/crate.png\n");
+	write(src / "hero.gltf", R"({"asset":{"version":"2.0"},"buffers":[{"uri":"hero.bin","byteLength":4}],"images":[{"uri":"img/hero.png"},{"uri":"data:image/png;base64,AAAA"}]})");
+	write(src / "hero.bin", "abcd");
+	fs::copy_file("Resources/circle.png", src / "img" / "hero.png", fs::copy_options::overwrite_existing, ec);
+	fs::copy_file("Resources/circle.png", src / "Pack" / "a.png", fs::copy_options::overwrite_existing, ec);
+	write(src / "Pack" / "a.png.meta", R"({"guid":"0123456789abcdef0123456789abcdef","version":1})"); // from another project
+
+	A::ProjectRoot(s) = root;
+	A::CurrentDirectory(s) = root; // not inside Assets: files go to category folders
+	s.AssetDb().Refresh();
+	const auto imported = s.ImportAssets({ src / "rock.png", src / "crate.obj", src / "hero.gltf", src / "Pack" });
+	REQUIRE(imported.size() == 4);
+	CHECK(imported[0] == "Assets/Textures/rock.png");
+	CHECK(imported[1] == "Assets/Models/crate.obj");
+	CHECK(imported[3] == "Assets/Pack");
+	CHECK(fs::exists(root / "Assets/Models/crate.mtl"));
+	CHECK(fs::exists(root / "Assets/Models/tex/crate.png"));  // texture of the .mtl, same relative path
+	CHECK(fs::exists(root / "Assets/Models/hero.bin"));
+	CHECK(fs::exists(root / "Assets/Models/img/hero.png"));
+	CHECK(fs::exists(root / "Assets/Pack/a.png"));
+	// Every imported file has a GUID, and a copied .meta never reuses another project's GUID
+	CHECK(AssetDatabase::IsValidGuid(s.AssetDb().FindGuid("Assets/Textures/rock.png")));
+	CHECK(AssetDatabase::IsValidGuid(s.AssetDb().FindGuid("Assets/Models/tex/crate.png")));
+	const std::string packGuid = s.AssetDb().FindGuid("Assets/Pack/a.png");
+	CHECK(AssetDatabase::IsValidGuid(packGuid));
+	CHECK(packGuid != "0123456789abcdef0123456789abcdef");
+
+	// Same name again: a numbered copy instead of overwriting
+	const auto again = s.ImportAssets({ src / "rock.png" });
+	REQUIRE(again.size() == 1);
+	CHECK(again[0] == "Assets/Textures/rock 1.png");
+
+	// The folder open in the Project panel is the target when it is inside Assets
+	fs::create_directories(root / "Assets/Art", ec);
+	A::CurrentDirectory(s) = root / "Assets/Art";
+	const auto intoFolder = s.ImportAssets({ src / "hero.bin" });
+	REQUIRE(intoFolder.size() == 1);
+	CHECK(intoFolder[0] == "Assets/Art/hero.bin");
+
+	// Files that are already in the project are not copied again
+	CHECK(s.ImportAssets({ root / "Assets/Textures/rock.png" }).empty());
+	CHECK(s.ImportAssets({ src / "does_not_exist.png" }).empty());
+}
+
+TEST_CASE(Project, OpensExistingSceneWithoutSampleScene)
+{
+	namespace fs = std::filesystem;
+	// A project whose only scene is not SampleScene used to open as an empty scene
+	const fs::path root = A::TempRoot() / "NoSampleSceneProject";
+	std::error_code ec;
+	fs::create_directories(root / "Assets" / "Scenes", ec);
+	s.CreateGameObject("LevelMarker", GameObjectType::Empty);
+	{
+		std::ofstream out(root / "Assets" / "Scenes" / "Level1.scene.json", std::ios::binary);
+		out << s.SerializeSceneToString();
+	}
+	s.NewScene();
+	REQUIRE(s.FindGameObjectByName("LevelMarker", false) == nullptr);
+
+	REQUIRE(s.OpenProject(root.string()));
+	CHECK(s.FindGameObjectByName("LevelMarker", false) != nullptr);
+	CHECK(A::ScenePath(s).find("Level1.scene.json") != std::string::npos);
 }
 
 // ===========================================================================

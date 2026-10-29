@@ -293,6 +293,7 @@ EditorSuite::~EditorSuite()
 {
 	// The handler captures `this`; the splash screen (TitleScene) can close without asking
 	WinApp::GetInstance()->SetCloseRequestHandler(nullptr);
+	WinApp::GetInstance()->SetFileDropHandler(nullptr);
 
 	if (scriptBuildThread_.joinable()) {
 		scriptBuildThread_.join();
@@ -464,6 +465,25 @@ void EditorSuite::Initialize(
 					}
 				}
 				LoadScene(scenePath);
+#ifdef USE_IMGUI
+				// `--select <name>` / `--window animator|profiler|open-project`: open the editor in a given state (automated visual checks)
+				auto argValue = [&](const char* flag) -> std::string {
+					const size_t at = cmdLine.find(flag);
+					if (at == std::string::npos) return {};
+					std::string value = cmdLine.substr(at + std::strlen(flag));
+					value.erase(0, value.find_first_not_of(' '));
+					if (!value.empty() && value.front() == '"') return value.substr(1, value.find('"', 1) - 1);
+					return value.substr(0, value.find(' '));
+				};
+				if (const std::string name = argValue("--select "); !name.empty()) {
+					for (size_t i = 0; i < gameObjects_.size(); ++i) {
+						if (gameObjects_[i].name == name) selectedObjectIndex_ = static_cast<int>(i);
+					}
+				}
+				if (const std::string window = argValue("--window "); window == "animator") showAnimatorWindow_ = true;
+				else if (window == "profiler") showProfiler_ = true;
+				else if (window == "open-project") showOpenProjectModal_ = true;
+#endif
 				// `--play`: enter Play mode right away (automated visual checks of gameplay / game UI)
 				if (cmdLine.find("--play") != std::string::npos) {
 #ifdef USE_IMGUI
@@ -560,6 +580,7 @@ void EditorSuite::Initialize(
 #ifdef USE_IMGUI
 		automatedRun = automatedRun || cmdLine.find("--run-tests") != std::string::npos;
 #endif
+		LoadRecentProjects(); // File > Open Recent and Open Project list it even when the hub is skipped
 		if (!sSessionProjectRoot_.empty() && std::filesystem::exists(sSessionProjectRoot_)) {
 			OpenProject(sSessionProjectRoot_.string());
 		} else if (!sceneFromCommandLine && !automatedRun) {
@@ -570,6 +591,12 @@ void EditorSuite::Initialize(
 
 	// Ask before closing the window while the scene has unsaved changes
 	WinApp::GetInstance()->SetCloseRequestHandler([this]() { return OnCloseRequested(); });
+#ifdef USE_IMGUI
+	// Files dragged from Explorer onto the editor are imported into the project (next Update, not inside WndProc)
+	WinApp::GetInstance()->SetFileDropHandler([this](const std::vector<std::string>& paths) {
+		pendingImports_.insert(pendingImports_.end(), paths.begin(), paths.end());
+	});
+#endif
 
 	LogMessage("[EditorSuite] Initialized Unity 6 Dark Workspace & 5-Region Layout.", 0);
 	LogMessage("[EditorSuite] Viewports Ready: # Scene (SRV #128) & Game (SRV #129).", 0);
@@ -581,6 +608,7 @@ void EditorSuite::Update(float deltaTime, Input* input)
 	currentInput_ = input;
 	currentDeltaTime_ = deltaTime;
 	unscaledDeltaTime_ = deltaTime;
+	ProcessPendingImports(); // files dropped from Explorer
 
 	// Record edits deferred during the previous frame (e.g. object creation) as one undo command
 	if (undoPushPending_) {
@@ -815,6 +843,13 @@ void EditorSuite::Update(float deltaTime, Input* input)
 	if (advancePlayFrame || (sceneState_ == EditorSceneState::Edit && simulatePhysicsInEditMode_)) {
 		RIZE_PROFILE_CPU("Physics");
 		UpdatePhysics(gameDeltaTime);
+	}
+
+	// Skeletal animation runs on game time: scaled by timeScale, frozen while paused (Step advances one frame)
+	{
+		const bool inPlay = (sceneState_ != EditorSceneState::Edit) || IsStandaloneMode();
+		const float animationDeltaTime = advancePlayFrame ? gameDeltaTime : (inPlay ? 0.0f : deltaTime);
+		UpdateAnimations(animationDeltaTime, inPlay);
 	}
 
 	// Process any deferred GameObject spawns/deletions requested by scripts during Update/OnCollision

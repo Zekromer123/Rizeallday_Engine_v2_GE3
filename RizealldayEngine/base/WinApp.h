@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 #include <functional>
+#include <vector>
 
 class WinApp
 {
@@ -29,6 +30,9 @@ public:
 	/// Same decision as WM_CLOSE, usable from menus: quits when the handler allows it
 	void RequestClose();
 
+	/// Files / folders dropped from Explorer onto the window (UTF-8 paths). Pass nullptr to stop accepting drops.
+	void SetFileDropHandler(std::function<void(const std::vector<std::string>&)> handler);
+
 	HWND GetHWND() const { return hwnd_; }
 	HINSTANCE GetHInstance() const { return wc_.hInstance; }
 	int GetClientWidth() const;
@@ -43,4 +47,5 @@ private:
 	HWND hwnd_ = nullptr;
 	WNDCLASS wc_ = {};
 	std::function<bool()> closeRequestHandler_;
+	std::function<void(const std::vector<std::string>&)> fileDropHandler_;
 };

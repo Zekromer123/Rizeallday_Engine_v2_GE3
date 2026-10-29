@@ -14,18 +14,23 @@ void PlayerController::Update(float deltaTime) {
         return;
     }
     Vector3 moveDir = { 0.0f, 0.0f, 0.0f };
-    if (IsKeyDown(DIK_W) || IsKeyDown(DIK_UP)) {
+    if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) {
         moveDir.z += 1.0f;
-    }
-    if (IsKeyDown(DIK_S) || IsKeyDown(DIK_DOWN)) {
+       
+    } if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN)) {
         moveDir.z -= 1.0f;
-    }
-    if (IsKeyDown(DIK_D) || IsKeyDown(DIK_RIGHT)) {
+       
+    } if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) {
         moveDir.x += 1.0f;
-    }
-    if (IsKeyDown(DIK_A) || IsKeyDown(DIK_LEFT)) {
+       
+    }if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) {
         moveDir.x -= 1.0f;
     }
+
+    //Animation
+    const bool isMoving = (moveDir.x != 0.0f || moveDir.z != 0.0f);
+    SetAnimBool("isRunning",isMoving);
+
    //Normalize
     float length = std::sqrt(moveDir.x * moveDir.x + moveDir.z * moveDir.z);
     if (length > 0.0001f) {
@@ -45,6 +50,7 @@ void PlayerController::Update(float deltaTime) {
         self->velocity.y = jumpForce;
         self->isGrounded = false;
     }
+   
 }
 
 void PlayerController::OnCollision(GameObject& other) {

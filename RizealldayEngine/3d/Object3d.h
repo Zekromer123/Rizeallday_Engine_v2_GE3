@@ -6,10 +6,10 @@
 #include "math/VertexData.h"
 #include "base/BlendMode.h"
 #include "base/GeometryShaderMode.h"
+#include "3d/AnimationPlayer.h"
 
 class Camera;
 class GraphicPipeline;
-class Model;
 class DirectXCommon;
 class LightGroup;
 class ShadowMap;
@@ -31,19 +31,25 @@ public:
 	Model* GetModel() const { return model_; }
 	void SetCamera(Camera* camera) { camera_ = camera; }
 
-	// Animation controls
+	// Animation controls (one clip of this model; see AnimationPlayer for crossfades and clips of other models)
 	void PlayAnimation(int animIndex, bool loop = true, float speed = 1.0f);
 	void SetCurrentAnimationIndex(int animIndex);
-	int GetCurrentAnimationIndex() const { return currentAnimationIndex_; }
+	int GetCurrentAnimationIndex() const { return player_.Current().clip; }
 	void SetAnimationTime(float time);
-	void ResetAnimationTime() { animationTime_ = 0.0f; }
-	float GetAnimationTime() const { return animationTime_; }
+	void ResetAnimationTime() { SetAnimationTime(0.0f); }
+	float GetAnimationTime() const { return player_.Current().time; }
 	float GetAnimationDuration() const;
-	void SetAnimationSpeed(float speed) { animationSpeed_ = speed; }
-	float GetAnimationSpeed() const { return animationSpeed_; }
-	void SetAnimationLoop(bool loop) { isAnimationLoop_ = loop; }
-	void SetLoopAnimation(bool loop) { isAnimationLoop_ = loop; }
-	bool IsAnimationLoop() const { return isAnimationLoop_; }
+	void SetAnimationSpeed(float speed) { player_.Current().speed = speed; }
+	float GetAnimationSpeed() const { return player_.Current().speed; }
+	void SetAnimationLoop(bool loop) { player_.Current().loop = loop; }
+	void SetLoopAnimation(bool loop) { player_.Current().loop = loop; }
+	bool IsAnimationLoop() const { return player_.Current().loop; }
+	/// Crossfades to `clip` of `source` (nullptr = this object's model) over `seconds`
+	void CrossFade(const Model* source, int clip, float seconds, bool loop = true, float speed = 1.0f);
+	AnimationPlayer& GetAnimationPlayer() { return player_; }
+	const AnimationPlayer& GetAnimationPlayer() const { return player_; }
+	/// Advances animation time only (game update). Update() then evaluates the pose without moving time again.
+	void AdvanceAnimation(float deltaTime);
 	void CopyBonePaletteFrom(const Object3d& other);
 	/// Uploads this frame's bone palette (b1 VS, 128 matrices) and returns its GPU address.
 	/// Meshes without bones share one identity palette per frame instead of uploading 8 KB each.
@@ -91,8 +97,5 @@ private:
 	std::vector<Matrix4x4> boneTransforms_;
 	void ResetBonePalette();
 
-	float animationTime_ = 0.0f;
-	float animationSpeed_ = 1.0f;
-	bool isAnimationLoop_ = true;
-	int currentAnimationIndex_ = 0;
+	AnimationPlayer player_;
 };

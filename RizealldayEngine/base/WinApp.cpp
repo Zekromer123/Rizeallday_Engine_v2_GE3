@@ -1,6 +1,7 @@
 ﻿#include "base/WinApp.h"
 #include "base/ConvertString.h"
 #include "base/DirectXCommon.h"
+#include <shellapi.h>
 
 #ifdef USE_IMGUI
 #include <imgui.h>
@@ -44,6 +45,24 @@ LRESULT CALLBACK WinApp::WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
 			return 0;
 		}
 		break; // DefWindowProc destroys the window -> WM_DESTROY -> WM_QUIT
+
+	case WM_DROPFILES: {
+		HDROP drop = reinterpret_cast<HDROP>(wparam);
+		WinApp* app = WinApp::GetInstance();
+		if (app && app->fileDropHandler_) {
+			std::vector<std::string> paths;
+			const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+			for (UINT i = 0; i < count; ++i) {
+				std::wstring path(DragQueryFileW(drop, i, nullptr, 0) + 1, L'\0');
+				DragQueryFileW(drop, i, path.data(), static_cast<UINT>(path.size()));
+				path.resize(path.size() - 1);
+				paths.push_back(ConvertStrings{}.ConvertString(path));
+			}
+			app->fileDropHandler_(paths);
+		}
+		DragFinish(drop);
+		return 0;
+	}
 
 	case WM_DESTROY:
 		PostQuitMessage(0);
@@ -136,4 +155,9 @@ int WinApp::GetClientHeight() const
 	GetClientRect(hwnd_, &rc);
 	int h = rc.bottom - rc.top;
 	return h > 0 ? h : kClientHeight;
-}
+}
+void WinApp::SetFileDropHandler(std::function<void(const std::vector<std::string>&)> handler)
+{
+	fileDropHandler_ = std::move(handler);
+	if (hwnd_) DragAcceptFiles(hwnd_, fileDropHandler_ ? TRUE : FALSE);
+}

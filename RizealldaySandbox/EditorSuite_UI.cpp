@@ -61,6 +61,7 @@ void EditorSuite::DrawEditorUI(float deltaTime, bool& showParticles)
 	}
 
 	if (showProfiler_) DrawProfilerWindow();
+	if (showAnimatorWindow_) DrawAnimatorWindow();
 #endif
 }
 
@@ -165,7 +166,19 @@ void EditorSuite::DrawMainMenuBar()
 			if (ImGui::MenuItem(TrId("Revert Unsaved Changes"))) { DiscardUnsavedChanges(); }
 			ImGui::Separator();
 			if (ImGui::MenuItem(TrId("New Project..."))) { showNewProjectModal_ = true; }
-			if (ImGui::MenuItem(TrId("Open Project..."))) { showOpenProjectModal_ = true; }
+			if (ImGui::MenuItem(TrId("Open Project..."))) { LoadRecentProjects(); showOpenProjectModal_ = true; }
+			if (ImGui::BeginMenu(TrId("Open Recent"), !recentProjects_.empty())) {
+				for (size_t i = 0; i < recentProjects_.size(); ++i) {
+					const std::filesystem::path& proj = recentProjects_[i];
+					std::error_code ec;
+					const bool exists = std::filesystem::exists(proj, ec);
+					const bool isCurrent = !currentProjectRoot_.empty() && std::filesystem::equivalent(proj, currentProjectRoot_, ec);
+					const std::string label = std::format("{}##recent{}", proj.filename().string(), i);
+					if (ImGui::MenuItem(label.c_str(), nullptr, isCurrent, exists && !isCurrent)) OpenProject(proj.string());
+					ImGui::SetItemTooltip("%s", proj.string().c_str());
+				}
+				ImGui::EndMenu();
+			}
 			ImGui::Separator();
 			if (ImGui::MenuItem(TrId("Load Game Template > Playable 3D Tetris"))) { LoadTetrisTemplate(); }
 			ImGui::Separator();
@@ -182,6 +195,15 @@ void EditorSuite::DrawMainMenuBar()
 			ImGui::EndMenu();
 		}
 		if (ImGui::BeginMenu(TrId("Assets"))) {
+			if (ImGui::MenuItem(TrId("Import Assets..."), nullptr, false, !currentProjectRoot_.empty())) {
+				const std::vector<std::string> files = OpenNativeFilesDialog();
+				ImportAssets(std::vector<std::filesystem::path>(files.begin(), files.end()));
+			}
+			ImGui::SetItemTooltip("%s", Tr("Copy files into the project (you can also drag files from Explorer onto the editor)"));
+			if (ImGui::MenuItem(TrId("Import Folder..."), nullptr, false, !currentProjectRoot_.empty())) {
+				if (const std::string folder = OpenNativeFolderDialog(); !folder.empty()) ImportAssets({ std::filesystem::path(folder) });
+			}
+			ImGui::Separator();
 			if (ImGui::MenuItem(TrId("Create C++ Script..."))) {
 				scriptGenTargetObjectIndex_ = -1;
 				scriptGenErrorMsg_.clear();
@@ -201,6 +223,9 @@ void EditorSuite::DrawMainMenuBar()
 			if (ImGui::MenuItem(TrId("Preview Standalone Game Mode"), "F11")) { ToggleStandalonePreview(); }
 			if (ImGui::MenuItem(TrId("Lighting / Environment"), nullptr, showLightingSettings_)) {
 				showLightingSettings_ = !showLightingSettings_;
+			}
+			if (ImGui::MenuItem(TrId("Animator"), nullptr, showAnimatorWindow_)) {
+				showAnimatorWindow_ = !showAnimatorWindow_;
 			}
 			if (ImGui::MenuItem(TrId("Profiler"), "Ctrl+P", showProfiler_)) {
 				showProfiler_ = !showProfiler_;

@@ -51,6 +51,16 @@ struct AnimationClip {
 	std::unordered_map<std::string, NodeAnimTrack> channels;
 };
 
+/// Local transform of one node in an animation pose (roadmap 5.1). `bind` = not animated: use NodeData::transform.
+struct NodePose {
+	Vector3 translation = { 0.0f, 0.0f, 0.0f };
+	KeyQuat rotation{};
+	Vector3 scaling = { 1.0f, 1.0f, 1.0f };
+	bool bind = true;
+};
+/// One NodePose per node, in Model's flattened (pre-order) node order
+using LocalPose = std::vector<NodePose>;
+
 struct NodeData {
 	std::string name;
 	Matrix4x4 transform = Mathematics::MakeIdentity4x4(); // (C26495: was left uninitialised)
@@ -90,7 +100,25 @@ public:
 	float GetAnimationDuration(int animIndex = 0) const;
 	const std::string& GetAnimationName(int animIndex = 0) const;
 
+	const AnimationClip* GetAnimationClip(int animIndex) const;
+	/// Index of a clip by name (-1 when none)
+	int FindAnimationIndex(const std::string& name) const;
+
+	/// Skin matrices of one clip at `timeInSeconds` (= SampleLocalPose + BuildSkinMatrices)
 	void CalculateBoneTransforms(float timeInSeconds, int animIndex, std::vector<Matrix4x4>& outMatrices) const;
+
+	// Pose pipeline (roadmap 5.1): sample local poses, blend them (crossfade), then build the skin matrices.
+	// The clip may come from another model with the same bone names (e.g. Mixamo Idle.fbx + Walk.fbx).
+	size_t GetNodeCount() const;
+	void SampleLocalPose(const AnimationClip* clip, float timeInSeconds, bool loop, LocalPose& outPose) const;
+	/// weight 0 = a, 1 = b. Translation / scale lerp, rotation slerp. a and b must come from this model.
+	void BlendPoses(const LocalPose& a, const LocalPose& b, float weight, LocalPose& outPose) const;
+	void BuildSkinMatrices(const LocalPose& pose, std::vector<Matrix4x4>& outMatrices) const;
+	/// Model-space joint positions and parent node indices (-1 = root) of a pose, for the skeleton overlay
+	void GetJointPositions(const LocalPose& pose, std::vector<Vector3>& outPositions, std::vector<int>& outParents, std::vector<bool>& outIsBone) const;
+
+	/// Previous single-pass implementation, kept as the reference for the regression test of the pose pipeline
+	void CalculateBoneTransformsReference(float timeInSeconds, int animIndex, std::vector<Matrix4x4>& outMatrices) const;
 
 	void SetLockRootMotion(bool lock) { lockRootMotion_ = lock; }
 	bool GetLockRootMotion() const { return lockRootMotion_; }
@@ -115,6 +143,15 @@ private:
 	NodeData rootNode_;
 	Matrix4x4 globalInverseTransform_ = Mathematics::MakeIdentity4x4();
 	std::vector<AnimationClip> animations_;
+	// Flattened node tree (pre-order: parents before children), built on first use
+	struct FlatNode {
+		const NodeData* node = nullptr;
+		int parent = -1;
+		int boneId = -1;
+	};
+	const std::vector<FlatNode>& FlatNodes() const;
+	void ComputeGlobalTransforms(const LocalPose& pose, std::vector<Matrix4x4>& outGlobals) const;
+	mutable std::vector<FlatNode> flatNodes_;
 	bool lockRootMotion_ = false;
 	Vector3 localMin_ = { -0.5f, -0.5f, -0.5f };
 	Vector3 localMax_ = {  0.5f,  0.5f,  0.5f };

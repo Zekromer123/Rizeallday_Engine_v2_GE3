@@ -126,6 +126,7 @@
     <ClCompile Include="base\ScriptBase.cpp" />
     <ClCompile Include="base\ScriptModule.cpp" />
     <!-- 3d/ -->
+    <ClCompile Include="3d\AnimationPlayer.cpp" />
     <ClCompile Include="3d\Model.cpp" />
     <ClCompile Include="3d\Object3d.cpp" />
     <ClCompile Include="3d\Camera.cpp" />
@@ -191,6 +192,7 @@
     <ClInclude Include="base\ScriptAPI.h" />
     <ClInclude Include="base\ScriptBase.h" />
     <ClInclude Include="base\ScriptModule.h" />
+    <ClInclude Include="3d\AnimationPlayer.h" />
     <ClInclude Include="3d\Model.h" />
     <ClInclude Include="3d\Object3d.h" />
     <ClInclude Include="3d\Camera.h" />

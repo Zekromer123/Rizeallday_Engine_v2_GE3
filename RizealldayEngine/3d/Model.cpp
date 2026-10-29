@@ -938,7 +938,7 @@ Vector3 Model::InterpolateScaling(float animTimeTicks, const NodeAnimTrack& trac
     };
 }
 
-void Model::CalculateBoneTransforms(float timeInSeconds, int animIndex, std::vector<Matrix4x4>& outMatrices) const {
+void Model::CalculateBoneTransformsReference(float timeInSeconds, int animIndex, std::vector<Matrix4x4>& outMatrices) const {
     outMatrices.assign(128, Mathematics::MakeIdentity4x4());
 
     if (boneInfoMap_.empty()) {
@@ -957,6 +957,155 @@ void Model::CalculateBoneTransforms(float timeInSeconds, int animIndex, std::vec
     }
 
     ReadNodeHierarchy(timeInTicks, pAnim, rootNode_, Mathematics::MakeIdentity4x4(), outMatrices);
+}
+
+// ---- Pose pipeline (roadmap 5.1) ----
+
+const std::vector<Model::FlatNode>& Model::FlatNodes() const {
+    if (!flatNodes_.empty() || rootNode_.name.empty()) return flatNodes_;
+    // Pre-order walk: a parent always precedes its children, so globals can be built in one forward pass
+    struct Item { const NodeData* node; int parent; };
+    std::vector<Item> stack{ { &rootNode_, -1 } };
+    while (!stack.empty()) {
+        const Item item = stack.back();
+        stack.pop_back();
+        FlatNode flat;
+        flat.node = item.node;
+        flat.parent = item.parent;
+        if (auto it = boneInfoMap_.find(item.node->name); it != boneInfoMap_.end()) flat.boneId = static_cast<int>(it->second.id);
+        const int index = static_cast<int>(flatNodes_.size());
+        flatNodes_.push_back(flat);
+        for (auto child = item.node->children.rbegin(); child != item.node->children.rend(); ++child) {
+            stack.push_back({ &*child, index });
+        }
+    }
+    return flatNodes_;
+}
+
+size_t Model::GetNodeCount() const {
+    return FlatNodes().size();
+}
+
+const AnimationClip* Model::GetAnimationClip(int animIndex) const {
+    return (animIndex >= 0 && animIndex < static_cast<int>(animations_.size())) ? &animations_[animIndex] : nullptr;
+}
+
+int Model::FindAnimationIndex(const std::string& name) const {
+    for (size_t i = 0; i < animations_.size(); ++i) {
+        if (animations_[i].name == name) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+void Model::SampleLocalPose(const AnimationClip* clip, float timeInSeconds, bool loop, LocalPose& outPose) const {
+    const std::vector<FlatNode>& nodes = FlatNodes();
+    outPose.assign(nodes.size(), NodePose{});
+    if (!clip) return;
+
+    const float tps = clip->ticksPerSecond > 0.0f ? clip->ticksPerSecond : 25.0f;
+    float ticks = timeInSeconds * tps;
+    if (clip->duration > 0.0f) {
+        // Looping wraps like the reference; a one-shot clip holds its last frame instead of jumping back to 0
+        ticks = loop ? std::fmod(ticks, clip->duration) : std::clamp(ticks, 0.0f, clip->duration);
+        if (ticks < 0.0f) ticks += clip->duration;
+    }
+
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        const NodeData& node = *nodes[i].node;
+        auto it = clip->channels.find(node.name);
+        if (it == clip->channels.end()) continue; // stays at the bind transform
+        const NodeAnimTrack& track = it->second;
+        NodePose& p = outPose[i];
+        p.bind = false;
+        p.scaling = InterpolateScaling(ticks, track, node.defaultScaling);
+        p.rotation = InterpolateRotation(ticks, track, node.defaultRotation);
+        p.translation = InterpolatePosition(ticks, track, node.defaultPosition);
+        if (lockRootMotion_ && (node.name.find("Hips") != std::string::npos || node.name.find("Root") != std::string::npos)) {
+            if (!track.positions.empty()) {
+                p.translation.x = track.positions[0].value.x;
+                p.translation.z = track.positions[0].value.z;
+            } else {
+                p.translation.x = node.defaultPosition.x;
+                p.translation.z = node.defaultPosition.z;
+            }
+        }
+    }
+}
+
+void Model::BlendPoses(const LocalPose& a, const LocalPose& b, float weight, LocalPose& outPose) const {
+    const std::vector<FlatNode>& nodes = FlatNodes();
+    const size_t count = (std::min)({ a.size(), b.size(), nodes.size() });
+    const float w = std::clamp(weight, 0.0f, 1.0f);
+    outPose.assign(nodes.size(), NodePose{});
+    for (size_t i = 0; i < count; ++i) {
+        if (a[i].bind && b[i].bind) continue;
+        const NodeData& node = *nodes[i].node;
+        // A node animated on one side only blends against its bind (decomposed default) transform
+        const NodePose bindPose{ node.defaultPosition, node.defaultRotation, node.defaultScaling, false };
+        const NodePose& pa = a[i].bind ? bindPose : a[i];
+        const NodePose& pb = b[i].bind ? bindPose : b[i];
+        NodePose& o = outPose[i];
+        o.bind = false;
+        o.translation = pa.translation + (pb.translation - pa.translation) * w;
+        o.scaling = pa.scaling + (pb.scaling - pa.scaling) * w;
+        aiQuaternion qa(pa.rotation.w, pa.rotation.x, pa.rotation.y, pa.rotation.z);
+        aiQuaternion qb(pb.rotation.w, pb.rotation.x, pb.rotation.y, pb.rotation.z);
+        aiQuaternion q;
+        aiQuaternion::Interpolate(q, qa, qb, w); // shortest path
+        q.Normalize();
+        o.rotation = { 0.0f, q.x, q.y, q.z, q.w };
+    }
+}
+
+void Model::ComputeGlobalTransforms(const LocalPose& pose, std::vector<Matrix4x4>& outGlobals) const {
+    const std::vector<FlatNode>& nodes = FlatNodes();
+    outGlobals.resize(nodes.size());
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        Matrix4x4 local = nodes[i].node->transform;
+        if (i < pose.size() && !pose[i].bind) {
+            const NodePose& p = pose[i];
+            aiQuaternion rot(p.rotation.w, p.rotation.x, p.rotation.y, p.rotation.z);
+            aiMatrix4x4 m(aiVector3D(p.scaling.x, p.scaling.y, p.scaling.z), rot, aiVector3D(p.translation.x, p.translation.y, p.translation.z));
+            local = AiToRizeMatrix(m);
+        }
+        const int parent = nodes[i].parent;
+        outGlobals[i] = (parent >= 0) ? Mathematics::Multiply(local, outGlobals[parent]) : local;
+    }
+}
+
+void Model::BuildSkinMatrices(const LocalPose& pose, std::vector<Matrix4x4>& outMatrices) const {
+    outMatrices.assign(128, Mathematics::MakeIdentity4x4());
+    if (boneInfoMap_.empty()) return;
+    std::vector<Matrix4x4> globals;
+    ComputeGlobalTransforms(pose, globals);
+    const std::vector<FlatNode>& nodes = FlatNodes();
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        const int boneId = nodes[i].boneId;
+        if (boneId < 0 || boneId >= static_cast<int>(outMatrices.size())) continue;
+        const Matrix4x4 toRoot = Mathematics::Multiply(globals[i], globalInverseTransform_);
+        outMatrices[boneId] = Mathematics::Multiply(boneInfoMap_.at(nodes[i].node->name).offsetMatrix, toRoot);
+    }
+}
+
+void Model::GetJointPositions(const LocalPose& pose, std::vector<Vector3>& outPositions, std::vector<int>& outParents, std::vector<bool>& outIsBone) const {
+    std::vector<Matrix4x4> globals;
+    ComputeGlobalTransforms(pose, globals);
+    const std::vector<FlatNode>& nodes = FlatNodes();
+    outPositions.resize(nodes.size());
+    outParents.resize(nodes.size());
+    outIsBone.resize(nodes.size());
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        const Matrix4x4 m = Mathematics::Multiply(globals[i], globalInverseTransform_);
+        outPositions[i] = { m.m[3][0], m.m[3][1], m.m[3][2] }; // row-vector convention: translation in row 3
+        outParents[i] = nodes[i].parent;
+        outIsBone[i] = nodes[i].boneId >= 0;
+    }
+}
+
+void Model::CalculateBoneTransforms(float timeInSeconds, int animIndex, std::vector<Matrix4x4>& outMatrices) const {
+    LocalPose pose;
+    SampleLocalPose(GetAnimationClip(animIndex), timeInSeconds, true, pose);
+    BuildSkinMatrices(pose, outMatrices);
 }
 
 float Model::GetAnimationDuration(int animIndex) const {

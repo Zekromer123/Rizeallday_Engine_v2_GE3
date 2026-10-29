@@ -24,6 +24,8 @@ dan pipeline build/export game. Dibuat untuk membuat game 3D secara langsung, da
 - Undo/redo, scene JSON, prefab, Play / Pause / Step, preview game layar penuh (F11)
 - Asset database GUID (`.meta`): rename / pindah aset di panel Project tidak memutus scene dan prefab
 - Teks Jepang (editor, UI game, nama file) dan pilihan bahasa editor: English / 日本語 / Bahasa Indonesia (Options > Language)
+- Animator: state machine animasi dengan editor node (Window > Animator), crossfade, parameter dan event dari script
+- Import aset langsung dari editor (dialog atau drag dari Explorer) dan daftar project terakhir (File > Open Recent)
 - Profiler (CPU & GPU per pass, draw call, memori upload), Build & Export game
 
 **Gameplay & scripting**

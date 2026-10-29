@@ -25,7 +25,8 @@
 struct GameObject;
 class EditorSuite;
 
-enum class ComponentFieldType { Float, Int, Bool, Vector3, Color, Text };
+// Asset = Text holding a project-relative asset path; JSON also stores its GUID ("<field>Guid"), so renames keep it
+enum class ComponentFieldType { Float, Int, Bool, Vector3, Color, Text, Asset };
 
 struct ComponentField {
 	const char* name = "";
@@ -114,6 +115,8 @@ struct ComponentInfo {
 	// Data components
 	std::vector<ComponentField> fields;
 	std::function<std::unique_ptr<ComponentData>()> create;
+	/// Optional extra Inspector UI drawn below the fields of a data component (buttons, live state)
+	std::function<void(EditorSuite&, GameObject&, ComponentData&)> drawExtra;
 
 	bool IsDataComponent() const { return builtinKind < 0; }
 };

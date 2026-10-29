@@ -154,9 +154,32 @@ void EditorSuite::DrawOpenProjectModal()
 {
 #ifdef USE_IMGUI
 	ImGui::OpenPopup("Open Project");
-	if (ImGui::BeginPopupModal("Open Project", &showOpenProjectModal_, ImGuiWindowFlags_AlwaysAutoResize)) {
+	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+	ImGui::SetNextWindowSize(ImVec2(640.0f, 0.0f), ImGuiCond_Always);
+	if (ImGui::BeginPopupModal("Open Project", &showOpenProjectModal_, ImGuiWindowFlags_NoResize)) {
+		// Recent projects: double-click (or select + Open Selected) to open
+		ImGui::SeparatorText(Tr("Recent Projects"));
+		if (DrawRecentProjectsList(200.0f)) {
+			showOpenProjectModal_ = false;
+			ImGui::CloseCurrentPopup();
+			ImGui::EndPopup();
+			return;
+		}
+		const bool hasSelection = selectedRecentProject_ >= 0 && selectedRecentProject_ < static_cast<int>(recentProjects_.size());
+		ImGui::BeginDisabled(!hasSelection);
+		if (ImGui::Button(TrId("Open Selected"), ImVec2(130.0f, 26.0f)) && hasSelection) {
+			if (OpenProject(recentProjects_[selectedRecentProject_].string())) {
+				showOpenProjectModal_ = false;
+				ImGui::CloseCurrentPopup();
+				ImGui::EndPopup();
+				return;
+			}
+		}
+		ImGui::SetItemTooltip("%s", Tr("Opens the project highlighted in the list (click one first, or double-click it)"));
+		ImGui::EndDisabled();
+
+		ImGui::SeparatorText(Tr("Other Folder"));
 		ImGui::Text("Select a Project Folder (containing ProjectSettings/project.json):");
-		ImGui::Separator();
 
 		ImGui::InputText("Project Folder", openProjectFolderBuf_, sizeof(openProjectFolderBuf_));
 		ImGui::SameLine();

@@ -60,6 +60,9 @@ void EditorSuite::RegisterBuiltinComponents()
 		[](const GameObject& o) { return o.hasAudioSource || o.type == GameObjectType::AudioSource; },
 		[](EditorSuite&, GameObject& o) { o.hasAudioSource = true; },
 		[](EditorSuite& s, GameObject& o) { s.DrawAudioSourceComponentInspector(o); });
+
+	// Data components owned by engine systems
+	RegisterAnimatorComponent();
 }
 
 // ---------------------------------------------------------------------------
@@ -192,13 +195,26 @@ void EditorSuite::DrawDataComponentInspector(GameObject& obj, const ComponentInf
 			case ComponentFieldType::Text:
 				changed = ImGui::InputText(field.name, static_cast<char*>(ptr), field.size);
 				break;
+			case ComponentFieldType::Asset:
+				changed = ImGui::InputText(field.name, static_cast<char*>(ptr), field.size);
+				// Drop a file from the Project panel onto the field
+				if (ImGui::BeginDragDropTarget()) {
+					if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("RIZE_ASSET_PATH")) {
+						strncpy_s(static_cast<char*>(ptr), field.size, static_cast<const char*>(payload->Data), _TRUNCATE);
+						changed = true;
+						commitNow = true;
+					}
+					ImGui::EndDragDropTarget();
+				}
+				break;
 			}
-			if (field.tooltip) ImGui::SetItemTooltip("%s", field.tooltip);
+			if (field.tooltip) ImGui::SetItemTooltip("%s", Tr(field.tooltip));
 			if (changed) isSceneDirty_ = true;
 			if (commitNow || (field.type != ComponentFieldType::Vector3 && ImGui::IsItemDeactivatedAfterEdit())) {
 				PushUndoSnapshot();
 			}
 		}
+		if (info.drawExtra && data) info.drawExtra(*this, obj, *data);
 	}
 	ImGui::PopID();
 #else
@@ -283,9 +299,14 @@ void EditorSuite::WriteDataComponentsJson(const GameObject& obj, void* outObject
 					? SceneJson::Arr(*static_cast<const Vector4*>(ptr))
 					: SceneJson::Arr(*static_cast<const Vector3*>(ptr));
 				break;
-			case ComponentFieldType::Text: {
+			case ComponentFieldType::Text:
+			case ComponentFieldType::Asset: {
 				const char* text = static_cast<const char*>(ptr);
-				c[field.name] = std::string(text, strnlen(text, field.size));
+				const std::string value(text, strnlen(text, field.size));
+				c[field.name] = value;
+				if (field.type == ComponentFieldType::Asset && !value.empty()) {
+					if (const std::string guid = AssetDb().GuidForPath(value); !guid.empty()) c[std::string(field.name) + "Guid"] = guid;
+				}
 				break;
 			}
 			}
@@ -326,9 +347,19 @@ void EditorSuite::ReadDataComponentsJson(const void* objectJson, GameObject& obj
 				if (field.size >= sizeof(float) * 4) SceneJson::Read(value, field.name, *static_cast<Vector4*>(ptr));
 				else SceneJson::Read(value, field.name, *static_cast<Vector3*>(ptr));
 				break;
-			case ComponentFieldType::Text: {
+			case ComponentFieldType::Text:
+			case ComponentFieldType::Asset: {
 				std::string text;
-				if (SceneJson::Read(value, field.name, text) && field.size > 0) {
+				bool found = SceneJson::Read(value, field.name, text);
+				// A known GUID wins over the stored path (the asset was renamed or moved)
+				std::string guid;
+				if (field.type == ComponentFieldType::Asset && SceneJson::Read(value, (std::string(field.name) + "Guid").c_str(), guid)) {
+					if (const std::string current = AssetDb().PathForGuid(guid); !current.empty()) {
+						text = current;
+						found = true;
+					}
+				}
+				if (found && field.size > 0) {
 					strncpy_s(static_cast<char*>(ptr), field.size, text.c_str(), _TRUNCATE);
 				}
 				break;

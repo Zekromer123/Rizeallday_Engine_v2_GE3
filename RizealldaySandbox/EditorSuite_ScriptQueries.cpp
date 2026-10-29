@@ -5,6 +5,26 @@
 // material and component access. EngineAPI entries are filled in by SetupEngineAPIExtensions().
 
 namespace {
+/// Animator of a script target, started at its entry state if the state machine has not run yet
+/// (Initialize runs before the first animation update, and parameters set there must not be lost)
+AnimatorComponent* ScriptAnimator(void* ctx, uint32_t id, std::shared_ptr<AnimatorController>& outController)
+{
+	if (!ctx) return nullptr;
+	EditorSuite& self = *static_cast<EditorSuite*>(ctx);
+	GameObject* obj = self.FindGameObjectById(id, false);
+	AnimatorComponent* a = obj ? self.GetAnimator(*obj) : nullptr;
+	if (!a || a->controller[0] == '\0') return nullptr;
+	outController = self.GetAnimatorController(a->controller);
+	if (!outController || outController->states.empty()) return nullptr;
+	if (!a->runtime.started || a->runtimeController != a->controller) {
+		a->runtime = AnimatorRuntime{};
+		a->runtimeController = a->controller;
+		const AnimatorRuntime::Change change = a->runtime.Start(*outController);
+		if (const AnimState* s = change.changed ? outController->FindState(change.state) : nullptr) self.ApplyAnimatorState(*obj, *a, *s, 0.0f);
+	}
+	return a;
+}
+
 constexpr uint64_t ContactKey(uint32_t selfId, uint32_t otherId)
 {
 	return (static_cast<uint64_t>(selfId) << 32) | otherId;
@@ -541,6 +561,60 @@ void EditorSuite::SetupEngineAPIExtensions()
 		obj->animationLoop = in->loop;
 		obj->animationPlaying = in->playing;
 		return true;
+	};
+	// Animator (API v4)
+	engineApi_.animSetParam = [](void* ctx, uint32_t id, const char* name, float value) -> bool {
+		std::shared_ptr<AnimatorController> c;
+		AnimatorComponent* a = name ? ScriptAnimator(ctx, id, c) : nullptr;
+		return a && std::isfinite(value) && a->runtime.SetValue(*c, name, value);
+	};
+	engineApi_.animGetParam = [](void* ctx, uint32_t id, const char* name) -> float {
+		std::shared_ptr<AnimatorController> c;
+		AnimatorComponent* a = name ? ScriptAnimator(ctx, id, c) : nullptr;
+		return a ? a->runtime.GetValue(name) : 0.0f;
+	};
+	engineApi_.animResetTrigger = [](void* ctx, uint32_t id, const char* name) -> bool {
+		std::shared_ptr<AnimatorController> c;
+		AnimatorComponent* a = name ? ScriptAnimator(ctx, id, c) : nullptr;
+		if (!a || !c->FindParameter(name)) return false;
+		a->runtime.ResetTrigger(name);
+		return true;
+	};
+	engineApi_.animIsState = [](void* ctx, uint32_t id, const char* stateName) -> bool {
+		std::shared_ptr<AnimatorController> c;
+		AnimatorComponent* a = stateName ? ScriptAnimator(ctx, id, c) : nullptr;
+		const AnimState* s = a ? c->FindState(a->runtime.currentState) : nullptr;
+		return s && s->name == stateName;
+	};
+	engineApi_.animGetState = [](void* ctx, uint32_t id, char* outName, int outSize) -> int {
+		std::shared_ptr<AnimatorController> c;
+		AnimatorComponent* a = ScriptAnimator(ctx, id, c);
+		if (!a) return -1;
+		const AnimState* s = c->FindState(a->runtime.currentState);
+		const std::string name = s ? s->name : std::string();
+		if (outName && outSize > 0) strncpy_s(outName, static_cast<size_t>(outSize), name.c_str(), _TRUNCATE);
+		return static_cast<int>(name.size());
+	};
+	engineApi_.animCrossFade = [](void* ctx, uint32_t id, const char* stateName, float seconds) -> bool {
+		std::shared_ptr<AnimatorController> c;
+		AnimatorComponent* a = stateName ? ScriptAnimator(ctx, id, c) : nullptr;
+		if (!a) return false;
+		const AnimatorRuntime::Change change = a->runtime.ForceState(*c, stateName, std::isfinite(seconds) ? seconds : 0.0f);
+		const AnimState* s = change.changed ? c->FindState(change.state) : nullptr;
+		GameObject* obj = static_cast<EditorSuite*>(ctx)->FindGameObjectById(id, false);
+		if (!s || !obj) return false;
+		static_cast<EditorSuite*>(ctx)->ApplyAnimatorState(*obj, *a, *s, change.fadeSeconds);
+		return true;
+	};
+	engineApi_.animGetNormalizedTime = [](void* ctx, uint32_t id) -> float {
+		GameObject* obj = ctx ? static_cast<EditorSuite*>(ctx)->FindGameObjectById(id, false) : nullptr;
+		if (!obj || !obj->editObject3d || !obj->editObject3d->GetModel()) return 0.0f;
+		return obj->editObject3d->GetAnimationPlayer().NormalizedTime(obj->editObject3d->GetModel());
+	};
+	engineApi_.animIsInTransition = [](void* ctx, uint32_t id) -> bool {
+		std::shared_ptr<AnimatorController> c;
+		AnimatorComponent* a = ScriptAnimator(ctx, id, c);
+		return a && a->runtime.InTransition();
 	};
 	engineApi_.getCamera = [](void* ctx, uint32_t id, ScriptCameraData* out) -> bool {
 		const GameObject* obj = ctx ? static_cast<EditorSuite*>(ctx)->FindGameObjectById(id, false) : nullptr;

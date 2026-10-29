@@ -279,13 +279,9 @@ void EditorSuite::RenderScene3D(ID3D12GraphicsCommandList* cmdList, Camera& came
 		}
 		obj3d->SetCamera(&camera);
 
-		obj3d->SetCurrentAnimationIndex(static_cast<uint32_t>((std::max)(0, obj.animationIndex)));
-		obj3d->SetAnimationSpeed(obj.animationSpeed);
-		obj3d->SetLoopAnimation(obj.animationLoop);
-
+		// Animation time is advanced by UpdateAnimations (game time); rendering only evaluates the pose
 		if (isEditView) {
-			float animDt = obj.animationPlaying ? currentDeltaTime_ : 0.0f;
-			obj3d->Update(animDt);
+			obj3d->Update(0.0f);
 		} else {
 			obj3d->Update(0.0f);
 			if (obj.editObject3d) {

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <string>
 #include <type_traits>
 #include "math/Vector2.h"
 #include "math/Vector3.h"
@@ -269,12 +270,22 @@ struct EngineAPI {
 	bool (*setAnimation)(void* ctx, uint32_t id, const ScriptAnimationData* in) = nullptr;
 	bool (*getCamera)(void* ctx, uint32_t id, ScriptCameraData* out) = nullptr;
 	bool (*setCamera)(void* ctx, uint32_t id, const ScriptCameraData* in) = nullptr;
+
+	// Animator component (API v4): parameters, states, crossfade. Names are UTF-8, copied by the engine.
+	bool (*animSetParam)(void* ctx, uint32_t id, const char* name, float value) = nullptr; // bool/trigger: 0 or 1
+	float (*animGetParam)(void* ctx, uint32_t id, const char* name) = nullptr;
+	bool (*animResetTrigger)(void* ctx, uint32_t id, const char* name) = nullptr;
+	bool (*animIsState)(void* ctx, uint32_t id, const char* stateName) = nullptr;
+	int (*animGetState)(void* ctx, uint32_t id, char* outName, int outSize) = nullptr; // length, -1 = no Animator
+	bool (*animCrossFade)(void* ctx, uint32_t id, const char* stateName, float seconds) = nullptr;
+	float (*animGetNormalizedTime)(void* ctx, uint32_t id) = nullptr; // 0..1 first pass, 2.5 = middle of the 3rd loop
+	bool (*animIsInTransition)(void* ctx, uint32_t id) = nullptr;
 };
 
 /// Engine <-> GameScripts.dll compatibility check. Bump kScriptApiVersion when the meaning of the API changes;
 /// layout changes of EngineAPI / ScriptGameObjectView / ScriptBase are caught automatically by the sizes.
 /// The fingerprint is defined at the end of this header (it needs the complete ScriptBase).
-constexpr uint32_t kScriptApiVersion = 3;
+constexpr uint32_t kScriptApiVersion = 4; // 4: Animator API + ScriptBase::OnAnimationEvent
 
 /// Size of the UI canvas used by the UI* helpers (stretched over the game view)
 constexpr float kUICanvasWidth = 1280.0f;
@@ -336,6 +347,8 @@ public:
 	/// Fired for triggers too; check other.layer / other.tag to tell them apart.
 	virtual void OnCollisionEnter(GameObject& other) { (void)other; }
 	virtual void OnCollisionExit(GameObject& other) { (void)other; }
+	/// An animation event of the object's Animator fired (event name set in the Animator window, e.g. "hit")
+	virtual void OnAnimationEvent(const char* eventName) { (void)eventName; }
 	virtual void OnDestroy() {}
 	virtual void OnAfterReload() {}
 
@@ -876,12 +889,50 @@ public:
 		return engineApi_ && engineApi_->setCamera && engineApi_->setCamera(engineApi_->hostContext, ResolveId(id), &in);
 	}
 
+	// ---- Animator (Animator component + controller made in Window > Animator) ----
+	bool SetAnimFloat(const char* name, float value, uint32_t id = 0) const { return AnimSet(name, value, id); }
+	bool SetAnimInt(const char* name, int value, uint32_t id = 0) const { return AnimSet(name, static_cast<float>(value), id); }
+	bool SetAnimBool(const char* name, bool value, uint32_t id = 0) const { return AnimSet(name, value ? 1.0f : 0.0f, id); }
+	/// Fires a trigger: it stays set until a transition uses it (or ResetAnimTrigger)
+	bool SetAnimTrigger(const char* name, uint32_t id = 0) const { return AnimSet(name, 1.0f, id); }
+	bool ResetAnimTrigger(const char* name, uint32_t id = 0) const {
+		return engineApi_ && engineApi_->animResetTrigger && engineApi_->animResetTrigger(engineApi_->hostContext, ResolveId(id), name);
+	}
+	float GetAnimFloat(const char* name, uint32_t id = 0) const {
+		return (engineApi_ && engineApi_->animGetParam) ? engineApi_->animGetParam(engineApi_->hostContext, ResolveId(id), name) : 0.0f;
+	}
+	bool GetAnimBool(const char* name, uint32_t id = 0) const { return GetAnimFloat(name, id) != 0.0f; }
+	int GetAnimInt(const char* name, uint32_t id = 0) const { return static_cast<int>(std::lround(GetAnimFloat(name, id))); }
+	/// True while the Animator is in (or fading into) the state
+	bool IsAnimState(const char* stateName, uint32_t id = 0) const {
+		return engineApi_ && engineApi_->animIsState && engineApi_->animIsState(engineApi_->hostContext, ResolveId(id), stateName);
+	}
+	/// Current state name; "" without an Animator
+	std::string GetAnimState(uint32_t id = 0) const {
+		char buf[128] = {};
+		if (!engineApi_ || !engineApi_->animGetState || engineApi_->animGetState(engineApi_->hostContext, ResolveId(id), buf, static_cast<int>(sizeof(buf))) < 0) return {};
+		return buf;
+	}
+	/// Jumps to a state, ignoring transitions (e.g. a scripted cutscene); seconds = crossfade time
+	bool CrossFadeAnimation(const char* stateName, float seconds = 0.2f, uint32_t id = 0) const {
+		return engineApi_ && engineApi_->animCrossFade && engineApi_->animCrossFade(engineApi_->hostContext, ResolveId(id), stateName, seconds);
+	}
+	float GetAnimNormalizedTime(uint32_t id = 0) const {
+		return (engineApi_ && engineApi_->animGetNormalizedTime) ? engineApi_->animGetNormalizedTime(engineApi_->hostContext, ResolveId(id)) : 0.0f;
+	}
+	bool IsAnimInTransition(uint32_t id = 0) const {
+		return engineApi_ && engineApi_->animIsInTransition && engineApi_->animIsInTransition(engineApi_->hostContext, ResolveId(id));
+	}
+
 	// Pointer to owner GameObject view (synchronized by the engine)
 	GameObject* gameObject = nullptr;
 	GameObject* owner = nullptr;
 
 protected:
 	uint32_t ResolveId(uint32_t id) const { return id != 0 ? id : ownerId_; }
+	bool AnimSet(const char* name, float value, uint32_t id) const {
+		return engineApi_ && engineApi_->animSetParam && engineApi_->animSetParam(engineApi_->hostContext, ResolveId(id), name, value);
+	}
 
 	void SaveFloatImpl(const char* key, double value) const {
 		if (engineApi_ && engineApi_->saveSetNumber && key) engineApi_->saveSetNumber(engineApi_->hostContext, key, value);
