@@ -197,6 +197,12 @@
     <ClInclude Include="base\RenderTexture.h">
       <Filter>base</Filter>
     </ClInclude>
+    <ClInclude Include="base\ScriptTimers.h">
+      <Filter>base</Filter>
+    </ClInclude>
+    <ClInclude Include="base\EngineVersion.h">
+      <Filter>base</Filter>
+    </ClInclude>
     <ClInclude Include="base\ScriptAPI.h">
       <Filter>base</Filter>
     </ClInclude>

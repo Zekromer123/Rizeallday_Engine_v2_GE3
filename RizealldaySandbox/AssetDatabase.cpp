@@ -74,7 +74,8 @@ void AssetDatabase::Refresh()
 	std::vector<std::pair<fs::path, std::string>> files;
 	for (auto it = fs::recursive_directory_iterator(assetsDir, fs::directory_options::skip_permission_denied, ec);
 		!ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
-		if (!it->is_regular_file(ec) || IsMetaFile(it->path())) continue;
+		// Dot files (.gitkeep) are repository plumbing, not assets
+		if (!it->is_regular_file(ec) || IsMetaFile(it->path()) || it->path().filename().native().starts_with(L'.')) continue;
 		const fs::path rel = it->path().lexically_relative(assetsDir);
 		files.emplace_back(it->path(), "Assets/" + rel.generic_string());
 	}

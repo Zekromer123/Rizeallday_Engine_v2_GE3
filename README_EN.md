@@ -65,6 +65,17 @@ git clone --recursive https://github.com/Zekromer123/Rizeallday_Engine_v2_GE3.gi
 | `Development` | Editor (ImGui) with an optimized engine, for everyday work |
 | `Release` | Game runtime without the editor, for player builds |
 
+## Release for the team
+
+```powershell
+powershell -ExecutionPolicy Bypass -File Tools\MakeRelease.ps1
+```
+
+Produces `dist\RizealldayEngine-<version>.zip` (`Editor/`, `SDK/`, `Templates/`, `engine.json`, `README_TEAM.md`).
+Bump `kEngineVersion` in `RizealldayEngine/base/EngineVersion.h` before every release.
+The team extracts the zip and runs `Editor\RizealldaySandbox.exe`. Every game project has its own repository with its C++ scripts (`GameScripts/`).
+Engine update: **Help > Install Engine Update...** (or drop the zip on the editor). The editor installs the new version and starts again.
+
 ## Script example
 
 ```cpp
@@ -94,6 +105,8 @@ Build scripts with **Ctrl+Shift+B** in the editor; the DLL reloads automatically
 RizealldayEngine/     Static library: rendering, input, audio, collision, scripting runtime, HLSL shaders
 RizealldaySandbox/    Editor + game runtime (.exe), self-tests, sample assets
 GameScripts/          Gameplay scripts (.dll, hot reload)
+Templates/            Scripts project template for New Project
+Tools/                MakeRelease.ps1 (zip for the team) + README_TEAM.md
 externals/            Third-party libraries
 .github/workflows/    CI
 ```

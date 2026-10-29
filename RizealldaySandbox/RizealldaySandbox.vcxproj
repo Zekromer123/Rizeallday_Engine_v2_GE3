@@ -206,6 +206,11 @@ if exist "$(ProjectDir)Resources" xcopy "$(ProjectDir)Resources" "$(OutDir)Resou
     <ClCompile Include="AnimatorController.cpp" />
     <ClCompile Include="EditorSuite_Animator.cpp" />
     <ClCompile Include="EditorSuite_Import.cpp" />
+    <ClCompile Include="EditorSuite_InputActions.cpp" />
+    <ClCompile Include="InputActions.cpp" />
+    <ClCompile Include="EngineUpdate.cpp" />
+    <ClCompile Include="EditorSuite_ProjectScripts.cpp" />
+    <ClCompile Include="EditorSuite_Update.cpp" />
     <ClCompile Include="EditorSuite_AnimatorWindow.cpp" />
     <ClCompile Include="Localization.cpp" />
     <ClCompile Include="ComponentRegistry.cpp" />
@@ -235,6 +240,8 @@ if exist "$(ProjectDir)Resources" xcopy "$(ProjectDir)Resources" "$(OutDir)Resou
     <ClInclude Include="ParticleQuad.h" />
     <ClInclude Include="AssetDatabase.h" />
     <ClInclude Include="AnimatorController.h" />
+    <ClInclude Include="InputActions.h" />
+    <ClInclude Include="EngineUpdate.h" />
     <ClInclude Include="Localization.h" />
     <ClInclude Include="ComponentRegistry.h" />
     <ClInclude Include="EditorSuite.h" />

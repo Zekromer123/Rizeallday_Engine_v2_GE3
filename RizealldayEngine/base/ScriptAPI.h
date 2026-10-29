@@ -8,6 +8,7 @@
 #include "math/Vector2.h"
 #include "math/Vector3.h"
 #include "math/Vector4.h"
+#include "base/ScriptTimers.h"
 #include "math/Matrix4x4.h"
 #include "math/Quaternion.h"
 
@@ -280,12 +281,22 @@ struct EngineAPI {
 	bool (*animCrossFade)(void* ctx, uint32_t id, const char* stateName, float seconds) = nullptr;
 	float (*animGetNormalizedTime)(void* ctx, uint32_t id) = nullptr; // 0..1 first pass, 2.5 = middle of the 3rd loop
 	bool (*animIsInTransition)(void* ctx, uint32_t id) = nullptr;
+
+	// Game feel (API v5). Real time: they keep working during a hitstop or with timeScale 0.
+	void (*shakeCamera)(void* ctx, float strength, float seconds) = nullptr;
+	void (*hitstop)(void* ctx, float seconds) = nullptr;
+
+	// Input actions (API v5): names from Options > Input Actions (ProjectSettings/input.json)
+	bool (*isActionDown)(void* ctx, const char* action) = nullptr;
+	bool (*isActionTriggered)(void* ctx, const char* action) = nullptr;
+	bool (*isActionReleased)(void* ctx, const char* action) = nullptr;
+	float (*getAxis)(void* ctx, const char* action) = nullptr; // -1..1
 };
 
 /// Engine <-> GameScripts.dll compatibility check. Bump kScriptApiVersion when the meaning of the API changes;
 /// layout changes of EngineAPI / ScriptGameObjectView / ScriptBase are caught automatically by the sizes.
 /// The fingerprint is defined at the end of this header (it needs the complete ScriptBase).
-constexpr uint32_t kScriptApiVersion = 4; // 4: Animator API + ScriptBase::OnAnimationEvent
+constexpr uint32_t kScriptApiVersion = 5; // 4: Animator API + OnAnimationEvent, 5: ShakeCamera / Hitstop, input actions
 
 /// Size of the UI canvas used by the UI* helpers (stretched over the game view)
 constexpr float kUICanvasWidth = 1280.0f;
@@ -922,6 +933,39 @@ public:
 	}
 	bool IsAnimInTransition(uint32_t id = 0) const {
 		return engineApi_ && engineApi_->animIsInTransition && engineApi_->animIsInTransition(engineApi_->hostContext, ResolveId(id));
+	}
+
+	// ---- Game feel ----
+	/// Shakes the game camera by up to `strength` world units, fading out over `seconds` (a weaker shake never cuts a stronger one)
+	void ShakeCamera(float strength, float seconds) const {
+		if (engineApi_ && engineApi_->shakeCamera) engineApi_->shakeCamera(engineApi_->hostContext, strength, seconds);
+	}
+	/// Freezes game time for `seconds` (impact pause). Update still runs with deltaTime 0; SetTimeScale is not changed.
+	void Hitstop(float seconds) const {
+		if (engineApi_ && engineApi_->hitstop) engineApi_->hitstop(engineApi_->hostContext, seconds);
+	}
+
+	// ---- Input actions (keyboard, mouse and gamepad at once; edit in Options > Input Actions) ----
+	// Default actions: MoveX, MoveY, Jump, Attack, Submit, Cancel, Pause
+	bool IsActionDown(const char* action) const {
+		return engineApi_ && engineApi_->isActionDown && engineApi_->isActionDown(engineApi_->hostContext, action);
+	}
+	bool IsActionTriggered(const char* action) const {
+		return engineApi_ && engineApi_->isActionTriggered && engineApi_->isActionTriggered(engineApi_->hostContext, action);
+	}
+	bool IsActionReleased(const char* action) const {
+		return engineApi_ && engineApi_->isActionReleased && engineApi_->isActionReleased(engineApi_->hostContext, action);
+	}
+	/// -1..1 (keys give -1 / +1, sticks their analog value)
+	float GetAxis(const char* action) const {
+		return (engineApi_ && engineApi_->getAxis) ? engineApi_->getAxis(engineApi_->hostContext, action) : 0.0f;
+	}
+	/// Two axes as a vector, length clamped to 1 (diagonals are not faster)
+	Vector2 GetAxis2D(const char* actionX = "MoveX", const char* actionY = "MoveY") const {
+		Vector2 v{ GetAxis(actionX), GetAxis(actionY) };
+		const float len = std::sqrt(v.x * v.x + v.y * v.y);
+		if (len > 1.0f) { v.x /= len; v.y /= len; }
+		return v;
 	}
 
 	// Pointer to owner GameObject view (synchronized by the engine)

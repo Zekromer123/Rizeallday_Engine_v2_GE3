@@ -73,3 +73,6 @@ RizealldaySandbox/Assets/Scenes/test.json
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Release packages (Tools/MakeRelease.ps1)
+dist/

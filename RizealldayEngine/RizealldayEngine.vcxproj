@@ -190,6 +190,8 @@
     <ClInclude Include="base\CrashHandler.h" />
     <ClInclude Include="base\RenderTexture.h" />
     <ClInclude Include="base\ScriptAPI.h" />
+    <ClInclude Include="base\ScriptTimers.h" />
+    <ClInclude Include="base\EngineVersion.h" />
     <ClInclude Include="base\ScriptBase.h" />
     <ClInclude Include="base\ScriptModule.h" />
     <ClInclude Include="3d\AnimationPlayer.h" />

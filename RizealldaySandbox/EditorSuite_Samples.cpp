@@ -18,6 +18,8 @@ bool EditorSuite::CreateSurvivorsDemo()
 		LogMessage("[Samples] Open a project and stop Play mode before creating a sample.", 1);
 		return false;
 	}
+	// A project with its own scripts needs the sample's script sources (they build in the background)
+	if (!InstallSampleScripts("Survivors")) return false;
 
 	NewScene(); // Main Camera + Directional Light
 

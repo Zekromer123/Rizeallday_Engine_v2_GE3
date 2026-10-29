@@ -3,6 +3,7 @@
 #include "EditorSuiteInternal.h"
 #include "SceneJson.h"
 #include "base/ConvertString.h"
+#include "EngineUpdate.h"
 #include <wrl.h>
 #include <shobjidl.h>
 
@@ -236,7 +237,16 @@ std::vector<std::string> EditorSuite::ImportAssets(const std::vector<fs::path>& 
 void EditorSuite::ProcessPendingImports()
 {
 	if (pendingImports_.empty()) return;
-	std::vector<fs::path> sources(pendingImports_.begin(), pendingImports_.end());
+	std::vector<fs::path> sources;
+	for (const std::string& dropped : pendingImports_) {
+		const fs::path path(dropped);
+		// A release zip dropped on the window is an engine update, not an asset
+		if (_wcsicmp(path.extension().c_str(), L".zip") == 0 && EngineUpdate::ZipIsEnginePackage(path)) {
+			BeginEngineUpdate(path);
+		} else {
+			sources.push_back(path);
+		}
+	}
 	pendingImports_.clear();
-	ImportAssets(sources);
+	if (!sources.empty()) ImportAssets(sources);
 }

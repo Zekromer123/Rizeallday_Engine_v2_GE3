@@ -65,6 +65,17 @@ git clone --recursive https://github.com/Zekromer123/Rizeallday_Engine_v2_GE3.gi
 | `Development` | エディタ（ImGui）＋最適化済みエンジン。日常の開発用 |
 | `Release` | エディタなしのゲームランタイム。配布用ビルド |
 
+## チーム向けリリース
+
+```powershell
+powershell -ExecutionPolicy Bypass -File Tools\MakeRelease.ps1
+```
+
+`dist\RizealldayEngine-<バージョン>.zip`（`Editor/`、`SDK/`、`Templates/`、`engine.json`、`README_TEAM.md`）を作成します。
+リリースのたびに `RizealldayEngine/base/EngineVersion.h` の `kEngineVersion` を上げてください。
+チームは zip を展開して `Editor\RizealldaySandbox.exe` を起動します。ゲームプロジェクトはそれぞれ C++ スクリプト（`GameScripts/`）ごと自分のリポジトリを持ちます。
+エンジン更新：**Help > Install Engine Update...**（または zip をエディターにドロップ）。新しいバージョンをインストールして再起動します。
+
 ## スクリプト例
 
 ```cpp
@@ -94,6 +105,8 @@ REGISTER_SCRIPT(Mover)
 RizealldayEngine/     静的ライブラリ：描画、入力、サウンド、衝突判定、スクリプト実行環境、HLSL シェーダー
 RizealldaySandbox/    エディタ＋ゲームランタイム（.exe）、自己テスト、サンプルアセット
 GameScripts/          ゲームプレイスクリプト（.dll、ホットリロード）
+Templates/            New Project 用のスクリプトプロジェクトのテンプレート
+Tools/                MakeRelease.ps1（チーム向け zip）と README_TEAM.md
 externals/            サードパーティライブラリ
 .github/workflows/    CI
 ```

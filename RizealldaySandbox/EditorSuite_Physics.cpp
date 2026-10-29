@@ -249,3 +249,42 @@ void EditorSuite::UpdatePhysics(float deltaTime)
 	UpdateWorldMatrices();
 }
 
+
+int EditorSuite::StepPhysics(float deltaTime)
+{
+	// shortcut: no interpolation between steps, so rigidbodies move in 60 Hz increments on faster monitors; interpolate render transforms if that shows
+	if (std::isfinite(deltaTime) && deltaTime > 0.0f) physicsAccumulator_ += deltaTime;
+	int steps = 0;
+	while (physicsAccumulator_ >= kFixedPhysicsStep && steps < kMaxPhysicsSteps) {
+		UpdatePhysics(static_cast<float>(kFixedPhysicsStep));
+		physicsAccumulator_ -= kFixedPhysicsStep;
+		++steps;
+	}
+	if (steps == kMaxPhysicsSteps) physicsAccumulator_ = 0.0; // too slow to catch up: drop the rest
+	return steps;
+}
+
+bool EditorSuite::FitBoxColliderToMesh(GameObject& obj)
+{
+	if (obj.meshType != GameObject::MeshType::CustomModel || obj.modelPath.empty()) return false;
+	const std::filesystem::path path(ResolveAssetPath(obj.modelPath));
+	std::error_code ec;
+	if (!std::filesystem::exists(path, ec)) return false;
+	const Model* model = Model::CreateFromFile(path.parent_path().string(), path.filename().string());
+	if (!model) return false;
+
+	// Bind-pose vertices (Model::GetLocalAABB is padded for animation culling, too big for a collider)
+	Vector3 mn{ FLT_MAX, FLT_MAX, FLT_MAX }, mx{ -FLT_MAX, -FLT_MAX, -FLT_MAX };
+	for (const MeshData& mesh : model->GetMeshes()) {
+		for (const VertexData& v : mesh.vertices) {
+			mn = { (std::min)(mn.x, v.position.x), (std::min)(mn.y, v.position.y), (std::min)(mn.z, v.position.z) };
+			mx = { (std::max)(mx.x, v.position.x), (std::max)(mx.y, v.position.y), (std::max)(mx.z, v.position.z) };
+		}
+	}
+	if (mn.x > mx.x) return false;
+	const Vector3 center = (mn + mx) * 0.5f;
+	obj.boxSize = mx - mn; // multiplied by the object scale like any box collider
+	// Roots offset the box in world units (translation + boxCenter), children through their world matrix (scaled)
+	obj.boxCenter = (obj.parentId == -1) ? Vector3{ center.x * obj.scale.x, center.y * obj.scale.y, center.z * obj.scale.z } : center;
+	return true;
+}

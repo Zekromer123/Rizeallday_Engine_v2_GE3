@@ -255,6 +255,9 @@ void EditorSuite::ResetScriptRuntimeState()
 		Audio::GetInstance()->StopAudio(musicVoice_);
 	}
 	musicVoice_ = 0;
+	shakeLeft_ = 0.0f;
+	hitstopLeft_ = 0.0f;
+	physicsAccumulator_ = 0.0;
 	musicPath_.clear();
 }
 
@@ -616,6 +619,30 @@ void EditorSuite::SetupEngineAPIExtensions()
 		AnimatorComponent* a = ScriptAnimator(ctx, id, c);
 		return a && a->runtime.InTransition();
 	};
+	// Input actions (API v5): the project's map (ProjectSettings/input.json or the defaults)
+	engineApi_.isActionDown = [](void* ctx, const char* action) -> bool {
+		auto* self = static_cast<EditorSuite*>(ctx);
+		return self && action && self->GetInputActions().IsDown(action, self->InputSource());
+	};
+	engineApi_.isActionTriggered = [](void* ctx, const char* action) -> bool {
+		auto* self = static_cast<EditorSuite*>(ctx);
+		return self && action && self->GetInputActions().IsTriggered(action, self->InputSource());
+	};
+	engineApi_.isActionReleased = [](void* ctx, const char* action) -> bool {
+		auto* self = static_cast<EditorSuite*>(ctx);
+		return self && action && self->GetInputActions().IsReleased(action, self->InputSource());
+	};
+	engineApi_.getAxis = [](void* ctx, const char* action) -> float {
+		auto* self = static_cast<EditorSuite*>(ctx);
+		return (self && action) ? self->GetInputActions().GetAxis(action, self->InputSource()) : 0.0f;
+	};
+	// Game feel (API v5)
+	engineApi_.shakeCamera = [](void* ctx, float strength, float seconds) {
+		if (ctx) static_cast<EditorSuite*>(ctx)->ShakeCamera(strength, seconds);
+	};
+	engineApi_.hitstop = [](void* ctx, float seconds) {
+		if (ctx) static_cast<EditorSuite*>(ctx)->Hitstop(seconds);
+	};
 	engineApi_.getCamera = [](void* ctx, uint32_t id, ScriptCameraData* out) -> bool {
 		const GameObject* obj = ctx ? static_cast<EditorSuite*>(ctx)->FindGameObjectById(id, false) : nullptr;
 		if (!obj || !(obj->hasCamera || obj->type == GameObjectType::Camera) || !out) return false;
@@ -634,4 +661,31 @@ void EditorSuite::SetupEngineAPIExtensions()
 		obj->isOrthographic = in->orthographic;
 		return true;
 	};
+}
+
+// ---------------------------------------------------------------------------
+// Game feel
+// ---------------------------------------------------------------------------
+void EditorSuite::ShakeCamera(float strength, float seconds)
+{
+	if (!std::isfinite(strength) || !std::isfinite(seconds) || strength <= 0.0f || seconds <= 0.0f) return;
+	if (strength < CameraShakeStrength()) return; // a weak hit never cuts a strong shake short
+	shakeStrength_ = strength;
+	shakeDuration_ = seconds;
+	shakeLeft_ = seconds;
+}
+
+void EditorSuite::Hitstop(float seconds)
+{
+	if (!std::isfinite(seconds) || seconds <= 0.0f) return;
+	hitstopLeft_ = (std::max)(hitstopLeft_, seconds);
+}
+
+Vector3 EditorSuite::CameraShakeOffset() const
+{
+	const float a = CameraShakeStrength();
+	if (a <= 0.0f) return { 0.0f, 0.0f, 0.0f };
+	// Incommensurate sines: jittery like noise but deterministic (tests, replays)
+	const float t = shakeTime_;
+	return { a * std::sin(t * 47.0f), a * std::sin(t * 61.0f + 1.3f), 0.5f * a * std::sin(t * 53.0f + 2.1f) };
 }

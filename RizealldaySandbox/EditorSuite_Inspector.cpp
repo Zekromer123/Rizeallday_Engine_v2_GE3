@@ -456,6 +456,7 @@ void EditorSuite::DrawInspectorAndDetailsPanel(bool& showParticles)
 							obj.meshType = GameObject::MeshType::CustomModel;
 							obj.modelPath = ToProjectRelativePath(selectedAssetPath_);
 							obj.translation = { 0.0f, 1.0f, 0.0f };
+							if (obj.hasBoxCollider) FitBoxColliderToMesh(obj); // the cube's 1x1x1 box would not fit the model
 							isSceneDirty_ = true;
 							PushUndoSnapshot();
 							LogMessage(std::format("[Scene] Spawned 3D Model '{}' from '{}'", obj.name, obj.modelPath), 0);

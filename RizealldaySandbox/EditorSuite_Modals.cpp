@@ -127,8 +127,9 @@ void EditorSuite::DrawNewProjectModal()
 
 		const std::filesystem::path previewPath = std::filesystem::path(projectFolderBuf_) / projectNameBuf_;
 		ImGui::TextDisabled("Project folder: %s", previewPath.string().c_str());
-		ImGui::TextDisabled("Creates Assets/{Scenes, Models, Textures, Audio, Scripts}, ProjectSettings/project.json");
+		ImGui::TextDisabled("Creates Assets/, GameScripts/ (C++ scripts), ProjectSettings/project.json");
 		ImGui::TextDisabled("and a default scene, then switches the editor to the new project.");
+		ImGui::Checkbox(TrId("Initialize Git repository"), &newProjectInitGit_);
 
 		if (!projectModalError_.empty()) {
 			ImGui::TextColored(ImVec4(0.95f, 0.4f, 0.4f, 1.0f), "%s", projectModalError_.c_str());

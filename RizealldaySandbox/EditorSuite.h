@@ -19,6 +19,7 @@
 #include "ComponentRegistry.h"
 #include "AssetDatabase.h"
 #include "AnimatorController.h"
+#include "InputActions.h"
 #ifdef USE_IMGUI
 #include <imgui.h>
 #else
@@ -388,6 +389,26 @@ public:
 	/// Model that owns a state's clip: nullptr = the object's own model
 	Model* ResolveClipModel(const AnimState& state);
 	void DispatchScriptAnimationEvent(uint32_t objectId, const char* eventName);
+	// Fixed timestep (EditorSuite_Physics.cpp): physics, collision events and rigidbodies advance in steps of exactly 1/60 s
+	static constexpr double kFixedPhysicsStep = 1.0 / 60.0;
+	static constexpr int kMaxPhysicsSteps = 5; // a longer frame drops the rest instead of falling further behind
+	/// Runs as many fixed steps as `deltaTime` (plus the leftover from earlier frames) covers. Returns the step count.
+	int StepPhysics(float deltaTime);
+	/// Box collider = the mesh bounds of a custom model (centre and size, so scale 0.01 models get a correct box). False for primitives / no model.
+	bool FitBoxColliderToMesh(GameObject& obj);
+	// Input actions (EditorSuite_InputActions.cpp): <project>/ProjectSettings/input.json, defaults without the file
+	void ReloadInputActions();
+	const InputActions& GetInputActions(); // follows currentProjectRoot_
+	bool SaveInputActions(const InputActions& actions);
+	InputActions::Source InputSource() const;
+	void DrawInputActionsWindow();
+	// Game feel (EditorSuite_ScriptQueries.cpp). Both run on real time and reset on Play / Stop / scene load.
+	/// Shakes the game camera with `strength` (world units) fading to 0 over `seconds`; a weaker shake never cuts a stronger one
+	void ShakeCamera(float strength, float seconds);
+	/// Freezes game time for `seconds` (scripts keep running with deltaTime 0); timeScale is not changed
+	void Hitstop(float seconds);
+	float CameraShakeStrength() const { return shakeLeft_ > 0.0f && shakeDuration_ > 0.0f ? shakeStrength_ * shakeLeft_ / shakeDuration_ : 0.0f; }
+	Vector3 CameraShakeOffset() const;
 	void DrawAnimatorWindow();
 	void DrawSkeletonOverlay(const ImVec2& vpPos, const ImVec2& vpSize);
 	// Animator window helpers (EditorSuite_AnimatorWindow.cpp)
@@ -475,6 +496,32 @@ public:
 	std::filesystem::path ResolveGameScriptsVcxproj() const;
 	std::filesystem::path ResolveSolutionFilePath() const;
 	std::string ResolveMsBuildExe();
+
+	// Per-project scripts (EditorSuite_ProjectScripts.cpp): <project>/GameScripts/GameScripts.vcxproj builds
+	// <project>/Library/Scripts/GameScripts.dll. Projects without it keep using the engine workspace scripts.
+	/// <project>/GameScripts when the open project has its own scripts project, else empty
+	std::filesystem::path ProjectScriptsDir() const;
+	/// Folder with base/ScriptAPI.h: <install>/SDK/include in a packaged engine, <workspace>/RizealldayEngine in the source tree
+	static std::filesystem::path ResolveEngineSdkDir();
+	/// <install>/Templates in a packaged engine, <workspace>/Templates in the source tree
+	static std::filesystem::path ResolveEngineTemplatesDir();
+	/// Creates GameScripts/ (vcxproj, filters, dllmain.cpp, RizeEngine.props) and <Name>.sln in a project
+	bool CreateProjectScripts(const std::filesystem::path& projectRoot, const std::string& projectName, std::string* error);
+	/// (Re)writes GameScripts/RizeEngine.props with this PC's SDK path; true when it changed
+	bool EnsureProjectScriptsProps();
+	/// Loads the DLL of the open project (or the workspace DLL) and builds it when it does not exist yet
+	void SyncScriptModuleWithProject();
+	/// Adds Scripts\<name>.cpp / .h (the ones that exist) to the scripts vcxproj and .filters
+	void AddScriptFilesToVcxproj(const std::vector<std::string>& classNames);
+	/// Copies engine sample scripts (e.g. Survivors*) into a per-project scripts folder. True when they are there now.
+	bool InstallSampleScripts(const std::string& prefix);
+
+	// Engine update (EditorSuite_Update.cpp): Help > Install Engine Update... or a release zip dropped on the window
+	/// Extracts the zip and opens the confirmation modal (false + log when it is not an engine package)
+	bool BeginEngineUpdate(const std::filesystem::path& zip);
+	void DrawEngineUpdateModal();
+	void DrawAboutModal();
+	void DrawHelpMenu();
 
 	// Scene Management & Serialization (.scene.json)
 	std::string SerializeSceneToString() const;
@@ -684,6 +731,22 @@ private:
 	Input* currentInput_ = nullptr;
 	float currentDeltaTime_ = 0.016f;  // scaled by timeScale_ while the game runs
 	float unscaledDeltaTime_ = 0.016f;
+	// Game feel (EditorSuite_ScriptQueries.cpp): ShakeCamera / Hitstop from scripts
+	float shakeStrength_ = 0.0f;
+	float shakeDuration_ = 0.0f;
+	float shakeLeft_ = 0.0f;
+	float shakeTime_ = 0.0f;
+	float hitstopLeft_ = 0.0f;
+	double physicsAccumulator_ = 0.0; // leftover time for the next fixed physics step
+	// Input actions
+	InputActions inputActions_ = InputActions::Defaults();
+	std::filesystem::path inputActionsRoot_;
+	bool showInputActionsWindow_ = false;
+	std::optional<InputActions> inputWindowWorking_; // edited copy in Options > Input Actions
+	std::filesystem::path inputWindowRoot_;
+	std::string inputCaptureAction_; // waiting for a key to bind to this action
+	bool inputWindowDirty_ = false;
+	char inputNewActionBuf_[64] = "";
 	float timeScale_ = 1.0f;           // set by scripts (SetTimeScale); reset when Play starts/stops
 	double gameTime_ = 0.0;            // scaled seconds since Play started
 	// Where the Game view image was drawn last frame (x, y, width, height in client pixels); 0 width = unknown
@@ -842,6 +905,15 @@ private:
 
 	// New / Open Project Wizard State
 	bool showNewProjectModal_ = false;
+	bool newProjectInitGit_ = true;        // New Project: git init + first commit
+	std::string projectEngineWarning_;     // project.json names a newer engine than this editor
+	// Engine update from a release zip (EditorSuite_Update.cpp)
+	bool showEngineUpdateModal_ = false;
+	bool showAboutModal_ = false;
+	std::filesystem::path pendingUpdateRoot_;   // extracted package (holds engine.json)
+	std::string pendingUpdateVersion_;
+	int pendingUpdateScriptApi_ = 0;
+	std::string engineUpdateError_;
 	char projectNameBuf_[128] = "NewGameProject";
 	char projectFolderBuf_[512] = "D:\\Projects";
 	bool showOpenProjectModal_ = false;

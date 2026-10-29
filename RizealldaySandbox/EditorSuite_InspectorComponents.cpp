@@ -23,7 +23,10 @@ void EditorSuite::DrawMeshComponentInspector(GameObject& obj)
 				obj.modelPath = modelBuf;
 				isSceneDirty_ = true;
 			}
-			if (ImGui::IsItemDeactivatedAfterEdit()) PushUndoSnapshot();
+			if (ImGui::IsItemDeactivatedAfterEdit()) {
+				if (obj.hasBoxCollider) FitBoxColliderToMesh(obj); // a new model gets a box that fits it
+				PushUndoSnapshot();
+			}
 		}
 
 		if (ImGui::ColorEdit4("Material Color", &obj.materialColor.x)) { isSceneDirty_ = true; }
@@ -189,6 +192,14 @@ void EditorSuite::DrawBoxColliderComponentInspector(GameObject& obj)
 			isEditingColliderBounds_ = !isEditingColliderBounds_;
 		}
 		ImGui::SetItemTooltip("Enable interactive handle editing of box collider extents");
+		if (obj.meshType == GameObject::MeshType::CustomModel) {
+			ImGui::SameLine();
+			if (ImGui::Button(TrId("Fit to Mesh")) && FitBoxColliderToMesh(obj)) {
+				isSceneDirty_ = true;
+				PushUndoSnapshot();
+			}
+			ImGui::SetItemTooltip("%s", Tr("Set Center and Size to the model's bounds (also right for models scaled to 0.01)"));
+		}
 
 		if (ImGui::Checkbox("Is Trigger", &obj.isTrigger)) { isSceneDirty_ = true; PushUndoSnapshot(); }
 		ImGui::SetItemTooltip("Trigger volume: detects overlaps without generating physical collision response");

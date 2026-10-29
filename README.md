@@ -65,6 +65,17 @@ git clone --recursive https://github.com/Zekromer123/Rizeallday_Engine_v2_GE3.gi
 | `Development` | Editor (ImGui) dengan engine teroptimasi, untuk pengembangan sehari-hari |
 | `Release` | Runtime game tanpa editor, untuk build pemain |
 
+## Release untuk tim
+
+```powershell
+powershell -ExecutionPolicy Bypass -File Tools\MakeRelease.ps1
+```
+
+Menghasilkan `dist\RizealldayEngine-<versi>.zip` (`Editor/`, `SDK/`, `Templates/`, `engine.json`, `README_TEAM.md`).
+Naikkan `kEngineVersion` di `RizealldayEngine/base/EngineVersion.h` sebelum tiap release.
+Tim mengekstrak zip dan menjalankan `Editor\RizealldaySandbox.exe`. Setiap project game punya repo sendiri dengan script C++-nya (`GameScripts/`).
+Update engine: **Help > Install Engine Update...** (atau drag zip ke editor). Editor memasang versi baru lalu terbuka lagi.
+
 ## Contoh script
 
 ```cpp
@@ -94,6 +105,8 @@ Build script dengan **Ctrl+Shift+B** di editor. DLL akan di-reload otomatis.
 RizealldayEngine/     Static library: rendering, input, audio, collision, scripting runtime, shader HLSL
 RizealldaySandbox/    Editor + runtime game (.exe), self-test, asset contoh
 GameScripts/          Script gameplay (.dll, hot reload)
+Templates/            Template script project untuk New Project
+Tools/                MakeRelease.ps1 (paket zip untuk tim) + README_TEAM.md
 externals/            Library pihak ketiga
 .github/workflows/    CI
 ```

@@ -108,6 +108,21 @@
     <ClCompile Include="AnimatorController.cpp">
       <Filter>editor</Filter>
     </ClCompile>
+    <ClCompile Include="EditorSuite_InputActions.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="InputActions.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EngineUpdate.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorSuite_ProjectScripts.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorSuite_Update.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
     <ClCompile Include="EditorSuite_Import.cpp">
       <Filter>editor</Filter>
     </ClCompile>
@@ -153,6 +168,12 @@
       <Filter>editor</Filter>
     </ClInclude>
     <ClInclude Include="Localization.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="InputActions.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="EngineUpdate.h">
       <Filter>editor</Filter>
     </ClInclude>
     <ClInclude Include="AnimatorController.h">

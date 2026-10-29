@@ -67,8 +67,12 @@ public:
 	/// Resolve the workspace/solution root directory containing GameScripts/GameScripts.vcxproj, or fallback to current/exe directory.
 	static std::filesystem::path ResolveWorkspaceRoot();
 
-	/// Resolve the canonical path to bin/Scripts/GameScripts.dll using the shared path definition.
-	static std::filesystem::path ResolveDllPath();
+	/// The DLL to load: the one set with SetDllPath (a project's scripts), else <workspace>/bin/Scripts/GameScripts.dll.
+	std::filesystem::path ResolveDllPath() const;
+
+	/// Switches to another GameScripts.dll (empty = workspace default). The next PollDllChanged reports it as changed.
+	void SetDllPath(const std::filesystem::path& dllPath);
+	const std::filesystem::path& GetDllPathOverride() const { return dllPathOverride_; }
 
 private:
 	void CleanupOldShadowCopies(const std::filesystem::path& shadowDir);
@@ -90,6 +94,7 @@ private:
 	std::vector<std::string> registeredNames_;
 	std::string lastLoadError_;
 	std::filesystem::path dllSourcePath_;
+	std::filesystem::path dllPathOverride_;
 	std::filesystem::path activeShadowPath_;
 	std::filesystem::file_time_type lastLoadedWriteTime_{};
 	bool hasLoadedWriteTime_ = false;

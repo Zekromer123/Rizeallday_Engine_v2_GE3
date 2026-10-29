@@ -43,10 +43,16 @@ std::filesystem::path ScriptModule::ResolveWorkspaceRoot() {
 	return !cwd.empty() ? cwd : std::filesystem::path(".");
 }
 
-std::filesystem::path ScriptModule::ResolveDllPath() {
+std::filesystem::path ScriptModule::ResolveDllPath() const {
 	std::error_code ec;
+	if (!dllPathOverride_.empty()) return std::filesystem::weakly_canonical(dllPathOverride_, ec);
 	std::filesystem::path root = ResolveWorkspaceRoot();
 	return std::filesystem::weakly_canonical(root / kScriptsDllSubpath, ec);
+}
+
+void ScriptModule::SetDllPath(const std::filesystem::path& dllPath) {
+	dllPathOverride_ = dllPath;
+	hasLoadedWriteTime_ = false;
 }
 
 void ScriptModule::CleanupOldShadowCopies(const std::filesystem::path& shadowDir) {

@@ -115,6 +115,19 @@ int EditorSuite::RepointAssetReferences(const std::string& from, const std::stri
 				++changed;
 			}
 		}
+		// Asset fields of data components (e.g. the Animator's controller)
+		for (const auto& entry : obj.components.Entries()) {
+			const ComponentInfo* info = ComponentRegistry::Get().Find(entry.name);
+			if (!info || !entry.data) continue;
+			for (const ComponentField& field : info->fields) {
+				if (field.type != ComponentFieldType::Asset) continue;
+				char* text = static_cast<char*>(entry.data->Data()) + field.offset;
+				if (repoint(std::string(text, strnlen(text, field.size)), moved)) {
+					strncpy_s(text, field.size, moved.c_str(), _TRUNCATE);
+					++changed;
+				}
+			}
+		}
 	}
 	if (repoint(skybox_.GetCubemapPath(), moved)) {
 		skybox_.SetCubemapPath(moved);
@@ -328,7 +341,7 @@ void EditorSuite::DrawProjectAndConsolePanel()
 						std::vector<std::filesystem::directory_entry> files;
 						for (const auto& entry : std::filesystem::directory_iterator(currentDirectory_)) {
 							std::string filename = entry.path().filename().string();
-							if (AssetDatabase::IsMetaFile(entry.path())) continue;
+							if (AssetDatabase::IsMetaFile(entry.path()) || entry.path().filename().native().starts_with(L'.')) continue; // .meta, .gitkeep
 							if (assetSearchBuf_[0] != '\0' && filename.find(assetSearchBuf_) == std::string::npos) continue;
 							if (entry.is_directory()) dirs.push_back(entry);
 							else files.push_back(entry);

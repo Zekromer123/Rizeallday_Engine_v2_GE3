@@ -464,6 +464,7 @@ void EditorSuite::Initialize(
 						}
 					}
 				}
+				SyncScriptModuleWithProject();
 				LoadScene(scenePath);
 #ifdef USE_IMGUI
 				// `--select <name>` / `--window animator|profiler|open-project`: open the editor in a given state (automated visual checks)
@@ -733,7 +734,7 @@ void EditorSuite::Update(float deltaTime, Input* input)
 				Quaternion worldRot = Quaternion::Identity();
 				Vector3 worldScale{};
 				GetWorldTRS(obj, worldPos, worldRot, worldScale);
-				gameCamera_->translation = worldPos;
+				gameCamera_->translation = worldPos + CameraShakeOffset();
 				// Roots keep their exact Euler angles; children derive Euler from the world rotation
 				gameCamera_->rotation = (obj.parentId == -1) ? obj.rotation : worldRot.ToEuler();
 				gameCamera_->fovY = obj.fov * 3.14159265f / 180.0f;
@@ -832,7 +833,18 @@ void EditorSuite::Update(float deltaTime, Input* input)
 	stepSingleFrame_ = false;
 
 	// Game time: scripts, physics and animations see deltaTime * timeScale (0 = paused, e.g. a level-up menu)
-	const float gameDeltaTime = advancePlayFrame ? deltaTime * timeScale_ : deltaTime;
+	float gameDeltaTime = advancePlayFrame ? deltaTime * timeScale_ : deltaTime;
+	if (advancePlayFrame) {
+		// Camera shake and hitstop run on real time, so a hitstop can still shake the frozen frame
+		if (shakeLeft_ > 0.0f) {
+			shakeLeft_ = (std::max)(0.0f, shakeLeft_ - deltaTime);
+			shakeTime_ += deltaTime;
+		}
+		if (hitstopLeft_ > 0.0f) {
+			hitstopLeft_ -= deltaTime;
+			gameDeltaTime = 0.0f;
+		}
+	}
 	if (advancePlayFrame) {
 		currentDeltaTime_ = gameDeltaTime;
 		gameTime_ += gameDeltaTime;
@@ -842,7 +854,7 @@ void EditorSuite::Update(float deltaTime, Input* input)
 
 	if (advancePlayFrame || (sceneState_ == EditorSceneState::Edit && simulatePhysicsInEditMode_)) {
 		RIZE_PROFILE_CPU("Physics");
-		UpdatePhysics(gameDeltaTime);
+		StepPhysics(gameDeltaTime); // fixed 60 Hz steps, independent of the frame rate
 	}
 
 	// Skeletal animation runs on game time: scaled by timeScale, frozen while paused (Step advances one frame)
@@ -860,6 +872,10 @@ void EditorSuite::Update(float deltaTime, Input* input)
 
 	// LoadScene() from a script: swap scenes between frames, never inside a script callback
 	ProcessPendingSceneLoad();
+
+	// Action states of this frame, for IsActionTriggered / IsActionReleased next frame
+	GetInputActions();
+	inputActions_.EndFrame(InputSource());
 }
 
 void EditorSuite::LogMessage(const std::string& msg, int logType)

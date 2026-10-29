@@ -2,6 +2,7 @@
 #include "scene/EditorScene.h"
 #include "scene/TitleScene.h"
 #include "EditorSuite.h"
+#include "base/EngineVersion.h"
 #include <cstring>
 #include <filesystem>
 #include <format>
@@ -16,7 +17,7 @@ void EditorApp::Initialize() {
 	}
 
 	// 1. Initialize Engine & Framework Services
-	windowTitle_ = "Rizeallday Engine v2";
+	windowTitle_ = std::string("Rizeallday Engine ") + kEngineVersion;
 	windowWidth_ = 1280;
 	windowHeight_ = 720;
 	Framework::Initialize();

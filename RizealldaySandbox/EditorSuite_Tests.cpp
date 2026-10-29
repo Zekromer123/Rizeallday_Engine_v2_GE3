@@ -10,6 +10,8 @@
 #include "base/DirectXCommon.h"
 #include "3d/Object3d.h"
 #include "3d/AnimationPlayer.h"
+#include "EngineUpdate.h"
+#include "base/EngineVersion.h"
 #include <random>
 #include <set>
 
@@ -38,6 +40,7 @@ struct EditorSuiteTestAccess {
 		return (it != s.scriptObjectViews_.end()) ? it->second.get() : nullptr;
 	}
 	static void Physics(EditorSuite& s, float dt) { s.UpdatePhysics(dt); }
+	static double& PhysicsAccumulator(EditorSuite& s) { return s.physicsAccumulator_; }
 	static EditorSuite::CollisionEventCounts CollisionEvents(const EditorSuite& s) { return s.lastCollisionEvents_; }
 	static uint32_t MusicVoice(const EditorSuite& s) { return s.musicVoice_; }
 	static void RemoveComponent(EditorSuite& s, uint32_t objectId, Kind kind)
@@ -46,6 +49,9 @@ struct EditorSuiteTestAccess {
 	}
 	static std::filesystem::path TempRoot() { return std::filesystem::temp_directory_path() / "RizealldayTests"; }
 	static void Run(EditorSuite& s, bool running) { s.isRunningTests_ = running; }
+	static void SyncScripts(EditorSuite& s) { s.SyncScriptModuleWithProject(); }
+	static const std::filesystem::path& ScriptsDllOverride(EditorSuite& s) { return s.scriptModule_.GetDllPathOverride(); }
+	static const std::string& EngineWarning(EditorSuite& s) { return s.projectEngineWarning_; }
 	static void Log(EditorSuite& s, const std::string& text, int type) { s.LogMessage(text, type); }
 	static void PrepareForTest(EditorSuite& s)
 	{
@@ -641,6 +647,189 @@ TEST_CASE(Project, CreateProjectRules)
 
 	A::ProjectRoot(s) = savedRoot;
 	A::CurrentDirectory(s) = savedDirectory;
+	A::SyncScripts(s);
+}
+
+TEST_CASE(Version, CompareAndProjectWarning)
+{
+	namespace fs = std::filesystem;
+	CHECK(CompareEngineVersions("2.1.0", "2.1.0") == 0);
+	CHECK(CompareEngineVersions("2.1", "2.1.0") == 0);
+	CHECK(CompareEngineVersions("v2.0", "2.1.0") < 0);
+	CHECK(CompareEngineVersions("2.10.0", "2.9.0") > 0);
+	CHECK(CompareEngineVersions("2.1.1-beta", "2.1.0") > 0);
+	CHECK(CompareEngineVersions("", "2.1.0") < 0);
+
+	const fs::path savedRoot = A::ProjectRoot(s);
+	const fs::path savedDirectory = A::CurrentDirectory(s);
+	const fs::path root = A::TempRoot() / "VersionProject";
+	std::error_code ec;
+	fs::remove_all(root, ec);
+	fs::create_directories(root / "ProjectSettings", ec);
+	fs::create_directories(root / "Assets" / "Scenes", ec);
+	auto writeVersion = [&](const char* version) {
+		std::ofstream(root / "ProjectSettings" / "project.json") << "{\"projectName\":\"V\",\"engineVersion\":\"" << version << "\"}";
+	};
+	writeVersion("99.0.0");
+	CHECK(s.OpenProject(root.string()));
+	CHECK_MSG(!A::EngineWarning(s).empty(), "a project from a newer engine must warn");
+	writeVersion(kEngineVersion);
+	CHECK(s.OpenProject(root.string()));
+	CHECK(A::EngineWarning(s).empty());
+
+	A::ProjectRoot(s) = savedRoot;
+	A::CurrentDirectory(s) = savedDirectory;
+	A::SyncScripts(s);
+}
+
+TEST_CASE(Project, NewProjectIsCleanForGit)
+{
+	namespace fs = std::filesystem;
+	const fs::path parent = A::TempRoot() / "GitProjects";
+	std::error_code ec;
+	fs::remove_all(parent, ec);
+	fs::create_directories(parent, ec);
+	const fs::path savedRoot = A::ProjectRoot(s);
+	const fs::path savedDirectory = A::CurrentDirectory(s);
+
+	const bool created = s.CreateNewProject(parent.string(), "CleanGame");
+	CHECK(created);
+	const fs::path root = parent / "CleanGame";
+	if (created) {
+		auto read = [](const fs::path& file) {
+			std::ifstream in(file, std::ios::binary);
+			return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+		};
+		// Repository files
+		const std::string gitignore = read(root / ".gitignore");
+		for (const char* entry : { "Library/", "Build/", "SaveData/", ".vs/", "GameScripts/RizeEngine.props" }) {
+			CHECK_MSG(gitignore.find(entry) != std::string::npos, entry);
+		}
+		CHECK(fs::exists(root / ".gitattributes"));
+		CHECK(fs::exists(root / "README.md"));
+		CHECK(fs::exists(root / "Assets" / "Prefabs" / ".gitkeep"));
+		CHECK_MSG(!fs::exists(root / "Assets" / "Prefabs" / ".gitkeep.meta"), "dot files get no GUID");
+		// No sample assets, no unused Assets/Scripts
+		CHECK(!fs::exists(root / "Assets" / "Scripts"));
+		CHECK(!fs::exists(root / "Assets" / "Textures" / "circle.png"));
+
+		// Its own scripts project, built into Library/ and loaded from there
+		CHECK(fs::exists(root / "GameScripts" / "GameScripts.vcxproj"));
+		CHECK(fs::exists(root / "GameScripts" / "Scripts" / "dllmain.cpp"));
+		CHECK(fs::exists(root / "CleanGame.sln"));
+		CHECK(s.ProjectScriptsDir() == root / "GameScripts");
+		CHECK(s.ResolveGameScriptsVcxproj() == root / "GameScripts" / "GameScripts.vcxproj");
+		CHECK(s.ResolveSolutionFilePath().filename() == "CleanGame.sln");
+		CHECK_MSG(A::ScriptsDllOverride(s) == root / "Library" / "Scripts" / "GameScripts.dll", A::ScriptsDllOverride(s).string());
+
+		// The per-PC props points at a real SDK; nothing committed holds an absolute path of this PC
+		const std::string props = read(root / "GameScripts" / "RizeEngine.props");
+		const fs::path sdk = EditorSuite::ResolveEngineSdkDir();
+		CHECK(fs::exists(sdk / "base" / "ScriptAPI.h"));
+		CHECK_MSG(props.find(sdk.string()) != std::string::npos, props);
+		for (auto it = fs::recursive_directory_iterator(root, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+			const fs::path rel = it->path().lexically_relative(root);
+			if (!it->is_regular_file() || rel == fs::path("GameScripts") / "RizeEngine.props" || rel.begin()->string() == "Library") continue;
+			const std::string text = read(it->path());
+			CHECK_MSG(text.find(root.string()) == std::string::npos && text.find(sdk.string()) == std::string::npos, rel.string());
+		}
+
+		// Sample scripts are copied into the project and registered once
+		CHECK(s.InstallSampleScripts("Survivors"));
+		CHECK(s.InstallSampleScripts("Survivors"));
+		CHECK(fs::exists(root / "GameScripts" / "Scripts" / "SurvivorsPlayer.cpp"));
+		const std::string vcxproj = read(root / "GameScripts" / "GameScripts.vcxproj");
+		const size_t first = vcxproj.find("Scripts\\SurvivorsPlayer.cpp");
+		CHECK(first != std::string::npos);
+		CHECK(vcxproj.find("Scripts\\SurvivorsPlayer.cpp", first + 1) == std::string::npos);
+		CHECK(vcxproj.find("Scripts\\SurvivorsShared.h") != std::string::npos);
+		CHECK(read(root / "GameScripts" / "GameScripts.vcxproj.filters").find("Scripts\\SurvivorsPlayer.h") != std::string::npos);
+	}
+
+	A::ProjectRoot(s) = savedRoot;
+	A::CurrentDirectory(s) = savedDirectory;
+	A::SyncScripts(s);
+	CHECK(A::ScriptsDllOverride(s).empty());
+}
+
+TEST_CASE(Update, ApplyReplacesOnlyEngineFolders)
+{
+	namespace fs = std::filesystem;
+	const fs::path base = A::TempRoot() / "UpdateApply";
+	std::error_code ec;
+	fs::remove_all(base, ec);
+	const fs::path install = base / "Engine";
+	const fs::path package = base / "Extracted" / "RizealldayEngine-9.0.0";
+	auto write = [](const fs::path& file, const std::string& text) {
+		std::error_code wec;
+		fs::create_directories(file.parent_path(), wec);
+		std::ofstream(file, std::ios::binary) << text;
+	};
+	write(install / "engine.json", "{\"version\":\"1.0.0\",\"scriptApi\":1}");
+	write(install / "Editor" / "old.txt", "old");
+	write(install / "Editor" / "imgui.ini", "layout");
+	write(install / "SDK" / "include" / "a.h", "a");
+	write(install / "MyGame" / "keep.txt", "game");
+	write(install / "notes.txt", "user");
+	write(package / "engine.json", "{\"version\":\"9.0.0\",\"scriptApi\":7}");
+	write(package / "Editor" / "new.txt", "new");
+	write(package / "SDK" / "include" / "b.h", "b");
+	write(package / "Templates" / "t.txt", "t");
+
+	CHECK(EngineUpdate::FindInstallRoot(install / "Editor") == install);
+	CHECK(EngineUpdate::FindInstallRoot(install / "MyGame").empty());
+	const auto info = EngineUpdate::FindPackage(base / "Extracted"); // one folder deep, like a zip
+	CHECK(info.has_value());
+	if (info) {
+		CHECK(info->root == package);
+		CHECK(info->version == "9.0.0");
+		CHECK(info->scriptApi == 7);
+	}
+
+	std::string error;
+	CHECK_MSG(EngineUpdate::ApplyPackage(package, install, &error), error);
+	CHECK(fs::exists(install / "Editor" / "new.txt"));
+	CHECK(!fs::exists(install / "Editor" / "old.txt"));
+	CHECK_MSG(fs::exists(install / "Editor" / "imgui.ini"), "the docking layout survives an update");
+	CHECK(fs::exists(install / "SDK" / "include" / "b.h"));
+	CHECK(!fs::exists(install / "SDK" / "include" / "a.h"));
+	CHECK(fs::exists(install / "Templates" / "t.txt"));
+	CHECK(fs::exists(install / "MyGame" / "keep.txt"));
+	CHECK(fs::exists(install / "notes.txt"));
+	const auto installed = EngineUpdate::FindPackage(install);
+	CHECK(installed && installed->version == "9.0.0");
+	for (const auto& entry : fs::directory_iterator(install, ec)) {
+		const std::string name = entry.path().filename().string();
+		CHECK_MSG(!name.ends_with(".new") && !name.ends_with(".old"), name);
+	}
+}
+
+TEST_CASE(Update, DetectsEnginePackageZip)
+{
+	namespace fs = std::filesystem;
+	const fs::path base = A::TempRoot() / "UpdateZip";
+	std::error_code ec;
+	fs::remove_all(base, ec);
+	fs::create_directories(base / "pkg" / "RizealldayEngine-9.0.0" / "Editor", ec);
+	fs::create_directories(base / "assets", ec);
+	std::ofstream(base / "pkg" / "RizealldayEngine-9.0.0" / "engine.json") << "{\"version\":\"9.0.0\"}";
+	std::ofstream(base / "pkg" / "RizealldayEngine-9.0.0" / "Editor" / "x.txt") << "x";
+	std::ofstream(base / "assets" / "rock.png") << "png";
+
+	// Same tool and format as Tools/MakeRelease.ps1
+	auto zip = [&](const fs::path& dir, const wchar_t* entry, const fs::path& out) {
+		return EngineUpdate::RunHiddenProcess(L"tar.exe -a -c -f \"" + out.wstring() + L"\" " + entry, dir, nullptr) == 0;
+	};
+	CHECK(zip(base / "pkg", L"RizealldayEngine-9.0.0", base / "engine.zip"));
+	CHECK(zip(base / "assets", L"rock.png", base / "assets.zip"));
+	CHECK(EngineUpdate::ZipIsEnginePackage(base / "engine.zip"));
+	CHECK(!EngineUpdate::ZipIsEnginePackage(base / "assets.zip"));
+
+	std::string error;
+	CHECK_MSG(EngineUpdate::ExtractZip(base / "engine.zip", base / "out", &error), error);
+	const auto info = EngineUpdate::FindPackage(base / "out");
+	CHECK(info && info->version == "9.0.0");
+	CHECK(fs::exists(base / "out" / "RizealldayEngine-9.0.0" / "Editor" / "x.txt"));
 }
 
 // ===========================================================================
@@ -1004,6 +1193,275 @@ TEST_CASE(Scripting, TimeScaleScalesGameTime)
 	CHECK(!api.isMouseDown(api.hostContext, 0));
 	CHECK(!api.isPadConnected(api.hostContext, 7));
 	CHECK_NEAR(api.getPadTrigger(api.hostContext, 1, 9), 0.0f, 1e-6f);
+}
+
+TEST_CASE(GameFeel, HitstopFreezesGameTimeThenResumes)
+{
+	EngineAPI& api = A::Api(s);
+	REQUIRE(api.hitstop != nullptr);
+	A::State(s) = EditorSceneState::Play;
+	A::GameTime(s) = 0.0;
+	api.setTimeScale(api.hostContext, 0.5f);
+
+	api.hitstop(api.hostContext, 0.12f);
+	s.Update(0.05f, RizeEngine::GetInput());
+	CHECK_NEAR(api.getDeltaTime(api.hostContext), 0.0f, 1e-6f); // frozen
+	s.Update(0.05f, RizeEngine::GetInput());
+	CHECK_NEAR(api.getTime(api.hostContext), 0.0f, 1e-6f);
+	CHECK_NEAR(api.getTimeScale(api.hostContext), 0.5f, 1e-6f); // the script's time scale is untouched
+	s.Update(0.05f, RizeEngine::GetInput()); // 0.15 s real time > 0.12 s: running again
+	s.Update(0.1f, RizeEngine::GetInput());
+	CHECK_NEAR(api.getDeltaTime(api.hostContext), 0.05f, 1e-5f);
+
+	// A shorter hitstop does not cut a longer one short; invalid values are ignored
+	api.hitstop(api.hostContext, 0.3f);
+	api.hitstop(api.hostContext, 0.05f);
+	api.hitstop(api.hostContext, -1.0f);
+	s.Update(0.1f, RizeEngine::GetInput());
+	s.Update(0.1f, RizeEngine::GetInput());
+	CHECK_NEAR(api.getDeltaTime(api.hostContext), 0.0f, 1e-6f);
+	api.setTimeScale(api.hostContext, 1.0f);
+	A::State(s) = EditorSceneState::Edit;
+}
+
+TEST_CASE(GameFeel, CameraShakeDecaysToZero)
+{
+	EngineAPI& api = A::Api(s);
+	REQUIRE(api.shakeCamera != nullptr);
+	A::State(s) = EditorSceneState::Play;
+	auto length = [](const Vector3& v) { return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z); };
+	CHECK(length(s.CameraShakeOffset()) == 0.0f);
+
+	api.shakeCamera(api.hostContext, 0.5f, 1.0f);
+	s.Update(0.1f, RizeEngine::GetInput());
+	const Vector3 early = s.CameraShakeOffset();
+	CHECK(length(early) > 0.0f);
+	CHECK(std::fabs(early.x) <= 0.5f && std::fabs(early.y) <= 0.5f && std::fabs(early.z) <= 0.5f);
+
+	// Shakes overlap: a weak one while a strong one runs keeps the strong amplitude
+	api.shakeCamera(api.hostContext, 0.1f, 0.2f);
+	CHECK_NEAR(s.CameraShakeStrength(), 0.5f * 0.9f, 1e-4f);
+
+	// Shaking also runs during a hitstop (real time), and stops completely at the end
+	api.hitstop(api.hostContext, 0.5f);
+	s.Update(0.6f, RizeEngine::GetInput());
+	s.Update(0.4f, RizeEngine::GetInput());
+	CHECK(length(s.CameraShakeOffset()) == 0.0f);
+	api.shakeCamera(api.hostContext, std::nanf(""), 1.0f);
+	s.Update(0.1f, RizeEngine::GetInput());
+	CHECK(length(s.CameraShakeOffset()) == 0.0f);
+	A::State(s) = EditorSceneState::Edit;
+}
+
+TEST_CASE(Physics, BoxColliderFitsScaledModel)
+{
+	// A Mixamo character at scale 0.01 (centimetres): the default 1x1x1 box would be 1 cm; fitted it wraps the body
+	GameObject& hero = s.CreateGameObject("Hero", GameObjectType::Cube);
+	hero.hasMesh = true;
+	hero.meshType = GameObject::MeshType::CustomModel;
+	hero.modelPath = "Resources/Model/Idle.fbx";
+	hero.translation = { 2.0f, 50.0f, 0.0f };
+	hero.scale = { 0.01f, 0.01f, 0.01f };
+	hero.hasBoxCollider = true;
+	const uint32_t id = hero.id;
+	REQUIRE(s.FitBoxColliderToMesh(hero));
+
+	Vector3 mn{}, mx{};
+	s.ComputeBoxColliderBounds(*s.FindGameObjectById(id, false), true, mn, mx);
+	const float height = mx.y - mn.y;
+	CHECK_MSG(height > 1.2f && height < 2.5f, std::format("height {:.3f}", height)); // a human, in metres
+	CHECK_NEAR(mn.y, 50.0f, 0.15f);                                                 // feet at the object's origin
+	CHECK(mn.x < 2.0f && mx.x > 2.0f);                                              // centred on the object
+
+	// Primitives and missing models keep their collider
+	GameObject& cube = s.CreateCube("Plain", { 0.0f, 50.0f, 0.0f });
+	CHECK(!s.FitBoxColliderToMesh(cube));
+	CHECK_NEAR(cube.boxSize.x, 1.0f, 1e-6f);
+}
+
+TEST_CASE(Physics, FixedTimestepIsFrameRateIndependent)
+{
+	// Steps: 60 Hz whatever the frame rate; a long frame is capped instead of running hundreds of steps
+	CHECK(s.StepPhysics(1.0f / 30.0f) == 2);
+	CHECK(s.StepPhysics(1.0f / 120.0f) == 0);
+	CHECK(s.StepPhysics(1.0f / 120.0f) == 1);
+	CHECK(s.StepPhysics(2.0f) == EditorSuite::kMaxPhysicsSteps);
+	CHECK(s.StepPhysics(0.0f) == 0); // the dropped time is not carried over
+
+	// A falling rigidbody ends at the same height at 30 FPS and at 144 FPS
+	auto fallFor = [&](float frameDt, int frames) {
+		s.NewScene();
+		GameObject& box = s.CreateCube("Faller", { 0.0f, 100.0f, 0.0f });
+		box.hasRigidbody = true;
+		box.useGravity = true;
+		const uint32_t id = box.id;
+		A::PhysicsAccumulator(s) = 0.0;
+		for (int i = 0; i < frames; ++i) s.StepPhysics(frameDt);
+		return s.FindGameObjectById(id, false)->translation.y;
+	};
+	// 1/32 s and 1/128 s are exact in binary, so both runs cover exactly 1.03125 s (= 61 steps, away from a step boundary)
+	const float slow = fallFor(1.0f / 32.0f, 33);
+	const float fast = fallFor(1.0f / 128.0f, 132);
+	CHECK(slow < 99.0f); // it did fall
+	CHECK_NEAR(slow, fast, 1e-4f);
+}
+
+TEST_CASE(GameFeel, ScriptTimersAndCooldown)
+{
+	// Cooldown: usable at start, then blocked for `duration`
+	Cooldown fire(0.5f);
+	CHECK(fire.TryUse());
+	CHECK(!fire.TryUse());
+	fire.Tick(0.3f);
+	CHECK(!fire.Ready());
+	fire.Tick(0.2f);
+	CHECK(fire.TryUse());
+
+	TimerQueue timers;
+	std::vector<std::string> log;
+	timers.After(0.2f, [&] { log.push_back("once"); });
+	const int every = timers.Every(0.1f, [&] { log.push_back("tick"); });
+	timers.Tick(0.05f);
+	CHECK(log.empty());
+	timers.Tick(0.05f); // t = 0.10
+	CHECK(log == std::vector<std::string>{ "tick" });
+	timers.Tick(0.25f); // t = 0.35: two more ticks (one long frame catches up) and the one-shot
+	CHECK(std::count(log.begin(), log.end(), "tick") == 3);
+	CHECK(std::count(log.begin(), log.end(), "once") == 1);
+	CHECK(timers.Count() == 1); // the one-shot is gone, the repeating one stays
+	timers.Cancel(every);
+	timers.Tick(1.0f);
+	CHECK(std::count(log.begin(), log.end(), "tick") == 3);
+	CHECK(timers.Count() == 0);
+
+	// Callbacks may add and cancel timers while the queue is ticking
+	int chained = 0;
+	int self = 0;
+	self = timers.Every(0.1f, [&] {
+		++chained;
+		timers.Cancel(self);                          // stops itself
+		timers.After(0.1f, [&] { chained += 10; });   // runs on a later tick, not inside this one
+	});
+	timers.Tick(0.1f);
+	CHECK(chained == 1);
+	timers.Tick(0.1f);
+	CHECK(chained == 11);
+	CHECK(timers.Count() == 0);
+
+	// Zero / negative / NaN intervals never loop forever
+	timers.Every(0.0f, [&] { ++chained; });
+	timers.After(std::nanf(""), [&] { ++chained; });
+	timers.Tick(0.1f);
+	CHECK(chained == 13); // each fires once
+	timers.Clear();
+	CHECK(timers.Count() == 0);
+}
+
+// ===========================================================================
+// Input actions
+// ===========================================================================
+
+namespace {
+	/// Fake keyboard / mouse / pad for InputActions
+	struct FakeInput {
+		std::set<int> keys, prevKeys, mouse, pad;
+		Vector2 leftStick{ 0, 0 };
+		InputActions::Source Source()
+		{
+			InputActions::Source src;
+			src.keyDown = [this](int k) { return keys.count(k) > 0; };
+			src.mouseDown = [this](int b) { return mouse.count(b) > 0; };
+			src.padDown = [this](int b) { return pad.count(b) > 0; };
+			src.padAxis = [this](int axis) { return axis == static_cast<int>(InputBinding::Axis::LeftX) ? leftStick.x : axis == static_cast<int>(InputBinding::Axis::LeftY) ? leftStick.y : 0.0f; };
+			return src;
+		}
+	};
+}
+
+TEST_CASE(Input, ActionsMapKeysPadAndAxes)
+{
+	InputActions actions = InputActions::Defaults();
+	FakeInput in;
+	const auto src = in.Source();
+
+	CHECK(!actions.IsDown("Jump", src));
+	in.keys.insert(KEY_SPACE);
+	CHECK(actions.IsDown("Jump", src));
+	CHECK(actions.IsTriggered("Jump", src)); // first frame down
+	actions.EndFrame(src);
+	CHECK(!actions.IsTriggered("Jump", src)); // held
+	in.keys.clear();
+	in.pad.insert(PAD_A);                     // the same action from the gamepad
+	CHECK(actions.IsDown("Jump", src));
+	actions.EndFrame(src);
+	in.pad.clear();
+	CHECK(actions.IsReleased("Jump", src));
+
+	// Axes: keys give -1 / +1, the stick its analog value, the sum is clamped
+	CHECK_NEAR(actions.GetAxis("MoveX", src), 0.0f, 1e-6f);
+	in.keys.insert(KEY_D);
+	CHECK_NEAR(actions.GetAxis("MoveX", src), 1.0f, 1e-6f);
+	in.keys.insert(KEY_A);
+	CHECK_NEAR(actions.GetAxis("MoveX", src), 0.0f, 1e-6f); // both keys cancel out
+	in.keys.clear();
+	in.leftStick = { -0.4f, 0.8f };
+	CHECK_NEAR(actions.GetAxis("MoveX", src), -0.4f, 1e-6f);
+	CHECK_NEAR(actions.GetAxis("MoveY", src), 0.8f, 1e-6f);
+	in.keys.insert(KEY_W);
+	CHECK_NEAR(actions.GetAxis("MoveY", src), 1.0f, 1e-6f); // clamped
+	in.leftStick = { 0.1f, 0.0f };
+	CHECK_NEAR(actions.GetAxis("MoveX", src), 0.0f, 1e-6f);  // inside the dead zone
+	in.leftStick = { 0.0f, 0.0f };
+	in.keys.clear();
+
+	// Mouse buttons, unknown actions
+	in.mouse.insert(0);
+	CHECK(actions.IsDown("Attack", src));
+	CHECK(!actions.IsDown("NoSuchAction", src));
+	CHECK(actions.GetAxis("NoSuchAction", src) == 0.0f);
+}
+
+TEST_CASE(Input, RebindSaveAndLoad)
+{
+	InputActions actions = InputActions::Defaults();
+	FakeInput in;
+	const auto src = in.Source();
+	// Rebind Jump to K only, add a new action
+	actions.Find("Jump")->bindings = { InputBinding::Key(KEY_K) };
+	actions.Add("Dash").bindings = { InputBinding::Key(KEY_LSHIFT), InputBinding::Pad(PAD_RB) };
+
+	const std::string json = actions.ToJson();
+	std::string error;
+	auto loaded = InputActions::FromJson(json, &error);
+	CHECK_MSG(loaded.has_value(), error);
+	REQUIRE(loaded.has_value());
+	CHECK(loaded->ToJson() == json);
+	in.keys.insert(KEY_SPACE);
+	CHECK(!loaded->IsDown("Jump", src)); // Space no longer jumps
+	in.keys = { KEY_K };
+	CHECK(loaded->IsDown("Jump", src));
+	in.keys = { KEY_LSHIFT };
+	CHECK(loaded->IsDown("Dash", src));
+	CHECK(!InputActions::FromJson("{ broken", nullptr).has_value());
+
+	// Per project: ProjectSettings/input.json overrides the defaults, a missing file means defaults
+	const std::filesystem::path root = A::TempRoot() / "InputProject";
+	std::error_code ec;
+	std::filesystem::create_directories(root / "ProjectSettings", ec);
+	A::ProjectRoot(s) = root;
+	s.ReloadInputActions();
+	CHECK(s.GetInputActions().Find("Jump") != nullptr);
+	CHECK(s.GetInputActions().Find("Dash") == nullptr);
+	REQUIRE(s.SaveInputActions(*loaded));
+	CHECK(std::filesystem::exists(root / "ProjectSettings" / "input.json"));
+	s.ReloadInputActions();
+	CHECK(s.GetInputActions().Find("Dash") != nullptr);
+
+	// Scripts see the project's map
+	EngineAPI& api = A::Api(s);
+	REQUIRE(api.isActionDown != nullptr && api.getAxis != nullptr && api.isActionTriggered != nullptr);
+	CHECK(!api.isActionDown(api.hostContext, "Dash"));
+	CHECK(api.getAxis(api.hostContext, "MoveX") == 0.0f);
 }
 
 // ===========================================================================
@@ -1825,6 +2283,23 @@ TEST_CASE(Assets, GuidSurvivesRenameAndFolderMove)
 	CHECK(std::filesystem::exists(root / "Assets/Art/Textures/brick.png"));
 }
 
+TEST_CASE(Assets, RenameRepointsDataComponentAssetFields)
+{
+	// The Animator's controller is a ComponentFieldType::Asset field: a rename in the Project panel must follow it
+	A::ProjectRoot(s) = A::TempRoot() / "AssetFieldProject";
+	const std::string path = s.CreateAnimatorControllerAsset("Hero");
+	REQUIRE(path == "Assets/Animators/Hero.animator.json");
+	GameObject& hero = s.CreateGameObject("Hero", GameObjectType::Empty);
+	const uint32_t id = hero.id;
+	REQUIRE(s.AddComponentByName(hero, "Animator"));
+	strncpy_s(s.GetAnimator(*s.FindGameObjectById(id, false))->controller, path.c_str(), _TRUNCATE);
+
+	REQUIRE(s.MoveAssetAndUpdateReferences(path, "Assets/Animators/Player.animator.json"));
+	CHECK(std::string(s.GetAnimator(*s.FindGameObjectById(id, false))->controller) == "Assets/Animators/Player.animator.json");
+	REQUIRE(s.MoveAssetAndUpdateReferences("Assets/Animators", "Assets/Characters"));
+	CHECK(std::string(s.GetAnimator(*s.FindGameObjectById(id, false))->controller) == "Assets/Characters/Player.animator.json");
+}
+
 TEST_CASE(Assets, PrefabFoundAfterMove)
 {
 	const std::filesystem::path root = A::TempRoot() / "AssetPrefabProject";
@@ -2536,6 +3011,7 @@ int EditorSuite::RunSelfTests(const std::string& filter)
 	currentProjectRoot_ = savedProjectRoot;
 	currentDirectory_ = savedDirectory;
 	sSessionProjectRoot_ = savedSessionRoot;
+	SyncScriptModuleWithProject(); // back to the scripts of the project that was open before the tests
 	NewScene();
 	isRunningTests_ = false;
 

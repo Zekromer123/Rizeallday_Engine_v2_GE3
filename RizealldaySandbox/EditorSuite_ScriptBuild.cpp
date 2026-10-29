@@ -135,51 +135,7 @@ bool EditorSuite::GenerateCppScriptFiles(const std::string& className, const std
 		cpp.close();
 	}
 
-	// Register the new script files in GameScripts.vcxproj and GameScripts.vcxproj.filters under the Scripts filter
-	{
-		std::filesystem::path vcxprojPath = ResolveGameScriptsVcxproj();
-		std::filesystem::path filtersPath = vcxprojPath.string() + ".filters";
-		std::string relCpp = "Scripts\\" + className + ".cpp";
-		std::string relH = "Scripts\\" + className + ".h";
-
-		auto insertBeforeToken = [](const std::filesystem::path& file, const std::string& checkSubstr, const std::string& anchor, const std::string& insertion) {
-			std::ifstream in(file);
-			if (!in.is_open()) return;
-			std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-			in.close();
-			if (content.find(checkSubstr) != std::string::npos) return;
-			size_t pos = content.find(anchor);
-			if (pos != std::string::npos) {
-				content.insert(pos, insertion);
-				std::ofstream out(file, std::ios::trunc);
-				if (out.is_open()) {
-					out << content;
-				}
-			}
-		};
-
-		insertBeforeToken(
-			vcxprojPath,
-			relCpp,
-			"    <ClCompile Include=\"Scripts\\dllmain.cpp\" />",
-			"    <ClCompile Include=\"" + relCpp + "\" />\n");
-		insertBeforeToken(
-			vcxprojPath,
-			relH,
-			"    <ClInclude Include=\"..\\RizealldayEngine\\base\\ScriptAPI.h\" />",
-			"    <ClInclude Include=\"" + relH + "\" />\n");
-
-		insertBeforeToken(
-			filtersPath,
-			relCpp,
-			"    <ClCompile Include=\"Scripts\\dllmain.cpp\">",
-			"    <ClCompile Include=\"" + relCpp + "\">\n      <Filter>Scripts</Filter>\n    </ClCompile>\n");
-		insertBeforeToken(
-			filtersPath,
-			relH,
-			"    <ClInclude Include=\"..\\RizealldayEngine\\base\\ScriptAPI.h\">",
-			"    <ClInclude Include=\"" + relH + "\">\n      <Filter>Scripts</Filter>\n    </ClInclude>\n");
-	}
+	AddScriptFilesToVcxproj({ className });
 
 	LogMessage(std::format("[Scripts] Created {}.h and {}.cpp in {}", className, className, targetDir.string()), 0);
 
@@ -211,6 +167,7 @@ bool EditorSuite::GenerateCppScriptFiles(const std::string& className, const std
 
 std::filesystem::path EditorSuite::ResolveGameScriptsDir() const
 {
+	if (std::filesystem::path projectDir = ProjectScriptsDir(); !projectDir.empty()) return projectDir;
 	std::error_code ec;
 	std::filesystem::path dir = ScriptModule::ResolveWorkspaceRoot() / ScriptModule::kGameScriptsDirName;
 	if (std::filesystem::exists(dir, ec)) {
@@ -221,6 +178,7 @@ std::filesystem::path EditorSuite::ResolveGameScriptsDir() const
 
 std::filesystem::path EditorSuite::ResolveGameScriptsVcxproj() const
 {
+	if (std::filesystem::path projectDir = ProjectScriptsDir(); !projectDir.empty()) return projectDir / "GameScripts.vcxproj";
 	std::error_code ec;
 	std::filesystem::path vcxproj = ScriptModule::ResolveWorkspaceRoot() / ScriptModule::kGameScriptsVcxprojSubpath;
 	if (std::filesystem::exists(vcxproj, ec)) {
@@ -229,22 +187,19 @@ std::filesystem::path EditorSuite::ResolveGameScriptsVcxproj() const
 	return vcxproj;
 }
 
+/// The solution next to the scripts folder (*.slnx preferred, then *.sln): the engine solution or <Project>.sln
 std::filesystem::path EditorSuite::ResolveSolutionFilePath() const
 {
 	std::error_code ec;
-	std::filesystem::path vcxproj = ResolveGameScriptsVcxproj();
-	std::filesystem::path rootDir = vcxproj.parent_path().parent_path();
-	if (std::filesystem::exists(rootDir, ec)) {
-		for (const auto& entry : std::filesystem::directory_iterator(rootDir, ec)) {
-			if (entry.is_regular_file()) {
-				auto ext = entry.path().extension().string();
-				if (ext == ".slnx" || ext == ".sln") {
-					return std::filesystem::canonical(entry.path(), ec);
-				}
-			}
-		}
+	const std::filesystem::path rootDir = ResolveGameScriptsVcxproj().parent_path().parent_path();
+	std::filesystem::path sln;
+	for (const auto& entry : std::filesystem::directory_iterator(rootDir, ec)) {
+		if (!entry.is_regular_file(ec)) continue;
+		const std::wstring ext = entry.path().extension().wstring();
+		if (ext == L".slnx") return entry.path();
+		if (ext == L".sln" && sln.empty()) sln = entry.path();
 	}
-	return {};
+	return sln;
 }
 
 std::string EditorSuite::ResolveMsBuildExe()
@@ -350,6 +305,7 @@ void EditorSuite::TriggerScriptBuild()
 		lastScriptBuildStatus_.store(2);
 		return;
 	}
+	EnsureProjectScriptsProps(); // a freshly cloned project has no props for this PC yet
 
 	isBuildingScripts_.store(true);
 	queuedScriptRebuild_.store(false);
@@ -624,20 +580,6 @@ namespace {
 		return opened;
 	}
 
-	/// The engine solution (*.slnx preferred, then *.sln) in the workspace root
-	std::filesystem::path FindEngineSolution()
-	{
-		std::error_code ec;
-		const std::filesystem::path root = ScriptModule::ResolveWorkspaceRoot();
-		std::filesystem::path sln;
-		for (const auto& entry : std::filesystem::directory_iterator(root, ec)) {
-			const std::wstring ext = entry.path().extension().wstring();
-			if (ext == L".slnx") return entry.path();
-			if (ext == L".sln" && sln.empty()) sln = entry.path();
-		}
-		return sln;
-	}
-
 	std::filesystem::path FindDevenv()
 	{
 		std::error_code ec;
@@ -651,7 +593,7 @@ namespace {
 	}
 }
 
-// Opens a script inside the engine solution, so IntelliSense knows the GameScripts include paths
+// Opens a script inside the scripts solution (engine or project), so IntelliSense knows the GameScripts include paths
 // (a file opened on its own lands in "Miscellaneous Files" and gets no completion for ScriptAPI.h).
 void EditorSuite::OpenFileInVisualStudio(const std::filesystem::path& filePath)
 {
@@ -664,7 +606,8 @@ void EditorSuite::OpenFileInVisualStudio(const std::filesystem::path& filePath)
 	std::filesystem::path absFile = std::filesystem::canonical(filePath, ec);
 	if (ec) absFile = std::filesystem::absolute(filePath, ec);
 
-	std::thread([this, absFile]() {
+	const std::filesystem::path solution = ResolveSolutionFilePath();
+	std::thread([this, absFile, solution]() {
 		auto logAsync = [this](const std::string& text, int type = 0) {
 			std::lock_guard<std::mutex> lock(buildLogMutex_);
 			pendingBuildLogs_.push_back({ text, type });
@@ -673,7 +616,6 @@ void EditorSuite::OpenFileInVisualStudio(const std::filesystem::path& filePath)
 
 		const HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 		const bool comInitialized = SUCCEEDED(hr);
-		const std::filesystem::path solution = FindEngineSolution();
 
 		// 1. A Visual Studio that already has the engine solution open
 		auto openInSolutionInstance = [&]() {

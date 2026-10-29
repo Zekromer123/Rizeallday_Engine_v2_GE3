@@ -1,16 +1,72 @@
 ﻿#include "EditorSuiteInternal.h"
 #include "SceneJson.h"
+#include "EngineUpdate.h"
+#include "base/EngineVersion.h"
 
 namespace {
 	/// Writes ProjectSettings/project.json (names are escaped by the JSON writer).
-	void WriteProjectSettingsFile(const std::filesystem::path& file, const std::string& projectName, const std::string& startupScene)
+	void WriteProjectSettingsFile(const std::filesystem::path& file, const std::string& projectName, const std::string& startupScene,
+		const std::string& gameTitle = {})
 	{
 		SceneJson::Json j = SceneJson::Json::object();
 		j["projectName"] = projectName;
-		j["engineVersion"] = "v2.0";
+		j["engineVersion"] = kEngineVersion;
 		j["startupScene"] = startupScene;
+		j["gameTitle"] = gameTitle.empty() ? projectName : gameTitle;
 		std::ofstream pj(file);
 		pj << SceneJson::DumpCompact(j);
+	}
+
+	void WriteFile(const std::filesystem::path& file, const std::string& text)
+	{
+		std::ofstream out(file, std::ios::binary | std::ios::trunc);
+		out << text;
+	}
+
+	/// Files that make a new project ready to push to its own git repository
+	void WriteProjectRepoFiles(const std::filesystem::path& root, const std::string& name)
+	{
+		WriteFile(root / ".gitignore",
+			"# Rizeallday project. Generated and per-PC files stay out of git.\n"
+			"Library/\n"
+			"Build/\n"
+			"SaveData/\n"
+			"logs/\n"
+			".vs/\n"
+			"*.user\n"
+			"imgui.ini\n"
+			"GameScripts/RizeEngine.props\n"
+			"GameScripts/x64/\n");
+		WriteFile(root / ".gitattributes",
+			"* text=auto\n"
+			"*.png binary\n*.jpg binary\n*.jpeg binary\n*.dds binary\n*.tga binary\n*.bmp binary\n"
+			"*.fbx binary\n*.glb binary\n*.bin binary\n"
+			"*.wav binary\n*.mp3 binary\n*.ogg binary\n*.m4a binary\n");
+		WriteFile(root / "README.md",
+			"# " + name + "\n\n"
+			"Game project for Rizeallday Engine " + kEngineVersion + ".\n\n"
+			"## Open\n"
+			"1. Start the engine editor (`Editor/RizealldaySandbox.exe` of the engine zip).\n"
+			"2. File > Open Project... and pick this folder. Scripts are built automatically (Visual Studio with C++ is required).\n\n"
+			"## Team rules\n"
+			"- Close the editor (or stop Play) before `git pull`.\n"
+			"- One person edits a scene at a time; shared parts go into prefabs.\n"
+			"- Commit the `.meta` files next to every asset.\n"
+			"- Scripts are in `GameScripts/Scripts`; open `" + name + ".sln` in Visual Studio.\n");
+	}
+
+	/// `git init` + first commit when git is installed. Returns a log line.
+	std::string InitGitRepository(const std::filesystem::path& root)
+	{
+		std::string output;
+		if (EngineUpdate::RunHiddenProcess(L"git init", root, &output) != 0) {
+			return "[Project] Git is not installed (or failed); skipped \"Initialize Git repository\".";
+		}
+		EngineUpdate::RunHiddenProcess(L"git add -A", root, &output);
+		if (EngineUpdate::RunHiddenProcess(L"git commit -q -m \"Initial project\"", root, &output) != 0) {
+			return "[Project] Git repository created; the first commit failed (set git user.name / user.email, then commit).";
+		}
+		return "[Project] Git repository created with a first commit. Add a remote and push: git remote add origin <url> && git push -u origin HEAD";
 	}
 }
 
@@ -85,32 +141,28 @@ bool EditorSuite::CreateNewProject(const std::string& parentFolder, const std::s
 			StopPlayMode();
 		}
 
-		// 3. Folder layout
-		std::filesystem::create_directories(projPath / "Assets" / "Scenes");
-		std::filesystem::create_directories(projPath / "Assets" / "Models");
-		std::filesystem::create_directories(projPath / "Assets" / "Textures");
-		std::filesystem::create_directories(projPath / "Assets" / "Audio");
-		std::filesystem::create_directories(projPath / "Assets" / "Scripts");
+		// 3. Folder layout (.gitkeep so git keeps the empty folders)
+		for (const char* folder : { "Scenes", "Models", "Textures", "Audio", "Prefabs", "Animators" }) {
+			std::filesystem::create_directories(projPath / "Assets" / folder);
+			if (std::string(folder) != "Scenes") WriteFile(projPath / "Assets" / folder / ".gitkeep", "");
+		}
 		std::filesystem::create_directories(projPath / "ProjectSettings");
 
 		// 4. ProjectSettings/project.json (scene path is relative to the project root)
 		const std::string startupSceneRel = "Assets/Scenes/SampleScene.scene.json";
-		{
-			WriteProjectSettingsFile(projPath / "ProjectSettings" / "project.json", name, startupSceneRel);
-		}
+		WriteProjectSettingsFile(projPath / "ProjectSettings" / "project.json", name, startupSceneRel);
 
-		// 5. Copy starter assets so the project folders are not empty
-		std::error_code ec;
-		if (std::filesystem::exists("Resources/circle.png")) {
-			std::filesystem::copy_file("Resources/circle.png", projPath / "Assets" / "Textures" / "circle.png", std::filesystem::copy_options::overwrite_existing, ec);
+		// 5. Its own scripts project (GameScripts/ + <name>.sln) and the git files
+		std::string scriptsError;
+		if (!CreateProjectScripts(projPath, name, &scriptsError)) {
+			LogMessage("[Project] " + scriptsError + " (the project uses the engine workspace scripts).", 1);
 		}
-		if (std::filesystem::exists("Resources/Model/cube.obj")) {
-			std::filesystem::copy_file("Resources/Model/cube.obj", projPath / "Assets" / "Models" / "cube.obj", std::filesystem::copy_options::overwrite_existing, ec);
-		}
+		WriteProjectRepoFiles(projPath, name);
 
 		// 6. Switch the editor to the new project *before* creating the scene so every path resolves inside it
 		currentProjectRoot_ = projPath;
 		currentDirectory_ = projPath / "Assets";
+		SyncScriptModuleWithProject();
 
 		// 7. Fresh default scene (Main Camera, Directional Light, Ground Plane) saved into the project
 		NewScene();
@@ -129,6 +181,9 @@ bool EditorSuite::CreateNewProject(const std::string& parentFolder, const std::s
 		strncpy_s(buildGameTitleBuf_, name.c_str(), sizeof(buildGameTitleBuf_) - 1);
 		sSessionProjectRoot_ = projPath;
 		AddRecentProject(projPath);
+		// .meta files first, so the first commit is complete
+		AssetDb().Refresh();
+		if (newProjectInitGit_ && !isRunningTests_) LogMessage(InitGitRepository(projPath), 0);
 
 		LogMessage(std::format("[Project] Created new project '{}' at: {}", name, projPath.string()), 0);
 		return true;
@@ -406,7 +461,9 @@ void EditorSuite::DrawProjectHub()
 		}
 		const std::filesystem::path previewPath = std::filesystem::path(projectFolderBuf_) / projectNameBuf_;
 		ImGui::TextWrapped("Will be created at: %s", previewPath.string().c_str());
-		ImGui::TextDisabled("Includes Assets/ folders, project settings and a default scene.");
+		ImGui::TextDisabled("Includes Assets/ folders, C++ scripts, project settings and a default scene.");
+		ImGui::Checkbox(TrId("Initialize Git repository"), &newProjectInitGit_);
+		ImGui::SetItemTooltip("%s", Tr("git init + first commit (needs Git). Then add a remote and push."));
 		ImGui::Spacing();
 		if (ImGui::Button("Create Project", ImVec2(-1.0f, 0.0f))) {
 			opened = CreateNewProject(projectFolderBuf_, projectNameBuf_);
@@ -460,17 +517,36 @@ bool EditorSuite::OpenProject(const std::string& folderPath)
 
 	std::string projectName = projPath.filename().string();
 	std::string startupScene = "Assets/Scenes/SampleScene.scene.json";
+	std::string gameTitle;
 
 	std::ifstream pj(projJsonPath);
 	if (pj.is_open()) {
 		std::stringstream buf;
 		buf << pj.rdbuf();
+		pj.close();
 		const std::string content = buf.str();
 
 		std::string parseError;
-		if (const auto settings = SceneJson::Parse(content, &parseError)) {
+		if (auto settings = SceneJson::Parse(content, &parseError)) {
 			SceneJson::Read(*settings, "projectName", projectName);
 			SceneJson::Read(*settings, "startupScene", startupScene);
+			SceneJson::Read(*settings, "gameTitle", gameTitle);
+			std::string projectEngine;
+			SceneJson::Read(*settings, "engineVersion", projectEngine);
+			const int cmp = CompareEngineVersions(projectEngine, kEngineVersion);
+			if (cmp > 0) {
+				LogMessage(std::format("[Project] This project was saved with engine {} but this editor is {}. Install the newer engine (Help > Install Engine Update...) before editing.",
+					projectEngine, kEngineVersion), 1);
+				projectEngineWarning_ = std::format("Saved with engine {} (this editor: {}). Update the engine.", projectEngine, kEngineVersion);
+			} else {
+				projectEngineWarning_.clear();
+				if (cmp < 0 && !isRunningTests_) {
+					// Teammates on the older engine get the warning above once this is pushed
+					(*settings)["engineVersion"] = kEngineVersion;
+					std::ofstream out(projJsonPath, std::ios::trunc);
+					out << SceneJson::DumpCompact(*settings);
+				}
+			}
 		} else {
 			LogMessage(std::format("[Project] Warning: could not parse project.json ({}). Using defaults.", parseError), 1);
 		}
@@ -484,7 +560,8 @@ bool EditorSuite::OpenProject(const std::string& folderPath)
 	currentDirectory_ = currentProjectRoot_ / "Assets";
 	if (!std::filesystem::exists(currentDirectory_)) currentDirectory_ = currentProjectRoot_;
 	strncpy_s(openProjectFolderBuf_, currentProjectRoot_.string().c_str(), sizeof(openProjectFolderBuf_) - 1);
-	strncpy_s(buildGameTitleBuf_, projectName.c_str(), sizeof(buildGameTitleBuf_) - 1);
+	strncpy_s(buildGameTitleBuf_, (gameTitle.empty() ? projectName : gameTitle).c_str(), sizeof(buildGameTitleBuf_) - 1);
+	SyncScriptModuleWithProject(); // before the scene so its scripts come from the project's DLL
 
 	std::filesystem::path sceneFullPath = currentProjectRoot_ / startupScene;
 	if (!std::filesystem::exists(sceneFullPath)) {
@@ -641,6 +718,18 @@ bool EditorSuite::ExportStandaloneGame()
 			cfg << "resolutionHeight = " << resH << "\n";
 			cfg << "fullscreen = " << (buildFullscreen_ ? "true" : "false") << "\n";
 			cfg << "startupScene = " << relStartup << "\n";
+		}
+
+		// Keep the build settings with the project (shared through git)
+		if (!currentProjectRoot_.empty()) {
+			const std::filesystem::path projJson = currentProjectRoot_ / "ProjectSettings" / "project.json";
+			std::ifstream in(projJson);
+			std::stringstream text;
+			text << in.rdbuf();
+			in.close();
+			std::string projectName = currentProjectRoot_.filename().string();
+			if (const auto settings = SceneJson::Parse(text.str())) SceneJson::Read(*settings, "projectName", projectName);
+			WriteProjectSettingsFile(projJson, projectName, relStartup, gameTitle);
 		}
 
 		LogMessage(std::format("[Build] Successfully exported standalone game '{}' to: {}", targetExeName, outDir.string()), 0);

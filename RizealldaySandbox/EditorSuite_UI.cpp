@@ -51,6 +51,8 @@ void EditorSuite::DrawEditorUI(float deltaTime, bool& showParticles)
 	if (showOpenSceneModal_) DrawOpenSceneModal();
 	if (showProjectHub_) DrawProjectHub();
 	if (showUnsavedCloseModal_) DrawUnsavedChangesModal();
+	if (showEngineUpdateModal_) DrawEngineUpdateModal();
+	if (showAboutModal_) DrawAboutModal();
 
 	if (showLightingSettings_) {
 		ImGui::SetNextWindowSize(ImVec2(380.0f, 420.0f), ImGuiCond_FirstUseEver);
@@ -62,6 +64,7 @@ void EditorSuite::DrawEditorUI(float deltaTime, bool& showParticles)
 
 	if (showProfiler_) DrawProfilerWindow();
 	if (showAnimatorWindow_) DrawAnimatorWindow();
+	if (showInputActionsWindow_) DrawInputActionsWindow();
 #endif
 }
 
@@ -242,6 +245,7 @@ void EditorSuite::DrawMainMenuBar()
 			ImGui::EndMenu();
 		}
 		if (ImGui::BeginMenu(TrId("Options"))) {
+			if (ImGui::MenuItem(TrId("Input Actions..."), nullptr, showInputActionsWindow_)) showInputActionsWindow_ = !showInputActionsWindow_;
 			if (ImGui::BeginMenu(TrId("Language"))) {
 				// Language names come from the files ("_language"), so each one is shown in its own script
 				for (const Localization::LanguageInfo& lang : Localization::AvailableLanguages()) {
@@ -263,7 +267,7 @@ void EditorSuite::DrawMainMenuBar()
 			ImGui::EndMenu();
 		}
 		if (ImGui::BeginMenu(TrId("Help"))) {
-			if (ImGui::MenuItem(TrId("About Rizeallday Engine v2"))) {}
+			DrawHelpMenu();
 			ImGui::EndMenu();
 		}
 		ImGui::EndMainMenuBar();
