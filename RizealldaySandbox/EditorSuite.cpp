@@ -41,6 +41,8 @@ GameObject::GameObject(const GameObject& other) {
 	uvOffset = other.uvOffset;
 	uvTiling = other.uvTiling;
 	uvRotation = other.uvRotation;
+	outlineWidth = other.outlineWidth;
+	outlineColor = other.outlineColor;
 	animationIndex = other.animationIndex;
 	animationSpeed = other.animationSpeed;
 	animationLoop = other.animationLoop;
@@ -170,6 +172,8 @@ GameObject& GameObject::operator=(const GameObject& other) {
 		uvOffset = other.uvOffset;
 		uvTiling = other.uvTiling;
 		uvRotation = other.uvRotation;
+		outlineWidth = other.outlineWidth;
+		outlineColor = other.outlineColor;
 		animationIndex = other.animationIndex;
 		animationSpeed = other.animationSpeed;
 		animationLoop = other.animationLoop;
@@ -622,6 +626,9 @@ void EditorSuite::Update(float deltaTime, Input* input)
 	// Poll GameScripts/Scripts/*.cpp|*.h for file saves when Auto Build Scripts is enabled
 	if (!IsStandaloneMode()) {
 		PollScriptSourceWatcher(deltaTime);
+#ifdef USE_IMGUI
+		PollShaderWatcher(deltaTime);
+#endif
 	}
 
 	// Poll bin/Scripts/GameScripts.dll for timestamp changes every 0.5s; hot-reload at a safe point between frames

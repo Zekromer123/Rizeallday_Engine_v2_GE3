@@ -15,6 +15,9 @@ public:
 		IDxcUtils* dxcUtils,
 		IDxcCompiler3* dxcCompiler,
 		IDxcIncludeHandler* includeHandler);
+	/// Like CompileShader, but never asserts or shows a message box (shader hot reload):
+	/// loads exactly `filePath`, returns nullptr and the compiler output in `error` on failure.
+	Microsoft::WRL::ComPtr<IDxcBlob> TryCompileShader(const std::wstring& filePath, const wchar_t* profile, std::string* error);
 	IDxcUtils* GetDxcUtils() const { return dxcUtils.Get(); }
 	IDxcCompiler3* GetDxcCompiler() const { return dxcCompiler.Get(); }
 	IDxcIncludeHandler* GetIncludeHandler() const { return includeHandler.Get(); }

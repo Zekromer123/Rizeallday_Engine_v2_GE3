@@ -133,6 +133,10 @@ void EditorSuite::WriteGameObjectJson(const GameObject& obj, void* outJson) cons
 	o["uvOffset"] = Arr(obj.uvOffset);
 	o["uvTiling"] = Arr(obj.uvTiling);
 	o["uvRotation"] = Num(obj.uvRotation);
+	if (obj.outlineWidth > 0.0f) {
+		o["outlineWidth"] = Num(obj.outlineWidth);
+		o["outlineColor"] = Arr(obj.outlineColor);
+	}
 
 	// Colliders
 	o["hasBoxCollider"] = obj.hasBoxCollider;
@@ -521,6 +525,8 @@ void EditorSuite::ReadGameObjectJson(const void* json, GameObject& obj)
 	SceneJson::Read(j, "uvOffset", obj.uvOffset);
 	SceneJson::Read(j, "uvTiling", obj.uvTiling);
 	SceneJson::Read(j, "uvRotation", obj.uvRotation);
+	SceneJson::Read(j, "outlineWidth", obj.outlineWidth);
+	SceneJson::Read(j, "outlineColor", obj.outlineColor);
 
 	// Box Collider
 	SceneJson::Read(j, "hasBoxCollider", obj.hasBoxCollider);

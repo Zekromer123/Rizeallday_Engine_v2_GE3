@@ -1,6 +1,9 @@
 ﻿#pragma once
 #include <d3d12.h>
+#include <dxcapi.h>
 #include <wrl.h>
+#include <string>
+#include <vector>
 #include "base/BlendMode.h"
 #include "base/GeometryShaderMode.h"
 
@@ -13,15 +16,31 @@ public:
     void Bind(ID3D12GraphicsCommandList* commandList, BlendMode mode = BlendMode::Opaque, GeometryShaderMode gsMode = GeometryShaderMode::None);
     void Bind(ID3D12GraphicsCommandList* commandList, BlendMode mode, bool useGeometryShader);
     ID3D12RootSignature* GetRootSignature() const { return rootSignature.Get(); }
+    /// Switches to the outline PSO after a mesh was drawn with Bind() (root arguments stay bound)
+    void BindOutline(ID3D12GraphicsCommandList* commandList);
+    bool HasOutline() const { return psos_.outline != nullptr; }
+
+    /// Shader hot reload: recompiles the Object3d shaders from `shaderDir` and swaps in new PSOs only when every
+    /// shader and PSO succeeds (otherwise the old ones stay and `error` says why). Replaced PSOs go to `retired`
+    /// for the caller to DeferRelease, because frames in flight may still use them.
+    bool Reload(DXCManager* dxc, const std::wstring& shaderDir, std::vector<Microsoft::WRL::ComPtr<ID3D12PipelineState>>& retired, std::string* error);
 
 private:
+    struct ShaderBlobs {
+        Microsoft::WRL::ComPtr<IDxcBlob> vs, ps, gs, explode, outlineVs, outlinePs;
+    };
+    struct PsoSet {
+        Microsoft::WRL::ComPtr<ID3D12PipelineState> standard[static_cast<int>(BlendMode::Count)];
+        Microsoft::WRL::ComPtr<ID3D12PipelineState> gs[static_cast<int>(BlendMode::Count)];
+        Microsoft::WRL::ComPtr<ID3D12PipelineState> explode[static_cast<int>(BlendMode::Count)];
+        Microsoft::WRL::ComPtr<ID3D12PipelineState> outline;
+    };
+
     void CreateRootSignature();
-    void CreatePso(DXCManager* dxc, BlendMode mode);
+    bool CreatePso(BlendMode mode, const ShaderBlobs& blobs, PsoSet& out);
     D3D12_BLEND_DESC MakeBlendDesc(BlendMode mode);
 
     ID3D12Device* device = nullptr;
     Microsoft::WRL::ComPtr<ID3D12RootSignature> rootSignature;
-    Microsoft::WRL::ComPtr<ID3D12PipelineState> graphicsPipelineState[static_cast<int>(BlendMode::Count)];
-    Microsoft::WRL::ComPtr<ID3D12PipelineState> graphicsPipelineStateGS[static_cast<int>(BlendMode::Count)];
-    Microsoft::WRL::ComPtr<ID3D12PipelineState> graphicsPipelineStateGS_Explode[static_cast<int>(BlendMode::Count)];
+    PsoSet psos_;
 };

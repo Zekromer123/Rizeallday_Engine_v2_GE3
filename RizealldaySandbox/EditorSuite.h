@@ -20,6 +20,7 @@
 #include "AssetDatabase.h"
 #include "AnimatorController.h"
 #include "InputActions.h"
+#include "NavGrid.h"
 #ifdef USE_IMGUI
 #include <imgui.h>
 #else
@@ -144,6 +145,8 @@ struct GameObject {
 	Vector2 uvOffset = { 0.0f, 0.0f };
 	Vector2 uvTiling = { 1.0f, 1.0f };
 	float uvRotation = 0.0f;
+	float outlineWidth = 0.0f;                         // Mesh Renderer outline (world units, 0 = none)
+	Vector4 outlineColor = { 0.0f, 0.0f, 0.0f, 1.0f };
 	std::unique_ptr<Object3d> editObject3d;
 	std::unique_ptr<Object3d> gameObject3d;
 	std::unique_ptr<WorldTransform> shadowTransform;
@@ -422,6 +425,11 @@ public:
 	Vector3 GetWorldPositionOf(const GameObject& obj) const;
 	bool ScriptRaycast(const Vector3& origin, const Vector3& direction, float maxDistance, uint32_t layerMask, uint32_t ignoreId, ScriptRaycastHit& outHit) const;
 	int ScriptOverlapSphere(const Vector3& center, float radius, uint32_t layerMask, uint32_t* outIds, int maxCount) const;
+	/// MoveCharacter (CharacterController.h) against every other non-trigger collider the object collides with
+	bool ScriptMoveCharacter(uint32_t id, const Vector3& motion, float stepHeight, ScriptCharacterMove& out);
+	/// A* path over the navigation grid (static colliders above the floor block); returns the full point count
+	int ScriptFindPath(const Vector3& from, const Vector3& to, Vector3* outPoints, int maxPoints);
+	void BuildNavGrid(const Vector3& agentPosition);
 	const GameObject* FindNearestObject(const Vector3& position, const char* tag, float maxDistance, uint32_t ignoreId) const;
 	// Script requests that run outside script callbacks: timers, reparenting, particle bursts, music
 	void SetupEngineAPIExtensions();
@@ -471,6 +479,8 @@ public:
 	// Runtime scene switching + save data (EditorSuite_Runtime.cpp)
 	std::filesystem::path ResolveSceneRequest(const std::string& nameOrPath) const;
 	void RequestSceneLoad(const std::string& nameOrPath); // deferred to the end of the frame
+	/// LoadScene from scripts leaves this root object and its children in place (Play only; children: false)
+	bool KeepAcrossScenes(uint32_t id);
 	bool ProcessPendingSceneLoad();
 	void RestoreRuntimeSceneOrigin();
 	std::filesystem::path GetSaveDataPath() const;
@@ -490,6 +500,10 @@ public:
 
 	void TriggerScriptBuild();
 	void PollScriptSourceWatcher(float deltaTime);
+	/// Recompiles the Object3d shaders from `dir`; the old pipeline stays when anything fails (logged)
+	bool ReloadShaders(const std::filesystem::path& dir);
+	/// Every 0.5 s: a changed .hlsl/.hlsli in RizealldayEngine/shaders (or ./shaders) is copied to ./shaders and reloaded
+	void PollShaderWatcher(float deltaTime);
 	void DrainScriptBuildLogs();
 	void OpenFileInVisualStudio(const std::filesystem::path& filePath);
 	std::filesystem::path ResolveGameScriptsDir() const;
@@ -738,6 +752,12 @@ private:
 	float shakeTime_ = 0.0f;
 	float hitstopLeft_ = 0.0f;
 	double physicsAccumulator_ = 0.0; // leftover time for the next fixed physics step
+	// Navigation grid for FindPath, built from static colliders on first use (EditorSuite_ScriptQueries.cpp)
+	NavGrid navGrid_;
+	bool navGridValid_ = false;
+	float navCellSize_ = 0.5f;
+	float navAgentRadius_ = 0.4f;
+	float navFloorY_ = 0.0f;  // floor height the grid was built for
 	// Input actions
 	InputActions inputActions_ = InputActions::Defaults();
 	std::filesystem::path inputActionsRoot_;
@@ -830,6 +850,7 @@ private:
 
 	// Runtime scene switching (EditorSuite_Runtime.cpp)
 	std::string pendingSceneLoad_;
+	std::unordered_set<uint32_t> persistentIds_; // KeepAcrossScenes roots, cleared on Play / Stop
 	bool runtimeSceneSwitched_ = false; // editor Play mode loaded another scene; Stop restores the origin
 	std::string runtimeOriginScenePath_;
 	std::string runtimeOriginSceneName_;
@@ -1044,6 +1065,13 @@ private:
 	float scriptSourceDebounceTimer_ = 0.0f;
 	bool scriptSourceChangePending_ = false;
 	bool scriptSourceWatcherInitialized_ = false;
+	// Shader hot reload (EditorSuite_Shaders.cpp). Overrides are for the self-tests.
+	std::filesystem::path shaderWatchDirOverride_;
+	std::filesystem::path shaderDeployDirOverride_;
+	std::map<std::string, std::filesystem::file_time_type> shaderStamps_;
+	bool shaderWatcherInitialized_ = false;
+	float shaderPollTimer_ = 0.0f;
+	int shaderReloadCount_ = 0;
 	std::map<std::string, std::filesystem::file_time_type> scriptSourceTimestamps_;
 
 	// Asset Browser State

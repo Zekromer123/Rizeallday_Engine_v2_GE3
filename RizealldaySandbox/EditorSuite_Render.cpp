@@ -258,6 +258,8 @@ void EditorSuite::RenderScene3D(ID3D12GraphicsCommandList* cmdList, Camera& came
 			mat->uvOffset = obj.uvOffset;
 			mat->uvTiling = obj.uvTiling;
 			mat->uvRotation = obj.uvRotation;
+			mat->outlineWidth = obj.meshEnabled ? obj.outlineWidth : 0.0f;
+			mat->outlineColor = obj.outlineColor;
 		}
 
 		obj3d->SetTextureHandle(obj.textureHandle);

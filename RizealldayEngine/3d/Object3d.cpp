@@ -187,5 +187,10 @@ void Object3d::Draw(ID3D12GraphicsCommandList* cmdList) {
 
     if (model_) {
         model_->Draw(cmdList, textureHandle_);
+        // Toon outline: the same mesh again, pushed out along its normals, back faces only
+        if (material_.outlineWidth > 0.0f && sPipeline_ && sPipeline_->HasOutline()) {
+            sPipeline_->BindOutline(cmdList);
+            model_->Draw(cmdList, textureHandle_);
+        }
     }
 }

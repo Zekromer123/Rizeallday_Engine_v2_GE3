@@ -34,7 +34,7 @@ If the editor says a project was saved with a newer engine, install the newest z
 - Tutup editor sebelum `git pull`. Satu scene satu orang. Commit file `.meta`.
 - Update engine: **Help > Install Engine Update...** lalu pilih zip baru (atau drag zip ke editor).
 
-## 日本語 (要約)
+## 日本語 (要約) — 詳しい使い方は `GUIDE_JA.md`
 - zip を展開して `Editor\RizealldaySandbox.exe` を起動。ゲームプロジェクトはエンジンのフォルダーの外に置く。
 - 参加するとき: `git clone` → File > Open Project → スクリプトは自動でビルドされる。
 - `git pull` の前にエディターを閉じる。シーンは一人ずつ編集。`.meta` もコミットする。

@@ -126,3 +126,30 @@ Microsoft::WRL::ComPtr<IDxcBlob> DXCManager::CompileShader(const std::wstring& f
 
 	return compiledShader;
 }
+
+Microsoft::WRL::ComPtr<IDxcBlob> DXCManager::TryCompileShader(const std::wstring& filePath, const wchar_t* profile, std::string* error)
+{
+	ConvertStrings converter;
+	Microsoft::WRL::ComPtr<IDxcBlobEncoding> source;
+	if (FAILED(dxcUtils->LoadFile(filePath.c_str(), nullptr, &source)) || !source) {
+		if (error) *error = "Cannot read " + converter.ConvertString(filePath);
+		return nullptr;
+	}
+	DxcBuffer buffer{ source->GetBufferPointer(), source->GetBufferSize(), DXC_CP_UTF8 };
+	const std::wstring includeDir = std::filesystem::path(filePath).parent_path().wstring();
+	// Same arguments as CompileShader
+	LPCWSTR arguments[] = { filePath.c_str(), L"-E", L"main", L"-T", profile, L"-I", includeDir.c_str(), L"-Zi", L"-Qembed_debug", L"-Od", L"-Zpr" };
+	Microsoft::WRL::ComPtr<IDxcResult> result;
+	HRESULT status = E_FAIL;
+	if (FAILED(dxcCompiler->Compile(&buffer, arguments, static_cast<UINT32>(std::size(arguments)), includeHandler.Get(), IID_PPV_ARGS(&result))) ||
+		!result || FAILED(result->GetStatus(&status)) || FAILED(status)) {
+		Microsoft::WRL::ComPtr<IDxcBlobUtf8> messages;
+		if (result) result->GetOutput(DXC_OUT_ERRORS, IID_PPV_ARGS(&messages), nullptr);
+		if (error) *error = (messages && messages->GetStringLength() > 0) ? std::string(messages->GetStringPointer()) : "Compile failed: " + converter.ConvertString(filePath);
+		return nullptr;
+	}
+	Microsoft::WRL::ComPtr<IDxcBlob> compiled;
+	result->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(&compiled), nullptr);
+	if (!compiled && error) *error = "No shader object produced for " + converter.ConvertString(filePath);
+	return compiled;
+}

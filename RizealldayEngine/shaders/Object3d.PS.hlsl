@@ -4,7 +4,7 @@ struct Material
 {
     float32_t4 color;
     int32_t enableLighting;
-    int32_t lightingType;  // 0=Unlit, 1=Lambert, 2=HalfLambert, 3=Phong, 4=BlinnPhong
+    int32_t lightingType;  // 0=Unlit, 1=Lambert, 2=HalfLambert, 3=Phong, 4=BlinnPhong, 5=Toon
     float32_t shininess;
     int32_t receiveShadows;
     float32_t3 specularColor;
@@ -138,6 +138,35 @@ float32_t CalculateShadow(float32_t3 worldPos, float32_t3 normal, float32_t3 lig
     return shadow / 9.0f;
 }
 
+// Diffuse term of the material's reflection model (lightingType 1-5)
+float32_t DiffuseTerm(float32_t NdotL)
+{
+    if (gMaterial.lightingType == 2) {
+        return pow(NdotL * 0.5f + 0.5f, 2.0f); // Half-Lambert
+    }
+    if (gMaterial.lightingType == 5) {
+        // Toon: hard bands 0 / 0.6 / 1 (narrow smoothstep keeps the edges from aliasing)
+        float32_t d = saturate(NdotL);
+        return 0.6f * smoothstep(0.0f, 0.04f, d) + 0.4f * smoothstep(0.5f, 0.54f, d);
+    }
+    return saturate(NdotL); // Lambert / Phong / Blinn-Phong
+}
+
+// Specular term (Phong 02_00, Blinn-Phong 02_01, Toon = a hard Blinn-Phong highlight)
+float32_t SpecularTerm(float32_t3 lightDir, float32_t3 N, float32_t3 toEye, float shininess)
+{
+    if (gMaterial.lightingType == 3) {
+        float32_t3 reflectLight = reflect(lightDir, N);
+        return pow(saturate(dot(reflectLight, toEye)), shininess);
+    }
+    if (gMaterial.lightingType == 4 || gMaterial.lightingType == 5) {
+        float32_t3 halfVector = normalize(-lightDir + toEye);
+        float32_t blinn = pow(saturate(dot(N, halfVector)), shininess);
+        return gMaterial.lightingType == 5 ? smoothstep(0.5f, 0.53f, blinn) : blinn;
+    }
+    return 0.0f;
+}
+
 PixelShaderOutput main(VertexShaderOutput input)
 {
     // UV transformation: Tiling, Rotation, Offset
@@ -175,24 +204,8 @@ PixelShaderOutput main(VertexShaderOutput input)
     {
         float32_t3 lightDir = normalize(dirLight.direction);
         float32_t NdotL = dot(N, -lightDir);
-        float32_t diffuse = 0.0f;
-        
-        if (gMaterial.lightingType == 2) {
-            diffuse = pow(NdotL * 0.5f + 0.5f, 2.0f); // Half-Lambert
-        } else {
-            diffuse = saturate(NdotL); // Lambert / Phong / Blinn-Phong
-        }
-        
-        float32_t specularPow = 0.0f;
-        if (gMaterial.lightingType == 3) {
-            // Phong (02_00): reflect(lightDir, normal)
-            float32_t3 reflectLight = reflect(lightDir, N);
-            specularPow = pow(saturate(dot(reflectLight, toEye)), shininess);
-        } else if (gMaterial.lightingType == 4) {
-            // Blinn-Phong (02_01): normalize(-lightDir + toEye)
-            float32_t3 halfVector = normalize(-lightDir + toEye);
-            specularPow = pow(saturate(dot(N, halfVector)), shininess);
-        }
+        float32_t diffuse = DiffuseTerm(NdotL);
+        float32_t specularPow = SpecularTerm(lightDir, N, toEye, shininess);
 
         // Shadow calculation: modulates Directional Light diffuse and specular only
         float32_t shadowFactor = 1.0f;
@@ -219,21 +232,8 @@ PixelShaderOutput main(VertexShaderOutput input)
             float32_t attenuation = pow(saturate(-dist / max(0.001f, pointLights[i].radius) + 1.0f), max(0.001f, pointLights[i].decay));
             
             float32_t NdotL = dot(N, -lightDir);
-            float32_t diffuse = 0.0f;
-            if (gMaterial.lightingType == 2) {
-                diffuse = pow(NdotL * 0.5f + 0.5f, 2.0f);
-            } else {
-                diffuse = saturate(NdotL);
-            }
-            
-            float32_t specularPow = 0.0f;
-            if (gMaterial.lightingType == 3) {
-                float32_t3 reflectLight = reflect(lightDir, N);
-                specularPow = pow(saturate(dot(reflectLight, toEye)), shininess);
-            } else if (gMaterial.lightingType == 4) {
-                float32_t3 halfVector = normalize(-lightDir + toEye);
-                specularPow = pow(saturate(dot(N, halfVector)), shininess);
-            }
+            float32_t diffuse = DiffuseTerm(NdotL);
+            float32_t specularPow = SpecularTerm(lightDir, N, toEye, shininess);
             
             totalDiffuse += pointLights[i].color.rgb * diffuse * pointLights[i].intensity * attenuation;
             totalSpecular += pointLights[i].color.rgb * specColor * specularPow * pointLights[i].intensity * attenuation;
@@ -255,21 +255,8 @@ PixelShaderOutput main(VertexShaderOutput input)
             float32_t attenuation = pow(saturate(-dist / max(0.001f, spotLights[j].distance) + 1.0f), max(0.001f, spotLights[j].decay)) * falloffFactor;
             
             float32_t NdotL = dot(N, -lightDir);
-            float32_t diffuse = 0.0f;
-            if (gMaterial.lightingType == 2) {
-                diffuse = pow(NdotL * 0.5f + 0.5f, 2.0f);
-            } else {
-                diffuse = saturate(NdotL);
-            }
-            
-            float32_t specularPow = 0.0f;
-            if (gMaterial.lightingType == 3) {
-                float32_t3 reflectLight = reflect(lightDir, N);
-                specularPow = pow(saturate(dot(reflectLight, toEye)), shininess);
-            } else if (gMaterial.lightingType == 4) {
-                float32_t3 halfVector = normalize(-lightDir + toEye);
-                specularPow = pow(saturate(dot(N, halfVector)), shininess);
-            }
+            float32_t diffuse = DiffuseTerm(NdotL);
+            float32_t specularPow = SpecularTerm(lightDir, N, toEye, shininess);
             
             totalDiffuse += spotLights[j].color.rgb * diffuse * spotLights[j].intensity * attenuation;
             totalSpecular += spotLights[j].color.rgb * specColor * specularPow * spotLights[j].intensity * attenuation;

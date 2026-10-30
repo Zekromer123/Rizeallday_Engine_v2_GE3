@@ -329,6 +329,9 @@ void EditorSuite::SetupEngineAPI()
 	engineApi_.loadScene = [](void* ctx, const char* sceneNameOrPath) {
 		if (ctx && sceneNameOrPath) static_cast<EditorSuite*>(ctx)->RequestSceneLoad(sceneNameOrPath);
 	};
+	engineApi_.keepAcrossScenes = [](void* ctx, uint32_t id) -> bool {
+		return ctx && static_cast<EditorSuite*>(ctx)->KeepAcrossScenes(id);
+	};
 	engineApi_.getSceneName = [](void* ctx, char* out, int outSize) -> int {
 		if (!ctx || !out || outSize <= 0) return 0;
 		const std::string& name = static_cast<EditorSuite*>(ctx)->currentSceneName_;

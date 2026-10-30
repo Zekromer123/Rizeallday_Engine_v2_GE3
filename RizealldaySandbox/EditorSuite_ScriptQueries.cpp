@@ -1,5 +1,6 @@
 ﻿#include "EditorSuiteInternal.h"
 #include "audio/Audio.h"
+#include "CharacterController.h"
 
 // Script API part 2 (Tahap H): collision enter/exit, scene queries, hierarchy, audio, particles,
 // material and component access. EngineAPI entries are filled in by SetupEngineAPIExtensions().
@@ -190,6 +191,122 @@ bool EditorSuite::ScriptRaycast(const Vector3& origin, const Vector3& direction,
 	return found;
 }
 
+void EditorSuite::BuildNavGrid(const Vector3& agentPosition)
+{
+	// Level geometry = Static, non-trigger colliders. The floor is the highest static top under the agent (at or
+	// below its position); anything more than 0.3 above that floor blocks.
+	// shortcut: one floor per grid; agents on different storeys rebuild it in turn (fine for one or two floors)
+	struct Bounds { Vector3 min, max; };
+	std::vector<Bounds> statics;
+	for (const auto& o : gameObjects_) {
+		if (!o.isActive || !o.isStatic || o.isTrigger) continue;
+		Bounds b{};
+		if (o.hasBoxCollider && o.boxColliderEnabled) {
+			ComputeBoxColliderBounds(o, true, b.min, b.max);
+			statics.push_back(b);
+		}
+		if (o.hasSphereCollider && o.sphereColliderEnabled) {
+			float r = 0.0f;
+			ComputeSphereColliderWorld(o, b.min, r);
+			b.max = { b.min.x + r, b.min.y + r, b.min.z + r };
+			b.min = { b.min.x - r, b.min.y - r, b.min.z - r };
+			statics.push_back(b);
+		}
+	}
+	navGrid_ = NavGrid{};
+	navGridValid_ = true;
+	if (statics.empty()) return;
+
+	float lowestTop = 1e30f, floorTop = -1e30f;
+	Vector3 lo{ 1e30f, 0.0f, 1e30f }, hi{ -1e30f, 0.0f, -1e30f };
+	for (const auto& b : statics) {
+		lowestTop = (std::min)(lowestTop, b.max.y);
+		const bool under = agentPosition.x >= b.min.x && agentPosition.x <= b.max.x && agentPosition.z >= b.min.z && agentPosition.z <= b.max.z;
+		if (under && b.max.y <= agentPosition.y + 0.01f) floorTop = (std::max)(floorTop, b.max.y);
+		lo = { (std::min)(lo.x, b.min.x), 0.0f, (std::min)(lo.z, b.min.z) };
+		hi = { (std::max)(hi.x, b.max.x), 0.0f, (std::max)(hi.z, b.max.z) };
+	}
+	if (floorTop < -1e29f) floorTop = lowestTop; // nothing under the agent
+	navFloorY_ = floorTop;
+	navGrid_.Build(lo.x - 1.0f, lo.z - 1.0f, hi.x + 1.0f, hi.z + 1.0f, navCellSize_);
+	const float r = navAgentRadius_;
+	for (const auto& b : statics) {
+		if (b.max.y > floorTop + 0.3f) navGrid_.BlockRect(b.min.x - r, b.min.z - r, b.max.x + r, b.max.z + r);
+	}
+}
+
+int EditorSuite::ScriptFindPath(const Vector3& from, const Vector3& to, Vector3* outPoints, int maxPoints)
+{
+	// Rebuild for another storey: the agent stands well above or below the floor the grid was made for
+	if (!navGridValid_ || (!navGrid_.IsEmpty() && (from.y < navFloorY_ - 0.3f || from.y > navFloorY_ + 2.5f))) BuildNavGrid(from);
+	// No level geometry at all: the way is open
+	const std::vector<Vector3> path = navGrid_.IsEmpty() ? std::vector<Vector3>{ from, to } : navGrid_.FindPath(from, to);
+	const int count = static_cast<int>(path.size());
+	if (outPoints) {
+		for (int i = 0; i < (std::min)(count, maxPoints); ++i) outPoints[i] = path[i];
+	}
+	return count;
+}
+
+bool EditorSuite::ScriptMoveCharacter(uint32_t id, const Vector3& motion, float stepHeight, ScriptCharacterMove& out)
+{
+	out = {};
+	GameObject* obj = FindGameObjectById(id, false);
+	// Root objects only: their collider follows `translation` directly
+	if (!obj || !obj->isActive || obj->parentId != -1) return false;
+	const bool useBox = obj->hasBoxCollider && obj->boxColliderEnabled;
+	if (!useBox && !(obj->hasSphereCollider && obj->sphereColliderEnabled)) return false;
+
+	// The script may have moved its view earlier in this Update
+	auto viewIt = scriptObjectViews_.find(id);
+	ScriptGameObjectView* view = viewIt != scriptObjectViews_.end() ? viewIt->second.get() : nullptr;
+	if (view) obj->translation = view->translation;
+
+	auto boundsOf = [this](const GameObject& o, bool box, CharacterController::Box& b) {
+		if (box) {
+			ComputeBoxColliderBounds(o, true, b.min, b.max);
+		} else {
+			Vector3 c{};
+			float r = 0.0f;
+			ComputeSphereColliderWorld(o, c, r);
+			b = { { c.x - r, c.y - r, c.z - r }, { c.x + r, c.y + r, c.z + r } };
+		}
+	};
+	CharacterController::Box self{};
+	boundsOf(*obj, useBox, self);
+
+	// shortcut: other objects use last frame's world matrices (exact for roots and static level geometry); call UpdateWorldMatrices first if moving parents matter
+	const auto excluded = CollectQueryExclusions(gameObjects_, pendingDeletes_, pendingDespawns_);
+	const uint32_t selfBit = 1u << (obj->layer & 31u);
+	std::vector<CharacterController::Box> obstacles;
+	for (const auto& o : gameObjects_) {
+		if (o.id == id || !o.isActive || o.isTrigger || excluded.count(o.id) != 0) continue;
+		if ((obj->collisionMask & (1u << (o.layer & 31u))) == 0 || (o.collisionMask & selfBit) == 0) continue;
+		CharacterController::Box b{};
+		if (o.hasBoxCollider && o.boxColliderEnabled) {
+			boundsOf(o, true, b);
+			obstacles.push_back(b);
+		}
+		if (o.hasSphereCollider && o.sphereColliderEnabled) {
+			boundsOf(o, false, b);
+			obstacles.push_back(b);
+		}
+	}
+
+	const CharacterController::Result r = CharacterController::Move(self, motion, obstacles, (std::max)(stepHeight, 0.0f));
+	obj->translation = { obj->translation.x + r.moved.x, obj->translation.y + r.moved.y, obj->translation.z + r.moved.z };
+	obj->isGrounded = r.grounded;
+	if (view) {
+		view->translation = obj->translation;
+		view->isGrounded = r.grounded;
+	}
+	out.moved = r.moved;
+	out.grounded = r.grounded;
+	out.hitWall = r.hitWall;
+	out.hitCeiling = r.hitCeiling;
+	return true;
+}
+
 int EditorSuite::ScriptOverlapSphere(const Vector3& center, float radius, uint32_t layerMask, uint32_t* outIds, int maxCount) const
 {
 	if (!outIds || maxCount <= 0 || !(radius >= 0.0f)) return 0;
@@ -244,6 +361,7 @@ const GameObject* EditorSuite::FindNearestObject(const Vector3& position, const 
 // ---------------------------------------------------------------------------
 void EditorSuite::ResetScriptRuntimeState()
 {
+	navGridValid_ = false; // the next FindPath sees the current level
 	frameContacts_.clear();
 	frameContactSet_.clear();
 	previousContacts_.clear();
@@ -404,6 +522,8 @@ void EditorSuite::SetupEngineAPIExtensions()
 		out->shininess = obj->shininess;
 		out->uvOffset = obj->uvOffset;
 		out->uvTiling = obj->uvTiling;
+		out->outlineWidth = obj->outlineWidth;
+		out->outlineColor = obj->outlineColor;
 		return true;
 	};
 	engineApi_.setMaterial = [](void* ctx, uint32_t id, const ScriptMaterialData* in) -> bool {
@@ -412,10 +532,12 @@ void EditorSuite::SetupEngineAPIExtensions()
 		obj->materialColor = in->color;
 		obj->meshEnabled = in->visible;
 		obj->isLit = in->lit;
-		obj->lightingType = std::clamp(in->lightingType, 0, 4);
+		obj->lightingType = std::clamp(in->lightingType, 0, 5);
 		obj->shininess = (std::max)(0.0f, in->shininess);
 		obj->uvOffset = in->uvOffset;
 		obj->uvTiling = in->uvTiling;
+		obj->outlineWidth = (std::max)(0.0f, in->outlineWidth);
+		obj->outlineColor = in->outlineColor;
 		return true;
 	};
 	engineApi_.setTexture = [](void* ctx, uint32_t id, const char* texturePath) -> bool {
@@ -642,6 +764,19 @@ void EditorSuite::SetupEngineAPIExtensions()
 	};
 	engineApi_.hitstop = [](void* ctx, float seconds) {
 		if (ctx) static_cast<EditorSuite*>(ctx)->Hitstop(seconds);
+	};
+	engineApi_.moveCharacter = [](void* ctx, uint32_t id, Vector3 motion, float stepHeight, ScriptCharacterMove* out) -> bool {
+		return ctx && out && static_cast<EditorSuite*>(ctx)->ScriptMoveCharacter(id, motion, stepHeight, *out);
+	};
+	engineApi_.findPath = [](void* ctx, Vector3 from, Vector3 to, Vector3* outPoints, int maxPoints) -> int {
+		return ctx ? static_cast<EditorSuite*>(ctx)->ScriptFindPath(from, to, outPoints, maxPoints) : 0;
+	};
+	engineApi_.rebuildNavigation = [](void* ctx, float cellSize, float agentRadius) {
+		auto* self = static_cast<EditorSuite*>(ctx);
+		if (!self) return;
+		self->navCellSize_ = (std::max)(cellSize, 0.05f);
+		self->navAgentRadius_ = (std::max)(agentRadius, 0.0f);
+		self->navGridValid_ = false; // rebuilt at the next FindPath, for that agent's floor
 	};
 	engineApi_.getCamera = [](void* ctx, uint32_t id, ScriptCameraData* out) -> bool {
 		const GameObject* obj = ctx ? static_cast<EditorSuite*>(ctx)->FindGameObjectById(id, false) : nullptr;

@@ -322,6 +322,12 @@
     <FxCompile Include="shaders\Object3d.Explode.GS.hlsl">
       <Filter>shaders</Filter>
     </FxCompile>
+    <FxCompile Include="shaders\Object3d.Outline.VS.hlsl">
+      <Filter>shaders</Filter>
+    </FxCompile>
+    <FxCompile Include="shaders\Object3d.Outline.PS.hlsl">
+      <Filter>shaders</Filter>
+    </FxCompile>
     <None Include="shaders\Object3d.hlsli">
       <Filter>shaders</Filter>
     </None>

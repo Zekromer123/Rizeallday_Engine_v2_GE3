@@ -100,15 +100,25 @@ struct ScriptRaycastHit {
 	Vector3 normal = { 0.0f, 1.0f, 0.0f };
 };
 
+/// Result of MoveCharacter
+struct ScriptCharacterMove {
+	Vector3 moved = { 0.0f, 0.0f, 0.0f }; // displacement actually applied
+	bool grounded = false;                // standing on a collider after the move
+	bool hitWall = false;                 // horizontal motion was blocked
+	bool hitCeiling = false;              // upward motion was blocked
+};
+
 /// Mesh Renderer settings readable/writable from scripts (hit flash, fade, hide)
 struct ScriptMaterialData {
 	Vector4 color = { 1.0f, 1.0f, 1.0f, 1.0f };
 	bool visible = true;         // Mesh Renderer enabled
 	bool lit = true;
-	int lightingType = 4;        // 0 = Unlit, 1 = Lambert, 2 = Half-Lambert, 3 = Phong, 4 = Blinn-Phong
+	int lightingType = 4;        // 0 = Unlit, 1 = Lambert, 2 = Half-Lambert, 3 = Phong, 4 = Blinn-Phong, 5 = Toon
 	float shininess = 32.0f;
 	Vector2 uvOffset = { 0.0f, 0.0f };
 	Vector2 uvTiling = { 1.0f, 1.0f };
+	float outlineWidth = 0.0f;  // world units, 0 = no outline (looks best with lightingType 5 = Toon)
+	Vector4 outlineColor = { 0.0f, 0.0f, 0.0f, 1.0f };
 };
 
 /// Light component
@@ -291,12 +301,22 @@ struct EngineAPI {
 	bool (*isActionTriggered)(void* ctx, const char* action) = nullptr;
 	bool (*isActionReleased)(void* ctx, const char* action) = nullptr;
 	float (*getAxis)(void* ctx, const char* action) = nullptr; // -1..1
+
+	// Character controller (API v6): moves an object's collider through the scene's box / sphere colliders
+	bool (*moveCharacter)(void* ctx, uint32_t id, Vector3 motion, float stepHeight, ScriptCharacterMove* out) = nullptr;
+
+	// Navigation (API v7): A* over a grid made from Static colliders
+	int (*findPath)(void* ctx, Vector3 from, Vector3 to, Vector3* outPoints, int maxPoints) = nullptr; // full point count
+	void (*rebuildNavigation)(void* ctx, float cellSize, float agentRadius) = nullptr;
+
+	// Scenes (API v8): the object (a root) and its children survive LoadScene; their scripts keep running
+	bool (*keepAcrossScenes)(void* ctx, uint32_t id) = nullptr;
 };
 
 /// Engine <-> GameScripts.dll compatibility check. Bump kScriptApiVersion when the meaning of the API changes;
 /// layout changes of EngineAPI / ScriptGameObjectView / ScriptBase are caught automatically by the sizes.
 /// The fingerprint is defined at the end of this header (it needs the complete ScriptBase).
-constexpr uint32_t kScriptApiVersion = 5; // 4: Animator API + OnAnimationEvent, 5: ShakeCamera / Hitstop, input actions
+constexpr uint32_t kScriptApiVersion = 9; // 4: Animator, 5: ShakeCamera / Hitstop / input actions, 6: MoveCharacter, 7: FindPath, 8: KeepAcrossScenes, 9: material outline
 
 /// Size of the UI canvas used by the UI* helpers (stretched over the game view)
 constexpr float kUICanvasWidth = 1280.0f;
@@ -966,6 +986,36 @@ public:
 		const float len = std::sqrt(v.x * v.x + v.y * v.y);
 		if (len > 1.0f) { v.x /= len; v.y /= len; }
 		return v;
+	}
+
+	// ---- Character controller ----
+	/// Moves this object by `motion` (world units, e.g. velocity * deltaTime) without passing through colliders:
+	/// slides along walls, climbs ledges up to `stepHeight` while grounded, lands on floors. Triggers and layers
+	/// outside "Collides With" are ignored. Uses the Box Collider (or Sphere Collider) of this object.
+	/// Do not add a non-kinematic Rigidbody as well (gravity is yours: add it to motion.y while !grounded).
+	ScriptCharacterMove MoveCharacter(const Vector3& motion, float stepHeight = 0.3f) const {
+		ScriptCharacterMove result{};
+		if (engineApi_ && engineApi_->moveCharacter) engineApi_->moveCharacter(engineApi_->hostContext, ownerId_, motion, stepHeight, &result);
+		return result;
+	}
+
+	// ---- Scenes ----
+	/// LoadScene keeps this object (must be a root; its children come along) and its scripts running, like
+	/// Unity's DontDestroyOnLoad. Good for a game manager, music player or the player. Ends when Play stops.
+	bool KeepAcrossScenes(uint32_t id = 0) const {
+		return engineApi_ && engineApi_->keepAcrossScenes && engineApi_->keepAcrossScenes(engineApi_->hostContext, ResolveId(id));
+	}
+
+	// ---- Navigation ----
+	/// A* path around Static colliders (walls, crates: anything 0.3 above the floor). Writes up to `maxPoints`
+	/// corners (first = from, last = to) and returns how many the full path has; 0 = no way there.
+	/// The grid is built on first use in Play; call RebuildNavigation after moving or adding static objects.
+	int FindPath(const Vector3& from, const Vector3& to, Vector3* outPoints, int maxPoints) const {
+		return (engineApi_ && engineApi_->findPath) ? engineApi_->findPath(engineApi_->hostContext, from, to, outPoints, maxPoints) : 0;
+	}
+	/// cellSize: grid resolution in world units; agentRadius: how far paths keep away from walls
+	void RebuildNavigation(float cellSize = 0.5f, float agentRadius = 0.4f) const {
+		if (engineApi_ && engineApi_->rebuildNavigation) engineApi_->rebuildNavigation(engineApi_->hostContext, cellSize, agentRadius);
 	}
 
 	// Pointer to owner GameObject view (synchronized by the engine)

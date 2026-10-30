@@ -19,6 +19,19 @@ std::filesystem::path EditorSuite::ResolveSceneRequest(const std::string& nameOr
 	return std::filesystem::path(ResolveAssetPath(nameOrPath));
 }
 
+bool EditorSuite::KeepAcrossScenes(uint32_t id)
+{
+	const GameObject* obj = FindGameObjectById(id, false);
+	const bool gameRunning = (sceneState_ != EditorSceneState::Edit) || IsStandaloneMode();
+	if (!obj || !gameRunning) return false;
+	if (obj->parentId != -1) {
+		LogMessage(std::format("[Scene] KeepAcrossScenes('{}'): only root objects can be kept (children come along with their root).", obj->name), 1);
+		return false;
+	}
+	persistentIds_.insert(id);
+	return true;
+}
+
 void EditorSuite::RequestSceneLoad(const std::string& nameOrPath)
 {
 	if (nameOrPath.empty()) return;
@@ -61,9 +74,30 @@ bool EditorSuite::ProcessPendingSceneLoad()
 	pendingDeletes_.clear();
 	CollisionManager::GetInstance()->Clear();
 
+	// KeepAcrossScenes objects (with their children) step out before the scene is replaced; their scripts keep running
+	std::vector<GameObject> kept;
+	if (!persistentIds_.empty()) {
+		std::unordered_set<uint32_t> keep;
+		for (const auto& o : gameObjects_) {
+			if (persistentIds_.count(o.id) != 0) keep.insert(o.id);
+		}
+		for (bool grew = true; grew;) {
+			grew = false;
+			for (const auto& o : gameObjects_) {
+				if (o.parentId >= 0 && keep.count(static_cast<uint32_t>(o.parentId)) != 0 && keep.insert(o.id).second) grew = true;
+			}
+		}
+		std::vector<GameObject> rest;
+		rest.reserve(gameObjects_.size());
+		for (auto& o : gameObjects_) (keep.count(o.id) != 0 ? kept : rest).push_back(std::move(o));
+		gameObjects_ = std::move(rest);
+	}
+
 	// Calls OnDestroy() on the old scene's scripts, clears spawns/pools/UI
 	if (!DeserializeSceneFromString(buffer.str())) {
 		LogMessage(std::format("[Scene] LoadScene('{}'): invalid scene file.", request), 2);
+		for (auto& o : kept) gameObjects_.push_back(std::move(o)); // the old scene stays; so do they
+		RebuildHierarchyLinks();
 		return false;
 	}
 	currentScenePath_ = path.string();
@@ -76,7 +110,40 @@ bool EditorSuite::ProcessPendingSceneLoad()
 	ids.reserve(gameObjects_.size());
 	for (const auto& obj : gameObjects_) ids.push_back(obj.id);
 	for (uint32_t id : ids) StartScriptsOnSpawnedObject(id, true);
+
+	// Kept objects come back, with fresh ids where the new scene already uses theirs
+	if (!kept.empty()) {
+		std::unordered_set<uint32_t> used;
+		for (const auto& o : gameObjects_) used.insert(o.id);
+		std::unordered_map<uint32_t, uint32_t> remap;
+		for (const auto& o : kept) {
+			uint32_t id = o.id;
+			while (used.count(id) != 0) id = nextObjectId_++;
+			nextObjectId_ = (std::max)(nextObjectId_, id + 1);
+			used.insert(id);
+			remap[o.id] = id;
+		}
+		std::unordered_set<uint32_t> roots;
+		for (auto& o : kept) {
+			if (persistentIds_.count(o.id) != 0) roots.insert(remap[o.id]);
+			o.id = remap[o.id];
+			if (o.parentId >= 0) {
+				auto it = remap.find(static_cast<uint32_t>(o.parentId));
+				o.parentId = it != remap.end() ? static_cast<int>(it->second) : -1;
+			}
+			gameObjects_.push_back(std::move(o));
+		}
+		persistentIds_ = std::move(roots);
+		RebuildHierarchyLinks();
+		UpdateWorldMatrices();
+	}
 	RefreshAllScriptObjectViews();
+	// Views of kept objects were dropped while they were out of the scene (and ids may have changed): rebind
+	for (auto& o : gameObjects_) {
+		for (auto& sc : o.scripts) {
+			if (sc.instance) sc.instance->SetOwner(GetOrUpdateScriptViewById(o.id), o.id);
+		}
+	}
 
 	LogMessage(std::format("[Scene] Switched to '{}' ({} objects).", currentSceneName_, gameObjects_.size()), 0);
 	return true;

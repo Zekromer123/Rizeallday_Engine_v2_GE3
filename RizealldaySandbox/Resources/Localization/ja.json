@@ -256,5 +256,8 @@
 	"Close": "閉じる",
 	"Pick the engine release zip. You can also drop the zip on the editor window.": "エンジンのリリース zip を選びます。zip をエディターのウィンドウにドロップしても構いません。",
 	"Initialize Git repository": "Git リポジトリを初期化",
-	"git init + first commit (needs Git). Then add a remote and push.": "git init と最初のコミット (Git が必要)。その後リモートを追加して push します。"
+	"git init + first commit (needs Git). Then add a remote and push.": "git init と最初のコミット (Git が必要)。その後リモートを追加して push します。",
+	"Outline Width": "アウトラインの太さ",
+	"Outline Color": "アウトラインの色",
+	"Cartoon outline in world units (0 = none). Pairs well with the Toon reflection model.": "アニメ風の輪郭線 (ワールド単位、0 = なし)。反射モデル Toon と相性が良いです。"
 }

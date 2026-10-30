@@ -34,12 +34,12 @@ void EditorSuite::DrawMeshComponentInspector(GameObject& obj)
 
 		if (ImGui::Checkbox("Lit Material", &obj.isLit)) { isSceneDirty_ = true; PushUndoSnapshot(); }
 
-		const char* reflectionModels[] = { "0: Unlit", "1: Lambert", "2: Half-Lambert", "3: Phong", "4: Blinn-Phong" };
-		if (ImGui::Combo("Reflection Model", &obj.lightingType, reflectionModels, 5)) {
+		const char* reflectionModels[] = { "0: Unlit", "1: Lambert", "2: Half-Lambert", "3: Phong", "4: Blinn-Phong", "5: Toon" };
+		if (ImGui::Combo("Reflection Model", &obj.lightingType, reflectionModels, 6)) {
 			isSceneDirty_ = true;
 			PushUndoSnapshot();
 		}
-		ImGui::SetItemTooltip("Select illumination shading equation (02_00 Phong, 02_01 Blinn-Phong, Half-Lambert, or Unlit)");
+		ImGui::SetItemTooltip("Select illumination shading equation (02_00 Phong, 02_01 Blinn-Phong, Half-Lambert, Unlit, or Toon = cel-shaded bands)");
 
 		if (obj.lightingType >= 3) {
 			if (ImGui::SliderFloat("Shininess", &obj.shininess, 1.0f, 256.0f, "%.1f")) { isSceneDirty_ = true; }
@@ -47,6 +47,17 @@ void EditorSuite::DrawMeshComponentInspector(GameObject& obj)
 			ImGui::SetItemTooltip("Specular exponent power factor");
 
 			if (ImGui::ColorEdit3("Specular Color", &obj.specularColor.x)) { isSceneDirty_ = true; }
+			if (ImGui::IsItemDeactivatedAfterEdit()) PushUndoSnapshot();
+		}
+
+		if (ImGui::DragFloat(TrId("Outline Width"), &obj.outlineWidth, 0.001f, 0.0f, 0.5f, "%.3f")) {
+			obj.outlineWidth = (std::max)(0.0f, obj.outlineWidth);
+			isSceneDirty_ = true;
+		}
+		if (ImGui::IsItemDeactivatedAfterEdit()) PushUndoSnapshot();
+		ImGui::SetItemTooltip("%s", Tr("Cartoon outline in world units (0 = none). Pairs well with the Toon reflection model."));
+		if (obj.outlineWidth > 0.0f) {
+			if (ImGui::ColorEdit4(TrId("Outline Color"), &obj.outlineColor.x)) { isSceneDirty_ = true; }
 			if (ImGui::IsItemDeactivatedAfterEdit()) PushUndoSnapshot();
 		}
 

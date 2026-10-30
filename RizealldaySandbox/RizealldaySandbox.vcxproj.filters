@@ -123,6 +123,15 @@
     <ClCompile Include="EditorSuite_Update.cpp">
       <Filter>editor</Filter>
     </ClCompile>
+    <ClCompile Include="EditorSuite_Shaders.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="NavGrid.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="CharacterController.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
     <ClCompile Include="EditorSuite_Import.cpp">
       <Filter>editor</Filter>
     </ClCompile>
@@ -174,6 +183,12 @@
       <Filter>editor</Filter>
     </ClInclude>
     <ClInclude Include="EngineUpdate.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="NavGrid.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="CharacterController.h">
       <Filter>editor</Filter>
     </ClInclude>
     <ClInclude Include="AnimatorController.h">

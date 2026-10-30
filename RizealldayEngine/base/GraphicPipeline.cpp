@@ -10,22 +10,69 @@ void GraphicPipeline::Initialize(ID3D12Device* pDevice, DXCManager* dxc)
 	if (!rootSignature) {
 		return;
 	}
-	// Create PSOs for all blend modes
+	// Compile once, then create PSOs for all blend modes
+	ShaderBlobs blobs;
+	blobs.vs = dxc->CompileShader(L"shaders/Object3d.VS.hlsl", L"vs_6_0", dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
+	blobs.ps = dxc->CompileShader(L"shaders/Object3d.PS.hlsl", L"ps_6_0", dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
+	blobs.gs = dxc->CompileShader(L"shaders/Object3d.GS.hlsl", L"gs_6_0", dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
+	blobs.explode = dxc->CompileShader(L"shaders/Object3d.Explode.GS.hlsl", L"gs_6_0", dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
+	blobs.outlineVs = dxc->CompileShader(L"shaders/Object3d.Outline.VS.hlsl", L"vs_6_0", dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
+	blobs.outlinePs = dxc->CompileShader(L"shaders/Object3d.Outline.PS.hlsl", L"ps_6_0", dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
+	assert(blobs.vs != nullptr && blobs.ps != nullptr);
 	for (int i = 0; i < static_cast<int>(BlendMode::Count); i++) {
-		CreatePso(dxc, static_cast<BlendMode>(i));
+		const bool created = CreatePso(static_cast<BlendMode>(i), blobs, psos_);
+		assert(created);
+		(void)created;
 	}
+}
+
+bool GraphicPipeline::Reload(DXCManager* dxc, const std::wstring& shaderDir, std::vector<Microsoft::WRL::ComPtr<ID3D12PipelineState>>& retired, std::string* error)
+{
+	if (!dxc || !device || !rootSignature) {
+		if (error) *error = "Pipeline is not initialised.";
+		return false;
+	}
+	ShaderBlobs blobs;
+	struct Stage { const wchar_t* file; const wchar_t* profile; Microsoft::WRL::ComPtr<IDxcBlob>* out; };
+	const Stage stages[] = {
+		{ L"Object3d.VS.hlsl", L"vs_6_0", &blobs.vs },
+		{ L"Object3d.PS.hlsl", L"ps_6_0", &blobs.ps },
+		{ L"Object3d.GS.hlsl", L"gs_6_0", &blobs.gs },
+		{ L"Object3d.Explode.GS.hlsl", L"gs_6_0", &blobs.explode },
+		{ L"Object3d.Outline.VS.hlsl", L"vs_6_0", &blobs.outlineVs },
+		{ L"Object3d.Outline.PS.hlsl", L"ps_6_0", &blobs.outlinePs },
+	};
+	for (const Stage& stage : stages) {
+		*stage.out = dxc->TryCompileShader(shaderDir + L"/" + stage.file, stage.profile, error);
+		if (!*stage.out) return false;
+	}
+	PsoSet fresh;
+	for (int i = 0; i < static_cast<int>(BlendMode::Count); i++) {
+		if (!CreatePso(static_cast<BlendMode>(i), blobs, fresh)) {
+			if (error) *error = "CreateGraphicsPipelineState failed (does the shader still match the root signature and input layout?)";
+			return false;
+		}
+	}
+	for (int i = 0; i < static_cast<int>(BlendMode::Count); i++) {
+		for (Microsoft::WRL::ComPtr<ID3D12PipelineState>* pso : { psos_.standard + i, psos_.gs + i, psos_.explode + i }) {
+			if (*pso) retired.push_back(*pso);
+		}
+	}
+	if (psos_.outline) retired.push_back(psos_.outline);
+	psos_ = std::move(fresh);
+	return true;
 }
 
 void GraphicPipeline::Bind(ID3D12GraphicsCommandList* commandList, BlendMode mode, GeometryShaderMode gsMode)
 {
 	commandList->SetGraphicsRootSignature(rootSignature.Get());
 	int idx = std::clamp(static_cast<int>(mode), 0, static_cast<int>(BlendMode::Count) - 1);
-	if (gsMode == GeometryShaderMode::PassThrough && graphicsPipelineStateGS[idx]) {
-		commandList->SetPipelineState(graphicsPipelineStateGS[idx].Get());
-	} else if (gsMode == GeometryShaderMode::Explode && graphicsPipelineStateGS_Explode[idx]) {
-		commandList->SetPipelineState(graphicsPipelineStateGS_Explode[idx].Get());
+	if (gsMode == GeometryShaderMode::PassThrough && psos_.gs[idx]) {
+		commandList->SetPipelineState(psos_.gs[idx].Get());
+	} else if (gsMode == GeometryShaderMode::Explode && psos_.explode[idx]) {
+		commandList->SetPipelineState(psos_.explode[idx].Get());
 	} else {
-		commandList->SetPipelineState(graphicsPipelineState[idx].Get());
+		commandList->SetPipelineState(psos_.standard[idx].Get());
 	}
 }
 
@@ -166,7 +213,7 @@ void GraphicPipeline::CreateRootSignature()
 	assert(SUCCEEDED(hr));
 }
 
-void GraphicPipeline::CreatePso(DXCManager* dxc, BlendMode mode)
+bool GraphicPipeline::CreatePso(BlendMode mode, const ShaderBlobs& blobs, PsoSet& out)
 {
 	HRESULT hr;
 
@@ -215,12 +262,11 @@ void GraphicPipeline::CreatePso(DXCManager* dxc, BlendMode mode)
 	rasterizerDesc.CullMode = D3D12_CULL_MODE_BACK;
 	rasterizerDesc.FillMode = D3D12_FILL_MODE_SOLID;
 
-	// Compile Shaders
-	Microsoft::WRL::ComPtr<IDxcBlob> vertexShaderBlob = dxc->CompileShader(L"shaders/Object3d.VS.hlsl", L"vs_6_0", dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
-	assert(vertexShaderBlob != nullptr);
-	Microsoft::WRL::ComPtr<IDxcBlob> pixelShaderBlob = dxc->CompileShader(L"shaders/Object3d.PS.hlsl", L"ps_6_0", dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
-	assert(pixelShaderBlob != nullptr);
-	Microsoft::WRL::ComPtr<IDxcBlob> geometryShaderBlob = dxc->CompileShader(L"shaders/Object3d.GS.hlsl", L"gs_6_0", dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
+	// Shaders (compiled by the caller)
+	IDxcBlob* vertexShaderBlob = blobs.vs.Get();
+	IDxcBlob* pixelShaderBlob = blobs.ps.Get();
+	IDxcBlob* geometryShaderBlob = blobs.gs.Get();
+	if (!vertexShaderBlob || !pixelShaderBlob) return false;
 
 	// Build Standard PSO (No GS)
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC graphicsPipelineStateDesc{};
@@ -241,24 +287,41 @@ void GraphicPipeline::CreatePso(DXCManager* dxc, BlendMode mode)
 	graphicsPipelineStateDesc.DepthStencilState = depthStencilDesc;
 	graphicsPipelineStateDesc.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
 
-	hr = device->CreateGraphicsPipelineState(&graphicsPipelineStateDesc, IID_PPV_ARGS(&graphicsPipelineState[static_cast<int>(mode)]));
-	assert(SUCCEEDED(hr));
+	hr = device->CreateGraphicsPipelineState(&graphicsPipelineStateDesc, IID_PPV_ARGS(&out.standard[static_cast<int>(mode)]));
+	if (FAILED(hr)) return false;
 
 	// Build Geometry Shader PSO (Pass-Through)
 	if (geometryShaderBlob) {
 		D3D12_GRAPHICS_PIPELINE_STATE_DESC gsDesc = graphicsPipelineStateDesc;
 		gsDesc.GS = { geometryShaderBlob->GetBufferPointer(), geometryShaderBlob->GetBufferSize() };
-		hr = device->CreateGraphicsPipelineState(&gsDesc, IID_PPV_ARGS(&graphicsPipelineStateGS[static_cast<int>(mode)]));
-		assert(SUCCEEDED(hr));
+		hr = device->CreateGraphicsPipelineState(&gsDesc, IID_PPV_ARGS(&out.gs[static_cast<int>(mode)]));
+		if (FAILED(hr)) return false;
 	}
 
 	// Build Geometry Shader PSO (Explode Faces Along Normals)
-	Microsoft::WRL::ComPtr<IDxcBlob> explodeShaderBlob = dxc->CompileShader(L"shaders/Object3d.Explode.GS.hlsl", L"gs_6_0", dxc->GetDxcUtils(), dxc->GetDxcCompiler(), dxc->GetIncludeHandler());
+	IDxcBlob* explodeShaderBlob = blobs.explode.Get();
 	if (explodeShaderBlob) {
 		D3D12_GRAPHICS_PIPELINE_STATE_DESC gsExplodeDesc = graphicsPipelineStateDesc;
 		gsExplodeDesc.GS = { explodeShaderBlob->GetBufferPointer(), explodeShaderBlob->GetBufferSize() };
 		gsExplodeDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE; // Allow seeing both sides of exploded faces
-		hr = device->CreateGraphicsPipelineState(&gsExplodeDesc, IID_PPV_ARGS(&graphicsPipelineStateGS_Explode[static_cast<int>(mode)]));
-		assert(SUCCEEDED(hr));
+		hr = device->CreateGraphicsPipelineState(&gsExplodeDesc, IID_PPV_ARGS(&out.explode[static_cast<int>(mode)]));
+		if (FAILED(hr)) return false;
 	}
+
+	// Outline (inverted hull): opaque, back faces only, depth tested and written like the mesh
+	if (mode == BlendMode::Opaque && blobs.outlineVs && blobs.outlinePs) {
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC outlineDesc = graphicsPipelineStateDesc;
+		outlineDesc.VS = { blobs.outlineVs->GetBufferPointer(), blobs.outlineVs->GetBufferSize() };
+		outlineDesc.PS = { blobs.outlinePs->GetBufferPointer(), blobs.outlinePs->GetBufferSize() };
+		outlineDesc.RasterizerState.CullMode = D3D12_CULL_MODE_FRONT;
+		hr = device->CreateGraphicsPipelineState(&outlineDesc, IID_PPV_ARGS(&out.outline));
+		if (FAILED(hr)) return false;
+	}
+	return true;
+}
+
+void GraphicPipeline::BindOutline(ID3D12GraphicsCommandList* commandList)
+{
+	// Same root signature as the mesh pass, so the bound material / transform / bones stay valid
+	if (psos_.outline) commandList->SetPipelineState(psos_.outline.Get());
 }

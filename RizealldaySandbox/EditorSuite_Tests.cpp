@@ -11,6 +11,8 @@
 #include "3d/Object3d.h"
 #include "3d/AnimationPlayer.h"
 #include "EngineUpdate.h"
+#include "CharacterController.h"
+#include "NavGrid.h"
 #include "base/EngineVersion.h"
 #include <random>
 #include <set>
@@ -50,6 +52,14 @@ struct EditorSuiteTestAccess {
 	static std::filesystem::path TempRoot() { return std::filesystem::temp_directory_path() / "RizealldayTests"; }
 	static void Run(EditorSuite& s, bool running) { s.isRunningTests_ = running; }
 	static void SyncScripts(EditorSuite& s) { s.SyncScriptModuleWithProject(); }
+	static void ShaderWatch(EditorSuite& s, const std::filesystem::path& dir, const std::filesystem::path& deploy)
+	{
+		s.shaderWatchDirOverride_ = dir;
+		s.shaderDeployDirOverride_ = deploy;
+		s.shaderStamps_.clear();
+		s.shaderWatcherInitialized_ = false;
+	}
+	static int ShaderReloads(const EditorSuite& s) { return s.shaderReloadCount_; }
 	static const std::filesystem::path& ScriptsDllOverride(EditorSuite& s) { return s.scriptModule_.GetDllPathOverride(); }
 	static const std::string& EngineWarning(EditorSuite& s) { return s.projectEngineWarning_; }
 	static void Log(EditorSuite& s, const std::string& text, int type) { s.LogMessage(text, type); }
@@ -775,6 +785,8 @@ TEST_CASE(Update, ApplyReplacesOnlyEngineFolders)
 	write(package / "Editor" / "new.txt", "new");
 	write(package / "SDK" / "include" / "b.h", "b");
 	write(package / "Templates" / "t.txt", "t");
+	write(install / "GUIDE_JA.md", "old guide");
+	write(package / "GUIDE_JA.md", "new guide");
 
 	CHECK(EngineUpdate::FindInstallRoot(install / "Editor") == install);
 	CHECK(EngineUpdate::FindInstallRoot(install / "MyGame").empty());
@@ -794,6 +806,12 @@ TEST_CASE(Update, ApplyReplacesOnlyEngineFolders)
 	CHECK(fs::exists(install / "SDK" / "include" / "b.h"));
 	CHECK(!fs::exists(install / "SDK" / "include" / "a.h"));
 	CHECK(fs::exists(install / "Templates" / "t.txt"));
+	{
+		std::ifstream guide(install / "GUIDE_JA.md");
+		std::string text;
+		std::getline(guide, text);
+		CHECK_MSG(text == "new guide", "the Japanese guide is an engine file and gets updated");
+	}
 	CHECK(fs::exists(install / "MyGame" / "keep.txt"));
 	CHECK(fs::exists(install / "notes.txt"));
 	const auto installed = EngineUpdate::FindPackage(install);
@@ -1306,6 +1324,294 @@ TEST_CASE(Physics, FixedTimestepIsFrameRateIndependent)
 	CHECK_NEAR(slow, fast, 1e-4f);
 }
 
+TEST_CASE(Character, SlidesStepsLandsAndNeverTunnels)
+{
+	using CharacterController::Box;
+	const Box floor{ { -50.0f, -1.0f, -50.0f }, { 50.0f, 0.0f, 50.0f } };
+	auto standingAt = [](float x, float z) { return Box{ { x - 0.4f, 0.0f, z - 0.4f }, { x + 0.4f, 1.8f, z + 0.4f } }; };
+	const Box wall{ { 2.0f, 0.0f, -10.0f }, { 2.1f, 3.0f, 10.0f } }; // thin wall across X = 2
+
+	// Free move on the floor: full motion, grounded
+	auto r = CharacterController::Move(standingAt(0, 0), { 1.0f, 0.0f, 0.5f }, { floor }, 0.3f);
+	CHECK_NEAR(r.moved.x, 1.0f, 1e-4f);
+	CHECK_NEAR(r.moved.z, 0.5f, 1e-4f);
+	CHECK(r.grounded);
+	CHECK(!r.hitWall);
+
+	// Diagonal into a wall: stops flush on X, keeps sliding on Z
+	r = CharacterController::Move(standingAt(1.0f, 0), { 3.0f, 0.0f, 2.0f }, { floor, wall }, 0.3f);
+	CHECK(r.hitWall);
+	CHECK_NEAR(1.0f + 0.4f + r.moved.x, 2.0f, 0.01f);
+	CHECK_NEAR(r.moved.z, 2.0f, 1e-4f);
+
+	// Very fast motion does not pass through the 10 cm wall
+	r = CharacterController::Move(standingAt(0, 0), { 50.0f, 0.0f, 0.0f }, { floor, wall }, 0.3f);
+	CHECK(r.hitWall);
+	CHECK_MSG(r.moved.x < 1.7f, std::format("moved {:.3f}", r.moved.x));
+
+	// Falling: lands on the floor top, grounded; no tunnelling through it either
+	const Box inAir{ { -0.4f, 5.0f, -0.4f }, { 0.4f, 6.8f, 0.4f } };
+	r = CharacterController::Move(inAir, { 0.0f, -100.0f, 0.0f }, { floor }, 0.3f);
+	CHECK(r.grounded);
+	CHECK_NEAR(5.0f + r.moved.y, 0.0f, 0.01f);
+	r = CharacterController::Move(inAir, { 0.0f, -1.0f, 0.0f }, { floor }, 0.3f);
+	CHECK(!r.grounded); // still in the air
+
+	// Ledges: 0.2 is climbed, 0.5 blocks; nothing is climbed while airborne
+	const Box low{ { 1.0f, 0.0f, -5.0f }, { 3.0f, 0.2f, 5.0f } };
+	const Box high{ { 1.0f, 0.0f, -5.0f }, { 3.0f, 0.5f, 5.0f } };
+	r = CharacterController::Move(standingAt(0, 0), { 1.5f, 0.0f, 0.0f }, { floor, low }, 0.3f);
+	CHECK(!r.hitWall);
+	CHECK_NEAR(r.moved.x, 1.5f, 1e-3f);
+	CHECK_NEAR(r.moved.y, 0.2f, 0.01f);
+	CHECK(r.grounded);
+	r = CharacterController::Move(standingAt(0, 0), { 1.5f, 0.0f, 0.0f }, { floor, high }, 0.3f);
+	CHECK(r.hitWall);
+	CHECK_NEAR(r.moved.y, 0.0f, 1e-4f);
+	const Box hovering{ { -0.4f, 1.0f, -0.4f }, { 0.4f, 2.8f, 0.4f } };
+	const Box crate{ { 1.0f, 0.0f, -5.0f }, { 3.0f, 1.2f, 5.0f } }; // its top is 0.2 above the hovering feet
+	r = CharacterController::Move(hovering, { 1.5f, 0.0f, 0.0f }, { crate }, 0.3f);
+	CHECK(r.hitWall);
+
+	// Ceiling
+	const Box ceiling{ { -5.0f, 2.0f, -5.0f }, { 5.0f, 2.5f, 5.0f } };
+	r = CharacterController::Move(standingAt(0, 0), { 0.0f, 1.0f, 0.0f }, { floor, ceiling }, 0.3f);
+	CHECK(r.hitCeiling);
+	CHECK_NEAR(1.8f + r.moved.y, 2.0f, 0.01f);
+}
+
+TEST_CASE(Character, ScriptMoveCharacterUsesSceneColliders)
+{
+	GameObject& ground = s.CreateCube("Ground", { 0.0f, -0.5f, 0.0f });
+	ground.scale = { 40.0f, 1.0f, 40.0f };
+	ground.hasBoxCollider = true;
+	GameObject& wall = s.CreateCube("Wall", { 3.0f, 1.0f, 0.0f });
+	wall.hasBoxCollider = true;
+	GameObject& trigger = s.CreateCube("Pickup", { -3.0f, 1.0f, 0.0f });
+	trigger.hasBoxCollider = true;
+	trigger.isTrigger = true;
+	GameObject& ghost = s.CreateCube("Ghost", { 0.0f, 1.0f, 3.0f });
+	ghost.hasBoxCollider = true;
+	ghost.layer = 5;
+	GameObject& hero = s.CreateCube("Hero", { 0.0f, 0.5f, 0.0f });
+	hero.hasBoxCollider = true;
+	hero.collisionMask = ~(1u << 5); // passes through layer 5
+	const uint32_t heroId = hero.id;
+	s.RefreshAllScriptObjectViews();
+
+	EngineAPI& api = A::Api(s);
+	REQUIRE(api.moveCharacter != nullptr);
+	ScriptCharacterMove result{};
+	Vector3 motion{ 10.0f, 0.0f, 0.0f };
+	REQUIRE(api.moveCharacter(api.hostContext, heroId, motion, 0.3f, &result));
+	const GameObject* h = s.FindGameObjectById(heroId, false);
+	CHECK(result.hitWall);
+	CHECK(result.grounded);
+	CHECK_NEAR(h->translation.x, 2.0f, 0.01f); // wall face at 2.5, hero half width 0.5
+	CHECK(h->isGrounded);
+	CHECK_NEAR(A::ViewFor(s, heroId)->translation.x, h->translation.x, 1e-6f); // the script sees the new position
+
+	motion = { -12.0f, 0.0f, 0.0f }; // through the trigger
+	REQUIRE(api.moveCharacter(api.hostContext, heroId, motion, 0.3f, &result));
+	CHECK(!result.hitWall);
+	CHECK_NEAR(s.FindGameObjectById(heroId, false)->translation.x, -10.0f, 0.01f);
+
+	// A move the script makes on its view first is not lost
+	A::ViewFor(s, heroId)->translation = { 0.0f, 0.5f, 0.0f };
+	motion = { 0.0f, 0.0f, 6.0f }; // through the layer-5 object
+	REQUIRE(api.moveCharacter(api.hostContext, heroId, motion, 0.3f, &result));
+	CHECK(!result.hitWall);
+	CHECK_NEAR(s.FindGameObjectById(heroId, false)->translation.z, 6.0f, 0.01f);
+	CHECK_NEAR(s.FindGameObjectById(heroId, false)->translation.x, 0.0f, 0.01f);
+
+	CHECK(!api.moveCharacter(api.hostContext, 999999u, motion, 0.3f, &result)); // unknown object
+}
+
+TEST_CASE(Navigation, GridPathAvoidsWallsAndSmooths)
+{
+	NavGrid grid;
+	grid.Build(-10.0f, -10.0f, 10.0f, 10.0f, 0.5f);
+
+	// Open field: smoothed to a straight line
+	auto path = grid.FindPath({ -8.0f, 0.0f, 0.0f }, { 8.0f, 0.0f, 0.0f });
+	CHECK_MSG(path.size() == 2, std::format("{} points", path.size()));
+
+	// Wall across X = 0 with a gap at z in [6, 8]
+	grid.BlockRect(-0.5f, -10.0f, 0.5f, 6.0f);
+	grid.BlockRect(-0.5f, 8.0f, 0.5f, 10.0f);
+	CHECK(grid.IsBlockedAt(0.0f, 0.0f));
+	CHECK(!grid.IsBlockedAt(0.0f, 7.0f));
+	path = grid.FindPath({ -8.0f, 1.0f, 0.0f }, { 8.0f, 1.0f, 0.0f });
+	REQUIRE(path.size() >= 3);
+	CHECK_NEAR(path.front().x, -8.0f, 1e-4f);
+	CHECK_NEAR(path.back().x, 8.0f, 1e-4f);
+	CHECK_NEAR(path[1].y, 1.0f, 1e-4f); // keeps the height of the start
+	bool throughGap = false;
+	for (size_t i = 0; i + 1 < path.size(); ++i) {
+		for (int k = 0; k <= 50; ++k) {
+			const float t = k / 50.0f;
+			const float x = path[i].x + (path[i + 1].x - path[i].x) * t;
+			const float z = path[i].z + (path[i + 1].z - path[i].z) * t;
+			CHECK_MSG(!grid.IsBlockedAt(x, z), std::format("({:.2f}, {:.2f}) is inside the wall", x, z));
+			if (std::abs(x) < 0.5f && z > 6.0f && z < 8.0f) throughGap = true;
+		}
+	}
+	CHECK(throughGap);
+
+	// Goal sealed off: no path. Start outside the grid: no path.
+	grid.BlockRect(-0.5f, 6.0f, 0.5f, 8.0f);
+	CHECK(grid.FindPath({ -8.0f, 0.0f, 0.0f }, { 8.0f, 0.0f, 0.0f }).empty());
+	CHECK(grid.FindPath({ -50.0f, 0.0f, 0.0f }, { -8.0f, 0.0f, 0.0f }).empty());
+
+	// A goal just inside an obstacle (target hugging a wall) snaps to the free side
+	path = grid.FindPath({ -8.0f, 0.0f, 0.0f }, { -0.4f, 0.0f, 0.0f });
+	REQUIRE(!path.empty());
+	CHECK(!grid.IsBlockedAt(path.back().x, path.back().z));
+}
+
+TEST_CASE(Navigation, ScriptFindPathUsesStaticColliders)
+{
+	GameObject& ground = s.CreateCube("Ground", { 0.0f, -0.5f, 0.0f });
+	ground.scale = { 30.0f, 1.0f, 30.0f };
+	ground.hasBoxCollider = true;
+	ground.isStatic = true;
+	GameObject& wall = s.CreateCube("Wall", { 0.0f, 1.0f, -3.0f });
+	wall.scale = { 1.0f, 2.0f, 20.0f }; // z in [-13, 7]: go around its +z end
+	wall.hasBoxCollider = true;
+	wall.isStatic = true;
+	GameObject& crate = s.CreateCube("MovingCrate", { 0.0f, 0.5f, 10.0f }); // not static: ignored
+	crate.hasBoxCollider = true;
+
+	EngineAPI& api = A::Api(s);
+	REQUIRE(api.findPath != nullptr);
+	Vector3 points[64]{};
+	const int count = api.findPath(api.hostContext, { -5.0f, 0.5f, 0.0f }, { 5.0f, 0.5f, 0.0f }, points, 64);
+	CHECK_MSG(count >= 3, std::format("count {} first ({:.2f},{:.2f}) last ({:.2f},{:.2f})", count, points[0].x, points[0].z, points[(std::max)(count, 1) - 1].x, points[(std::max)(count, 1) - 1].z));
+	REQUIRE(count >= 3);
+	bool aroundTheEnd = false;
+	for (int i = 0; i < count; ++i) {
+		CHECK_MSG(!(std::abs(points[i].x) < 0.5f && points[i].z < 7.0f), std::format("point {} ({:.2f}, {:.2f}) in the wall", i, points[i].x, points[i].z));
+		if (points[i].z > 7.0f) aroundTheEnd = true;
+	}
+	CHECK(aroundTheEnd);
+	CHECK_NEAR(points[count - 1].x, 5.0f, 1e-3f);
+
+	// Fewer slots than points: fills what fits, returns the full length
+	Vector3 two[2]{};
+	CHECK(api.findPath(api.hostContext, { -5.0f, 0.5f, 0.0f }, { 5.0f, 0.5f, 0.0f }, two, 2) == count);
+
+	// The grid is cached; a rebuild picks up a removed wall
+	A::Objects(s).erase(std::find_if(A::Objects(s).begin(), A::Objects(s).end(), [](const GameObject& o) { return o.name == "Wall"; }));
+	CHECK(api.findPath(api.hostContext, { -5.0f, 0.5f, 0.0f }, { 5.0f, 0.5f, 0.0f }, points, 64) == count);
+	api.rebuildNavigation(api.hostContext, 0.5f, 0.4f);
+	CHECK(api.findPath(api.hostContext, { -5.0f, 0.5f, 0.0f }, { 5.0f, 0.5f, 0.0f }, points, 64) == 2);
+}
+
+TEST_CASE(Render, ShaderHotReloadKeepsOldPipelineOnError)
+{
+	namespace fs = std::filesystem;
+	const fs::path dir = A::TempRoot() / "HotShaders";
+	const fs::path deploy = A::TempRoot() / "HotShadersDeploy";
+	std::error_code ec;
+	fs::remove_all(dir, ec);
+	fs::remove_all(deploy, ec);
+	fs::copy("shaders", dir, fs::copy_options::recursive, ec);
+	REQUIRE(!ec);
+
+	// Direct reload: good shaders swap in, a broken one keeps the old pipeline
+	CHECK(s.ReloadShaders(dir));
+	{
+		std::ofstream(dir / "Object3d.PS.hlsl", std::ios::app) << "\nthis is not hlsl;\n";
+	}
+	CHECK(!s.ReloadShaders(dir));
+	fs::copy_file("shaders/Object3d.PS.hlsl", dir / "Object3d.PS.hlsl", fs::copy_options::overwrite_existing, ec);
+	CHECK(s.ReloadShaders(dir));
+	// The scene still renders with whatever pipeline is current
+	s.CreateCube("AfterReload", { 0.0f, 0.5f, 0.0f });
+	s.Update(0.016f, RizeEngine::GetInput());
+
+	// Watcher: a saved .hlsl reloads within the poll interval and is copied to the run folder
+	A::ShaderWatch(s, dir, deploy);
+	const int before = A::ShaderReloads(s);
+	s.PollShaderWatcher(0.6f); // first scan only records timestamps
+	CHECK(A::ShaderReloads(s) == before);
+	{
+		std::ofstream(dir / "Object3d.PS.hlsl", std::ios::app) << "\n// edited\n";
+	}
+	fs::last_write_time(dir / "Object3d.PS.hlsl", fs::file_time_type::clock::now() + std::chrono::seconds(2), ec);
+	s.PollShaderWatcher(0.6f);
+	CHECK(A::ShaderReloads(s) == before + 1);
+	CHECK(fs::exists(deploy / "Object3d.PS.hlsl"));
+	A::ShaderWatch(s, {}, {});
+}
+
+TEST_CASE(Render, ToonLightingModelIsSelectableAndSaved)
+{
+	GameObject& cube = s.CreateCube("ToonCube", { 0.0f, 0.5f, 0.0f });
+	const uint32_t id = cube.id;
+	EngineAPI& api = A::Api(s);
+	ScriptMaterialData mat{};
+	REQUIRE(api.getMaterial(api.hostContext, id, &mat));
+	mat.lightingType = 5;
+	REQUIRE(api.setMaterial(api.hostContext, id, &mat));
+	CHECK(s.FindGameObjectById(id, false)->lightingType == 5);
+	mat.lightingType = 99; // out of range is clamped to the last model
+	mat.outlineWidth = 0.03f;
+	mat.outlineColor = { 0.1f, 0.0f, 0.2f, 1.0f };
+	REQUIRE(api.setMaterial(api.hostContext, id, &mat));
+	CHECK(s.FindGameObjectById(id, false)->lightingType == 5);
+	mat.outlineWidth = -1.0f; // negative = none
+	REQUIRE(api.setMaterial(api.hostContext, id, &mat));
+	CHECK_NEAR(s.FindGameObjectById(id, false)->outlineWidth, 0.0f, 1e-6f);
+	mat.outlineWidth = 0.03f;
+	REQUIRE(api.setMaterial(api.hostContext, id, &mat));
+	ScriptMaterialData back{};
+	REQUIRE(api.getMaterial(api.hostContext, id, &back));
+	CHECK_NEAR(back.outlineWidth, 0.03f, 1e-6f);
+	CHECK_NEAR(back.outlineColor.z, 0.2f, 1e-6f);
+
+	const std::string json = s.SerializeSceneToString();
+	REQUIRE(s.DeserializeSceneFromString(json));
+	const GameObject* loaded = s.FindGameObjectByName("ToonCube", false);
+	REQUIRE(loaded != nullptr);
+	CHECK(loaded->lightingType == 5);
+	CHECK_NEAR(loaded->outlineWidth, 0.03f, 1e-6f);
+	CHECK_NEAR(loaded->outlineColor.x, 0.1f, 1e-6f);
+	REQUIRE(RizeEngine::GetGraphicPipeline() != nullptr);
+	CHECK(RizeEngine::GetGraphicPipeline()->HasOutline());
+	s.Update(0.016f, RizeEngine::GetInput()); // renders the toon branch and the outline pass
+	// Kept for a manual look: RizealldaySandbox.exe --scene <temp>/RizealldayTests/ToonLook/Assets/Scenes/Toon.scene.json
+	GameObject& ball = s.CreateSphere("ToonBall", { 2.0f, 1.0f, 0.0f });
+	ball.lightingType = 5;
+	ball.materialColor = { 0.95f, 0.45f, 0.2f, 1.0f };
+	ball.outlineWidth = 0.04f;
+	GameObject& plainBall = s.CreateSphere("BlinnBall", { -2.0f, 1.0f, 0.0f });
+	plainBall.materialColor = { 0.95f, 0.45f, 0.2f, 1.0f };
+	std::error_code ec;
+	std::filesystem::create_directories(A::TempRoot() / "ToonLook" / "Assets" / "Scenes", ec);
+	std::ofstream(A::TempRoot() / "ToonLook" / "Assets" / "Scenes" / "Toon.scene.json") << s.SerializeSceneToString();
+}
+
+TEST_CASE(Navigation, StateMachineHelper)
+{
+	enum State { Idle, Chase, Attack };
+	StateMachine sm{ Idle };
+	CHECK(sm.Is(Idle));
+	CHECK(sm.JustEntered()); // the first Tick sees the start state as entered
+	sm.Tick(0.5f);
+	CHECK(!sm.JustEntered());
+	CHECK_NEAR(sm.TimeInState(), 0.5f, 1e-6f);
+	sm.Set(Chase);
+	CHECK(sm.Is(Chase));
+	CHECK(sm.Previous() == Idle);
+	CHECK(sm.JustEntered());
+	CHECK_NEAR(sm.TimeInState(), 0.0f, 1e-6f);
+	sm.Tick(0.1f);
+	CHECK(!sm.JustEntered());
+	sm.Set(Chase); // same state: nothing restarts
+	CHECK_NEAR(sm.TimeInState(), 0.1f, 1e-6f);
+}
+
 TEST_CASE(GameFeel, ScriptTimersAndCooldown)
 {
 	// Cooldown: usable at start, then blocked for `duration`
@@ -1692,6 +1998,69 @@ TEST_CASE(Runtime, LoadSceneDuringPlayAndRestoreOnStop)
 	CHECK(A::ScenePath(s) == (scenes / "Stage1.scene.json").string());
 }
 
+TEST_CASE(Runtime, KeepAcrossScenesSurvivesLoadScene)
+{
+	namespace fs = std::filesystem;
+	A::ProjectRoot(s) = A::TempRoot() / "PersistProject";
+	const fs::path scenes = s.GetScenesDirectory();
+	std::error_code ec;
+	fs::create_directories(scenes, ec);
+	s.CreateCube("Stage2Marker", { 1.0f, 0.0f, 0.0f });
+	std::ofstream(scenes / "Stage2.scene.json") << s.SerializeSceneToString();
+
+	A::PrepareForTest(s);
+	A::ProjectRoot(s) = A::TempRoot() / "PersistProject";
+	GameObject& manager = s.CreateCube("GameManager", { 0.0f, 3.0f, 0.0f });
+	const uint32_t managerId = manager.id;
+	GameObject& child = s.CreateCube("ManagerChild", { 0.0f, 4.0f, 0.0f });
+	const uint32_t childId = child.id;
+	REQUIRE(s.ReparentGameObject(childId, static_cast<int>(managerId)));
+	const bool withScript = A::ScriptsLoaded(s);
+	if (withScript) s.FindGameObjectById(managerId, false)->scripts.emplace_back("RotateScript");
+	s.CreateCube("Stage1Only", { 0.0f, 0.0f, 0.0f });
+
+	s.StartPlayMode();
+	EngineAPI& api = A::Api(s);
+	REQUIRE(api.keepAcrossScenes != nullptr);
+	CHECK(!api.keepAcrossScenes(api.hostContext, childId)); // children follow their root
+	CHECK(api.keepAcrossScenes(api.hostContext, managerId));
+	ScriptBase* instanceBefore = nullptr;
+	if (withScript) {
+		const GameObject* m = s.FindGameObjectById(managerId, false);
+		instanceBefore = m->scripts.empty() ? nullptr : m->scripts[0].instance.get();
+		CHECK(instanceBefore != nullptr);
+	}
+	s.FindGameObjectById(managerId, false)->translation.x = 7.0f; // runtime state that must survive
+
+	api.loadScene(api.hostContext, "Stage2");
+	s.Update(0.016f, RizeEngine::GetInput());
+	CHECK(s.FindGameObjectByName("Stage2Marker", false) != nullptr);
+	CHECK(s.FindGameObjectByName("Stage1Only", false) == nullptr);
+	const GameObject* kept = s.FindGameObjectByName("GameManager", false);
+	REQUIRE(kept != nullptr);
+	CHECK_NEAR(kept->translation.x, 7.0f, 1e-5f);
+	const GameObject* keptChild = s.FindGameObjectByName("ManagerChild", false);
+	REQUIRE(keptChild != nullptr);
+	CHECK(keptChild->parentId == static_cast<int>(kept->id));
+	if (withScript) {
+		CHECK_MSG(!kept->scripts.empty() && kept->scripts[0].instance.get() == instanceBefore, "the same script instance keeps running (no OnDestroy / Initialize)");
+	}
+	std::set<uint32_t> ids;
+	for (const auto& o : A::Objects(s)) CHECK_MSG(ids.insert(o.id).second, std::format("duplicate id {}", o.id));
+
+	// Again into another scene: still there
+	api.loadScene(api.hostContext, "Stage2");
+	s.Update(0.016f, RizeEngine::GetInput());
+	CHECK(s.FindGameObjectByName("GameManager", false) != nullptr);
+
+	// Stop brings the edit scene back, without a second copy
+	s.StopPlayMode();
+	int managers = 0;
+	for (const auto& o : A::Objects(s)) managers += o.name == "GameManager" ? 1 : 0;
+	CHECK(managers == 1);
+	CHECK(s.FindGameObjectByName("Stage1Only", false) != nullptr);
+}
+
 // ===========================================================================
 // Samples
 // ===========================================================================
@@ -1913,7 +2282,7 @@ TEST_CASE(ScriptAPI, HierarchyAndComponentAccess)
 	const GameObject* p = s.FindGameObjectById(parent, false);
 	CHECK_NEAR(p->materialColor.w, 0.5f, 1e-6f);
 	CHECK(!p->meshEnabled);
-	CHECK(p->lightingType == 4); // clamped
+	CHECK(p->lightingType == 5); // clamped to the last model (Toon)
 
 	// Components the object does not have report false
 	ScriptLightData light{};

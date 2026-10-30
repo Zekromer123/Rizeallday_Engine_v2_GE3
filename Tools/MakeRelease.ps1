@@ -42,7 +42,7 @@ New-Item -ItemType Directory -Force "$out\Templates\ScriptsProject\Scripts", "$o
 Copy-Item "$repo\GameScripts\Scripts\dllmain.cpp" "$out\Templates\ScriptsProject\Scripts"
 Copy-Item "$repo\GameScripts\Scripts\Survivors*" "$out\Templates\Samples\Survivors"
 
-Copy-Item "$repo\Tools\README_TEAM.md" "$out"
+Copy-Item "$repo\Tools\README_TEAM.md", "$repo\Tools\GUIDE_JA.md" "$out"
 $built = (Get-Date).ToString('yyyy-MM-dd')
 Set-Content -Encoding ASCII "$out\engine.json" "{ `"version`": `"$version`", `"scriptApi`": $scriptApi, `"built`": `"$built`" }"
 

@@ -6,6 +6,7 @@ void EditorSuite::StartPlayMode()
 		sceneState_ = EditorSceneState::Play;
 		return;
 	}
+	persistentIds_.clear();
 
 	// Capture any Edit-mode Inspector tweaks into savedFields before taking the Play snapshot
 	for (auto& obj : gameObjects_) {
@@ -103,6 +104,7 @@ void EditorSuite::StartPlayMode()
 
 void EditorSuite::StopPlayMode()
 {
+	persistentIds_.clear();
 	// Stop all active runtime audio voices when exiting Play Mode
 	Audio::GetInstance()->StopAllAudio();
 	for (auto& obj : gameObjects_) {

@@ -246,5 +246,8 @@
 	"Close": "Tutup",
 	"Pick the engine release zip. You can also drop the zip on the editor window.": "Pilih zip release engine. Zip juga bisa di-drop ke jendela editor.",
 	"Initialize Git repository": "Inisialisasi repository Git",
-	"git init + first commit (needs Git). Then add a remote and push.": "git init + commit pertama (perlu Git). Lalu tambahkan remote dan push."
+	"git init + first commit (needs Git). Then add a remote and push.": "git init + commit pertama (perlu Git). Lalu tambahkan remote dan push.",
+	"Outline Width": "Tebal Outline",
+	"Outline Color": "Warna Outline",
+	"Cartoon outline in world units (0 = none). Pairs well with the Toon reflection model.": "Garis tepi kartun dalam satuan world (0 = tidak ada). Cocok dengan reflection model Toon."
 }

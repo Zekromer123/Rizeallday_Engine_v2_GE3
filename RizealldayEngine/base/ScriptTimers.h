@@ -25,6 +25,40 @@ struct Cooldown {
 	void Reset() { left = 0.0f; }
 };
 
+/// Tiny state machine for AI and game flow, with your own enum:
+///   enum State { Idle, Chase, Attack };  StateMachine ai{ Idle };
+///   in Update: switch (ai.Current()) { case Chase: if (ai.JustEntered()) {...}  if (near) ai.Set(Attack); break; ... }
+///              ai.Tick(deltaTime);   // at the END of Update, so JustEntered() is true for one whole Update
+class StateMachine {
+public:
+	explicit StateMachine(int start = 0) : current_(start), previous_(start) {}
+	int Current() const { return current_; }
+	int Previous() const { return previous_; }
+	bool Is(int state) const { return current_ == state; }
+	/// Seconds since the current state was entered (game time)
+	float TimeInState() const { return time_; }
+	/// True from Set() until the next Tick()
+	bool JustEntered() const { return justEntered_; }
+	/// Changes state; setting the current state again changes nothing
+	void Set(int state) {
+		if (state == current_) return;
+		previous_ = current_;
+		current_ = state;
+		time_ = 0.0f;
+		justEntered_ = true;
+	}
+	void Tick(float deltaTime) {
+		time_ += deltaTime;
+		justEntered_ = false;
+	}
+
+private:
+	int current_;
+	int previous_;
+	float time_ = 0.0f;
+	bool justEntered_ = true;
+};
+
 /// Delayed and repeating calls:  timers.After(0.5f, [this] { Explode(); });  timers.Every(2.0f, [this] { Spawn(); });
 class TimerQueue {
 public:
