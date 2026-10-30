@@ -118,7 +118,7 @@ bool EditorSuite::SavePrefab(uint32_t rootId, const std::string& prefabName)
 		LogMessage(std::format("[Prefab] Cannot write '{}'.", path.string()), 2);
 		return false;
 	}
-	out << prefab.dump(1, '\t');
+	out << SceneJson::DumpCompact(prefab);
 	out.close();
 
 	if (prefabCache_) {

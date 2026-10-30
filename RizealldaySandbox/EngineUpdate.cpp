@@ -81,7 +81,10 @@ int RunHiddenProcess(std::wstring cmdLine, const fs::path& workDir, std::string*
 
 const std::vector<std::string>& EngineOwnedEntries()
 {
-	static const std::vector<std::string> entries = { "Editor", "SDK", "Templates", kManifestFile, "README_TEAM.md", "GUIDE_JA.md" };
+	static const std::vector<std::string> entries = {
+		"Editor", "SDK", "Templates", kManifestFile, "README_TEAM.md", "GUIDE_JA.md",
+		"CHANGELOG.md", "SCRIPTING_GUIDE.md"
+	};
 	return entries;
 }
 

@@ -5,6 +5,23 @@ param([switch]$SkipBuild)
 $ErrorActionPreference = 'Stop'
 
 $repo = Split-Path -Parent $PSScriptRoot
+
+# Reject build if there are uncommitted changes in git
+$gitStatus = (& git -C $repo status --porcelain)
+if ($gitStatus) {
+    throw "Release build rejected: working tree has uncommitted changes:`n$gitStatus"
+}
+
+# Require SCRIPTING_GUIDE.md and CHANGELOG.md
+if (-not (Test-Path "$repo\SCRIPTING_GUIDE.md")) {
+    throw "Release build rejected: SCRIPTING_GUIDE.md not found in working tree."
+}
+if (-not (Test-Path "$repo\CHANGELOG.md")) {
+    throw "Release build rejected: CHANGELOG.md not found in repository."
+}
+
+$commit = (& git -C $repo rev-parse HEAD).Trim()
+
 $versionHeader = Get-Content -Raw "$repo\RizealldayEngine\base\EngineVersion.h"
 $version = [regex]::Match($versionHeader, 'kEngineVersion\s*=\s*"([^"]+)"').Groups[1].Value
 $scriptApi = [regex]::Match((Get-Content -Raw "$repo\RizealldayEngine\base\ScriptAPI.h"), 'kScriptApiVersion\s*=\s*(\d+)').Groups[1].Value
@@ -42,9 +59,9 @@ New-Item -ItemType Directory -Force "$out\Templates\ScriptsProject\Scripts", "$o
 Copy-Item "$repo\GameScripts\Scripts\dllmain.cpp" "$out\Templates\ScriptsProject\Scripts"
 Copy-Item "$repo\GameScripts\Scripts\Survivors*" "$out\Templates\Samples\Survivors"
 
-Copy-Item "$repo\Tools\README_TEAM.md", "$repo\Tools\GUIDE_JA.md" "$out"
+Copy-Item "$repo\Tools\README_TEAM.md", "$repo\Tools\GUIDE_JA.md", "$repo\CHANGELOG.md", "$repo\SCRIPTING_GUIDE.md" "$out"
 $built = (Get-Date).ToString('yyyy-MM-dd')
-Set-Content -Encoding ASCII "$out\engine.json" "{ `"version`": `"$version`", `"scriptApi`": $scriptApi, `"built`": `"$built`" }"
+Set-Content -Encoding ASCII "$out\engine.json" "{ `"version`": `"$version`", `"scriptApi`": $scriptApi, `"built`": `"$built`", `"commit`": `"$commit`" }"
 
 # tar.exe (Windows 10/11) writes "/" separators, which the editor's updater (also tar.exe) reads back
 $zip = "$dist\$name.zip"

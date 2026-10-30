@@ -787,6 +787,10 @@ TEST_CASE(Update, ApplyReplacesOnlyEngineFolders)
 	write(package / "Templates" / "t.txt", "t");
 	write(install / "GUIDE_JA.md", "old guide");
 	write(package / "GUIDE_JA.md", "new guide");
+	write(install / "CHANGELOG.md", "old changelog");
+	write(package / "CHANGELOG.md", "new changelog");
+	write(install / "SCRIPTING_GUIDE.md", "old scripting guide");
+	write(package / "SCRIPTING_GUIDE.md", "new scripting guide");
 
 	CHECK(EngineUpdate::FindInstallRoot(install / "Editor") == install);
 	CHECK(EngineUpdate::FindInstallRoot(install / "MyGame").empty());
@@ -811,6 +815,18 @@ TEST_CASE(Update, ApplyReplacesOnlyEngineFolders)
 		std::string text;
 		std::getline(guide, text);
 		CHECK_MSG(text == "new guide", "the Japanese guide is an engine file and gets updated");
+	}
+	{
+		std::ifstream cl(install / "CHANGELOG.md");
+		std::string text;
+		std::getline(cl, text);
+		CHECK_MSG(text == "new changelog", "the changelog is an engine file and gets updated");
+	}
+	{
+		std::ifstream sg(install / "SCRIPTING_GUIDE.md");
+		std::string text;
+		std::getline(sg, text);
+		CHECK_MSG(text == "new scripting guide", "the scripting guide is an engine file and gets updated");
 	}
 	CHECK(fs::exists(install / "MyGame" / "keep.txt"));
 	CHECK(fs::exists(install / "notes.txt"));
@@ -1787,7 +1803,23 @@ TEST_CASE(Prefabs, SaveAndInstantiateRemapsIds)
 	REQUIRE(s.ReparentGameObject(childId, static_cast<int>(rootId), false));
 
 	REQUIRE(s.SavePrefab(rootId, "Enemy"));
-	CHECK(std::filesystem::exists(A::TempRoot() / "PrefabProject" / "Assets" / "Prefabs" / "Enemy.prefab.json"));
+	const std::filesystem::path prefabFile = A::TempRoot() / "PrefabProject" / "Assets" / "Prefabs" / "Enemy.prefab.json";
+	CHECK(std::filesystem::exists(prefabFile));
+	std::string firstSave;
+	{
+		std::ifstream in(prefabFile, std::ios::binary);
+		std::stringstream ss;
+		ss << in.rdbuf();
+		firstSave = ss.str();
+	}
+	CHECK_MSG(firstSave.find('\n') != std::string::npos, "prefab file must be formatted with newlines for git readability");
+	REQUIRE(s.SavePrefab(rootId, "Enemy"));
+	{
+		std::ifstream in(prefabFile, std::ios::binary);
+		std::stringstream ss;
+		ss << in.rdbuf();
+		CHECK_MSG(ss.str() == firstSave, "saving prefab twice in a row must be byte-identical");
+	}
 	CHECK(s.HasPrefab("Enemy"));
 	CHECK(!s.HasPrefab("DoesNotExist"));
 
