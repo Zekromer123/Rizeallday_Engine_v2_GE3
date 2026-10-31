@@ -40,6 +40,9 @@ namespace EngineUpdate {
 	/// Runs a hidden console program (tar, git) and returns its exit code; -1 = it could not be started
 	int RunHiddenProcess(std::wstring cmdLine, const std::filesystem::path& workDir, std::string* output);
 
+	/// Value after `name` on the command line, "" when missing (handles quoted paths)
+	std::wstring CommandLineValue(const std::wstring& name);
+
 	/// Handles a --apply-update launch before any window exists. Returns the process exit code.
 	bool IsApplyUpdateLaunch();
 	int RunApplyUpdateMode();

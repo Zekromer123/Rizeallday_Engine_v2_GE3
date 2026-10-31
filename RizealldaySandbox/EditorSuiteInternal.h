@@ -15,6 +15,7 @@
 #include <cmath>
 #include <algorithm>
 #include <unordered_set>
+#include <set>
 #include <cstring>
 #include <string_view>
 #include <ctime>
@@ -34,6 +35,9 @@ using Localization::TrId;
 #endif
 
 namespace EditorSuiteDetail {
+/// Files a model references next to it (.obj: .mtl + maps, .gltf: buffers + images), as relative paths
+std::vector<std::string> ModelCompanionFiles(const std::filesystem::path& model);
+
 /// "Assets/Scenes/Level1.scene.json" -> "Level1" (stem() alone would give "Level1.scene")
 inline std::string SceneNameFromPath(const std::filesystem::path& path)
 {

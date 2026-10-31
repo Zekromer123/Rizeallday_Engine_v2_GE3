@@ -35,10 +35,11 @@ Rizeallday Engine は DirectX 12 / C++20 で作られた、Unity に近い操作
 ```
 RizealldayEngine/
 ├─ Editor/        エディター本体（exe、シェーダー、リソース）
+├─ Runtime/       書き出したゲームが使う Release 版の実行ファイル
 ├─ SDK/           スクリプトが使うヘッダー（ScriptAPI.h など）
 ├─ Templates/     新規プロジェクト用のテンプレート
 ├─ engine.json    エンジンのバージョン
-└─ README_TEAM.md / GUIDE_JA.md
+└─ README_TEAM.md / GUIDE_JA.md / CHANGELOG.md（変更履歴）/ SCRIPTING_GUIDE.md（API の詳細、インドネシア語）
 ```
 
 > ゲームプロジェクトは **エンジンのフォルダーの外** に置いてください（更新時にエンジンのフォルダーは入れ替わります）。
@@ -105,7 +106,10 @@ Project Hub の最近使ったプロジェクトをダブルクリック、ま�
 - キー設定: **Options > Input Actions...**（`ProjectSettings/input.json` に保存、チームで共有されます）。
 - アニメーション: **Window > Animator**（ノードで状態遷移を組む）。性能: **Window > Profiler**（Ctrl+P）。
 - サンプル: **GameObject > Samples > Survivors Demo** で見下ろし型シューターの例が作られます（スクリプト付き）。
-- ゲームの書き出し: **File > Build & Export Game...**
+- ゲームの書き出し: **File > Build & Export Game...**（既定の出力先は `<プロジェクト>/Build`）
+  - エディターなしの Release ランタイム（`Runtime/`）を使い、スクリプトも Release でコンパイルします。コンパイルに失敗すると書き出しは止まり、Console にエラーが出ます。
+  - `Resources/` からは、シーン・プレハブ・スクリプトに書かれたパスのファイルだけがコピーされます。実行時に組み立てたパスは検出できないので、自分のアセットは `Assets/` に置いてください。
+  - 提出前に、出力フォルダーを別の場所にコピーして exe を起動し、動作を確認してください。
 
 ### よく使うコンポーネント
 - **Mesh Renderer**: 形・モデル・色・テクスチャ・反射モデル（Unlit / Lambert / Half-Lambert / Phong / Blinn-Phong / Toon）・アウトライン

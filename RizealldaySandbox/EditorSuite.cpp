@@ -1,5 +1,7 @@
 ﻿#include "EditorSuiteInternal.h"
 
+#include "EngineUpdate.h"
+
 GameObject::GameObject() = default;
 GameObject::~GameObject() = default;
 
@@ -315,6 +317,7 @@ void EditorSuite::Initialize(
 	ParticleQuad* particleSystem)
 {
 	RegisterBuiltinComponents();
+	smokeFramesLeft_ = _wtoi(EngineUpdate::CommandLineValue(L"--smoke-frames").c_str());
 #ifdef USE_IMGUI
 	Localization::LoadPreference(); // editor UI language chosen in Options > Language
 #endif
@@ -336,7 +339,8 @@ void EditorSuite::Initialize(
 		}
 	}
 
-	// Ensure standard asset browser subfolders exist
+	// Ensure standard asset browser subfolders exist (an exported game ships only what it uses)
+	if (!IsExportedGameFolder("."))
 	{
 		std::error_code ec;
 		std::filesystem::create_directories("Resources/Texture", ec);
@@ -433,6 +437,8 @@ void EditorSuite::Initialize(
 
 	// Initialize GameScripts DLL hot-reload module and EngineAPI table
 	SetupEngineAPI();
+	// An exported game may sit inside a project folder: it must load its own DLL, not look for a workspace
+	if (IsExportedGameFolder(".")) scriptModule_.SetDllPath(std::filesystem::absolute(ScriptModule::kScriptsDllSubpath));
 	scriptModule_.Initialize(&engineApi_);
 	if (!scriptModule_.GetLastLoadError().empty()) {
 		LogMessage("[Scripts] " + scriptModule_.GetLastLoadError(), 2);
@@ -525,6 +531,29 @@ void EditorSuite::Initialize(
 			PostQuitMessage(0);
 		}
 	}
+
+	// Automation (Tools/SmokeTestExport.ps1): `--new-project <folder> [--sample survivors]`, `--export <folder>`. Exit code 0 = done.
+	{
+		const std::filesystem::path newProject = EngineUpdate::CommandLineValue(L"--new-project");
+		const std::filesystem::path exportDir = EngineUpdate::CommandLineValue(L"--export");
+		if (!newProject.empty() || !exportDir.empty()) {
+			bool ok = true;
+			if (!newProject.empty()) {
+				newProjectInitGit_ = false;
+				ok = CreateNewProject(newProject.parent_path().string(), newProject.filename().string());
+				if (!ok) LogMessage("[Automation] " + projectModalError_, 2);
+				if (ok && EngineUpdate::CommandLineValue(L"--sample") == L"survivors") ok = CreateSurvivorsDemo();
+			}
+			if (ok && !exportDir.empty()) {
+				strncpy_s(buildOutputDirBuf_, exportDir.string().c_str(), sizeof(buildOutputDirBuf_) - 1);
+				strncpy_s(buildStartupSceneBuf_, currentScenePath_.c_str(), sizeof(buildStartupSceneBuf_) - 1);
+				strncpy_s(buildGameTitleBuf_, currentProjectRoot_.filename().string().c_str(), sizeof(buildGameTitleBuf_) - 1);
+				ok = ExportStandaloneGame();
+			}
+			sSelfTestExitCode = ok ? 0 : 1;
+			PostQuitMessage(0);
+		}
+	}
 #endif
 
 	// Check if running as a standalone build export via game_build.cfg
@@ -567,8 +596,12 @@ void EditorSuite::Initialize(
 			if (fullscreen && activeHwnd) {
 				ShowWindow(activeHwnd, SW_MAXIMIZE);
 			}
-			if (!startupScene.empty() && std::filesystem::exists(startupScene)) {
-				LoadScene(startupScene);
+			// The game folder is its project root: input.json, GUIDs and save data resolve like in the editor
+			currentProjectRoot_ = std::filesystem::absolute(".");
+			if (startupScene.empty() || !std::filesystem::exists(startupScene)) {
+				smokeError_ = "Startup scene not found: " + startupScene;
+			} else if (!LoadScene(startupScene)) {
+				smokeError_ = "Startup scene could not be loaded: " + startupScene;
 			}
 			StartPlayMode();
 			LogMessage(std::format("[Standalone] Engine launched in Standalone Game Mode. Loaded {}", startupScene), 0);
@@ -614,6 +647,7 @@ void EditorSuite::Update(float deltaTime, Input* input)
 	currentDeltaTime_ = deltaTime;
 	unscaledDeltaTime_ = deltaTime;
 	ProcessPendingImports(); // files dropped from Explorer
+	if (smokeFramesLeft_ > 0 && --smokeFramesLeft_ == 0) FinishSmokeRun();
 
 	// Record edits deferred during the previous frame (e.g. object creation) as one undo command
 	if (undoPushPending_) {

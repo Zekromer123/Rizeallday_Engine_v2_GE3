@@ -44,6 +44,11 @@ namespace {
 
 namespace EngineUpdate {
 
+std::wstring CommandLineValue(const std::wstring& name)
+{
+	return ArgValue(name);
+}
+
 int RunHiddenProcess(std::wstring cmdLine, const fs::path& workDir, std::string* output)
 {
 	SECURITY_ATTRIBUTES sa{ sizeof(sa), nullptr, TRUE };
@@ -82,7 +87,7 @@ int RunHiddenProcess(std::wstring cmdLine, const fs::path& workDir, std::string*
 const std::vector<std::string>& EngineOwnedEntries()
 {
 	static const std::vector<std::string> entries = {
-		"Editor", "SDK", "Templates", kManifestFile, "README_TEAM.md", "GUIDE_JA.md",
+		"Editor", "Runtime", "SDK", "Templates", kManifestFile, "README_TEAM.md", "GUIDE_JA.md",
 		"CHANGELOG.md", "SCRIPTING_GUIDE.md"
 	};
 	return entries;

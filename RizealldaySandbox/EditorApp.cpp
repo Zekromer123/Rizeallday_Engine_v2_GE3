@@ -32,7 +32,8 @@ void EditorApp::Initialize() {
 	// Headless self-tests (EditorSuite_Tests.cpp) are only compiled into editor builds
 	bool runSelfTests = false;
 #ifdef USE_IMGUI
-	runSelfTests = std::strstr(GetCommandLineA(), "--run-tests") != nullptr;
+	// `--export` / `--new-project` (Tools/SmokeTestExport.ps1) are headless too
+	runSelfTests = std::strstr(GetCommandLineA(), "--run-tests") != nullptr || std::strstr(GetCommandLineA(), "--export") != nullptr || std::strstr(GetCommandLineA(), "--new-project") != nullptr;
 #endif
 	if (testMode_ || runSelfTests || isExportedGame) {
 		sceneManager_.ChangeScene(std::make_unique<EditorScene>());

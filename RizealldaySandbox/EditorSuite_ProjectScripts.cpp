@@ -121,6 +121,14 @@ fs::path EditorSuite::ResolveEngineTemplatesDir()
 	return ScriptModule::ResolveWorkspaceRoot() / "Templates";
 }
 
+fs::path EditorSuite::ResolveRuntimeDir() const
+{
+	if (!exportRuntimeDirOverride_.empty()) return exportRuntimeDirOverride_;
+	const fs::path install = EngineUpdate::FindInstallRoot(GetExecutableDirectory());
+	if (!install.empty()) return install / "Runtime";
+	return ScriptModule::ResolveWorkspaceRoot() / "bin" / "Release";
+}
+
 bool EditorSuite::CreateProjectScripts(const fs::path& projectRoot, const std::string& projectName, std::string* error)
 {
 	std::error_code ec;

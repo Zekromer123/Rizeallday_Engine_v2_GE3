@@ -1,7 +1,6 @@
 # Builds the engine and packs it for the team: dist\RizealldayEngine-<version>.zip
-#   powershell -ExecutionPolicy Bypass -File Tools\MakeRelease.ps1 [-SkipBuild]
+#   powershell -ExecutionPolicy Bypass -File Tools\MakeRelease.ps1
 # Bump kEngineVersion in RizealldayEngine\base\EngineVersion.h before every release.
-param([switch]$SkipBuild)
 $ErrorActionPreference = 'Stop'
 
 $repo = Split-Path -Parent $PSScriptRoot
@@ -27,13 +26,12 @@ $version = [regex]::Match($versionHeader, 'kEngineVersion\s*=\s*"([^"]+)"').Grou
 $scriptApi = [regex]::Match((Get-Content -Raw "$repo\RizealldayEngine\base\ScriptAPI.h"), 'kScriptApiVersion\s*=\s*(\d+)').Groups[1].Value
 if (-not $version -or -not $scriptApi) { throw 'Could not read kEngineVersion / kScriptApiVersion.' }
 
-if (-not $SkipBuild) {
-    $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-    $msbuild = & $vswhere -latest -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
-    foreach ($config in 'Development', 'Release') {
-        & $msbuild "$repo\Rizeallday_Engine_v2_GE3.slnx" /p:Configuration=$config /p:Platform=x64 /m /nologo /v:minimal
-        if ($LASTEXITCODE -ne 0) { throw "$config build failed." }
-    }
+# Always built here, so the commit in engine.json is the code in the zip
+$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+$msbuild = & $vswhere -latest -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
+foreach ($config in 'Development', 'Release') {
+    & $msbuild "$repo\Rizeallday_Engine_v2_GE3.slnx" /p:Configuration=$config /p:Platform=x64 /m /nologo /v:minimal
+    if ($LASTEXITCODE -ne 0) { throw "$config build failed." }
 }
 
 $name = "RizealldayEngine-$version"
@@ -47,6 +45,11 @@ $bin = "$repo\bin\Development"
 New-Item -ItemType Directory -Force "$out\Editor" | Out-Null
 Copy-Item "$bin\RizealldaySandbox.exe", "$bin\*.dll" "$out\Editor"
 Copy-Item -Recurse "$bin\Resources", "$bin\shaders" "$out\Editor"
+
+# Runtime\ = the Release build (no editor): every exported game starts from these files
+$release = "$repo\bin\Release"
+New-Item -ItemType Directory -Force "$out\Runtime" | Out-Null
+Copy-Item "$release\RizealldaySandbox.exe", "$release\*.dll" "$out\Runtime"
 
 # SDK\include = the headers game scripts compile against (header-only: scripts link nothing from the engine)
 New-Item -ItemType Directory -Force "$out\SDK\include\base", "$out\SDK\include\math" | Out-Null

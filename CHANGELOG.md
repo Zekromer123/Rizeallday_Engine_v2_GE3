@@ -1,5 +1,22 @@
 # Changelog — Rizeallday Engine v2
 
+## [2.3.0] — 2026-10-31
+
+### Fitur Baru
+- **Export game sungguhan**: **File > Build & Export Game...** kini memakai runtime Release (folder `Runtime/` di paket engine), tanpa UI editor.
+- **Script di-compile saat export**: konfigurasi Release yang teroptimasi. Kalau script gagal di-compile, export berhenti dengan error di Console.
+- **Hanya menyalin yang perlu**: dari `Resources/` hanya file yang dipakai (ukuran contoh turun ke ±22 MB).
+
+### Perbaikan
+- Game hasil export kini membaca `ProjectSettings/input.json`, sebelumnya selalu memakai tombol default.
+- Game hasil export di dalam folder project kini memuat `GameScripts.dll` miliknya sendiri.
+- Folder export default kini `<Project>/Build`, bukan di dalam folder engine yang diganti saat update.
+
+### Catatan
+- Script yang menyusun path `Resources/...` saat runtime tidak terdeteksi exporter. Letakkan aset di `Assets/`.
+
+---
+
 ## [2.2.0] — 2026-10-30
 
 ### Fitur Baru

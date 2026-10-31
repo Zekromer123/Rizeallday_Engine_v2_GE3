@@ -19,6 +19,21 @@ std::filesystem::path EditorSuite::ResolveSceneRequest(const std::string& nameOr
 	return std::filesystem::path(ResolveAssetPath(nameOrPath));
 }
 
+void EditorSuite::FinishSmokeRun()
+{
+	std::string error = smokeError_;
+	if (error.empty() && !isStandaloneGameMode_) error = "Not running as an exported game (game_build.cfg missing or invalid).";
+	if (error.empty() && !scriptModule_.GetLastLoadError().empty()) error = scriptModule_.GetLastLoadError();
+	for (const auto& obj : gameObjects_) {
+		for (const auto& sc : obj.scripts) {
+			if (error.empty() && !sc.className.empty() && !sc.instance) error = std::format("Script '{}' on '{}' did not load.", sc.className, obj.name);
+		}
+	}
+	std::ofstream(kSmokeResultFile, std::ios::trunc) << (error.empty() ? std::format("OK: {} objects", gameObjects_.size()) : "FAILED: " + error) << "\n";
+	sSelfTestExitCode = error.empty() ? 0 : 1;
+	PostQuitMessage(0);
+}
+
 bool EditorSuite::KeepAcrossScenes(uint32_t id)
 {
 	const GameObject* obj = FindGameObjectById(id, false);

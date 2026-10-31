@@ -113,6 +113,11 @@ namespace {
 	}
 }
 
+std::vector<std::string> EditorSuiteDetail::ModelCompanionFiles(const fs::path& model)
+{
+	return CompanionFiles(model);
+}
+
 std::vector<std::string> EditorSuite::OpenNativeFilesDialog()
 {
 	std::vector<std::string> files;

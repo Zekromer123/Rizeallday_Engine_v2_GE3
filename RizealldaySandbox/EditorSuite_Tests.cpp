@@ -52,6 +52,10 @@ struct EditorSuiteTestAccess {
 	static std::filesystem::path TempRoot() { return std::filesystem::temp_directory_path() / "RizealldayTests"; }
 	static void Run(EditorSuite& s, bool running) { s.isRunningTests_ = running; }
 	static void SyncScripts(EditorSuite& s) { s.SyncScriptModuleWithProject(); }
+	static const char* BuildOutputDir(const EditorSuite& s) { return s.buildOutputDirBuf_; }
+	static void SetBuildOutputDir(EditorSuite& s, const std::string& dir) { strncpy_s(s.buildOutputDirBuf_, dir.c_str(), sizeof(s.buildOutputDirBuf_) - 1); }
+	static const char* BuildGameTitle(const EditorSuite& s) { return s.buildGameTitleBuf_; }
+	static std::filesystem::path& ExportRuntimeOverride(EditorSuite& s) { return s.exportRuntimeDirOverride_; }
 	static void ShaderWatch(EditorSuite& s, const std::filesystem::path& dir, const std::filesystem::path& deploy)
 	{
 		s.shaderWatchDirOverride_ = dir;
@@ -785,6 +789,7 @@ TEST_CASE(Update, ApplyReplacesOnlyEngineFolders)
 	write(package / "Editor" / "new.txt", "new");
 	write(package / "SDK" / "include" / "b.h", "b");
 	write(package / "Templates" / "t.txt", "t");
+	write(package / "Runtime" / "game.exe", "runtime");
 	write(install / "GUIDE_JA.md", "old guide");
 	write(package / "GUIDE_JA.md", "new guide");
 	write(install / "CHANGELOG.md", "old changelog");
@@ -810,6 +815,7 @@ TEST_CASE(Update, ApplyReplacesOnlyEngineFolders)
 	CHECK(fs::exists(install / "SDK" / "include" / "b.h"));
 	CHECK(!fs::exists(install / "SDK" / "include" / "a.h"));
 	CHECK(fs::exists(install / "Templates" / "t.txt"));
+	CHECK_MSG(fs::exists(install / "Runtime" / "game.exe"), "exports come from Runtime/, so updates must replace it");
 	{
 		std::ifstream guide(install / "GUIDE_JA.md");
 		std::string text;
@@ -996,6 +1002,80 @@ TEST_CASE(Export, GameConfigDetection)
 	// The editor's own folder must never be mistaken for an exported game
 	CHECK(!EditorSuite::IsExportedGameFolder("."));
 	CHECK(std::string(EditorSuite::kExportedGameConfigFile) == "game_build.cfg");
+}
+
+TEST_CASE(Export, StandaloneFolderIsMinimalAndUsesRuntime)
+{
+	namespace fs = std::filesystem;
+	const fs::path base = A::TempRoot() / "ExportMinimal";
+	std::error_code ec;
+	fs::remove_all(base, ec);
+	fs::create_directories(base, ec);
+	const fs::path savedRoot = A::ProjectRoot(s);
+	const fs::path savedDirectory = A::CurrentDirectory(s);
+	auto readAll = [](const fs::path& file) {
+		std::ifstream in(file, std::ios::binary);
+		return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+	};
+
+	REQUIRE(s.CreateNewProject(base.string(), "MiniGame"));
+	const fs::path root = base / "MiniGame";
+	CHECK_MSG(fs::path(A::BuildOutputDir(s)) == root / "Build", std::string("default output: ") + A::BuildOutputDir(s)); // never inside the engine folder
+
+	GameObject& cube = s.CreateCube("Referencing", { 0.0f, 0.5f, 0.0f });
+	cube.meshType = GameObject::MeshType::CustomModel;
+	cube.modelPath = "Resources/Model/cube.obj";
+	REQUIRE(s.SaveScene(A::ScenePath(s)));
+	std::ofstream(root / "GameScripts" / "Scripts" / "UsesResource.cpp") << "const char* kTex = \"Resources/Texture/circle.png\";\n";
+	std::ofstream(root / "ProjectSettings" / "input.json") << "{}";
+
+	const fs::path out = base / "Out";
+	A::SetBuildOutputDir(s, out.string());
+	REQUIRE(s.ExportStandaloneGame());
+
+	// The Release runtime, not the running editor
+	const fs::path runtime = s.ResolveRuntimeDir();
+	REQUIRE(fs::exists(runtime / "RizealldaySandbox.exe"));
+	const std::string exeName = std::string(A::BuildGameTitle(s)) + ".exe";
+	REQUIRE(fs::exists(out / exeName));
+	CHECK_MSG(readAll(out / exeName) == readAll(runtime / "RizealldaySandbox.exe"), "the exported exe must be the runtime exe");
+	wchar_t running[MAX_PATH] = {};
+	GetModuleFileNameW(nullptr, running, MAX_PATH);
+	CHECK(readAll(out / exeName) != readAll(running));
+
+	// What the game needs
+	for (const char* needed : { "game_build.cfg", "assimp-vc143-mt.dll", "dxcompiler.dll", "dxil.dll", "bin/Scripts/GameScripts.dll",
+		"shaders/Object3d.PS.hlsl", "ProjectSettings/input.json",
+		"Resources/circle.png", "Resources/skybox.dds", "Resources/Model/cube.obj", "Resources/Texture/circle.png" }) {
+		CHECK_MSG(fs::exists(out / needed), needed);
+	}
+	CHECK(fs::exists(out / fs::path(A::ScenePath(s)).lexically_relative(root)));
+	CHECK(fs::exists(out / (fs::path(A::ScenePath(s)).lexically_relative(root).string() + ".meta")));
+
+	// What it does not need
+	for (const char* extra : { "GameScripts", "Library", "ProjectSettings/project.json", "Resources/Title", "Resources/Localization",
+		"Resources/Model/Idle.fbx", "imgui.ini", "test_results.txt" }) {
+		CHECK_MSG(!fs::exists(out / extra), extra);
+	}
+	for (auto it = fs::recursive_directory_iterator(out, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+		CHECK_MSG(it->path().extension() != ".pdb", it->path().string());
+	}
+
+	// Refusals: inside Assets (it would copy into itself), no runtime
+	A::SetBuildOutputDir(s, (root / "Assets" / "Game").string());
+	CHECK(!s.ExportStandaloneGame());
+	CHECK(!fs::exists(root / "Assets" / "Game"));
+	const fs::path out2 = base / "Out2";
+	A::SetBuildOutputDir(s, out2.string());
+	A::ExportRuntimeOverride(s) = base / "NoRuntimeHere";
+	CHECK(!s.ExportStandaloneGame());
+	CHECK(!fs::exists(out2 / exeName));
+	A::ExportRuntimeOverride(s).clear();
+
+	A::SetBuildOutputDir(s, "Build");
+	A::ProjectRoot(s) = savedRoot;
+	A::CurrentDirectory(s) = savedDirectory;
+	A::SyncScripts(s);
 }
 
 // ===========================================================================

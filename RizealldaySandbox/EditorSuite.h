@@ -609,6 +609,10 @@ public:
 
 	// Standalone Game Exporter & Preview Mode
 	bool ExportStandaloneGame();
+	/// Compiles the scripts (Release) for an export. False = failed; `outDll` stays empty when there is no scripts project.
+	bool BuildScriptsForExport(std::filesystem::path& outDll);
+	/// Folder with the Release exe + DLLs that exports are made from: <install>/Runtime, or bin/Release in the source tree
+	std::filesystem::path ResolveRuntimeDir() const;
 	bool IsStandaloneMode() const {
 #ifdef USE_IMGUI
 		return isStandaloneGameMode_ || isStandalonePreview_;
@@ -919,6 +923,12 @@ private:
 	bool isStandalonePreview_ = false;
 	bool showBuildSettingsModal_ = false;
 	char buildOutputDirBuf_[512] = "Build";
+	std::filesystem::path exportRuntimeDirOverride_; // self-tests only
+	// `--smoke-frames <N>`: run N frames, write smoke_result.txt, exit 0 / 1 (Tools/SmokeTestExport.ps1)
+	static constexpr const char* kSmokeResultFile = "smoke_result.txt";
+	int smokeFramesLeft_ = 0;
+	std::string smokeError_;
+	void FinishSmokeRun();
 	char buildGameTitleBuf_[128] = "RizealldayGame";
 	int buildResolutionIndex_ = 0; // 0: 1920x1080, 1: 1280x720, 2: 2560x1440
 	bool buildFullscreen_ = false;

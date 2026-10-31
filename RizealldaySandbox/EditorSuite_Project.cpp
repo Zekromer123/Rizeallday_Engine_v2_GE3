@@ -55,6 +55,21 @@ namespace {
 			"- Scripts are in `GameScripts/Scripts`; open `" + name + ".sln` in Visual Studio.\n");
 	}
 
+	/// Adds every quoted "Resources/..." path in a text file (scene, prefab or script source) to `out`
+	void CollectResourceReferences(const std::filesystem::path& file, std::set<std::string>& out)
+	{
+		std::ifstream in(file, std::ios::binary);
+		const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+		const std::string key = "\"Resources";
+		for (size_t pos = text.find(key); pos != std::string::npos; pos = text.find(key, pos + 1)) {
+			const size_t end = text.find_first_of("\"\r\n", pos + 1);
+			if (end == std::string::npos || text[end] != '"') continue;
+			std::string path = text.substr(pos + 1, end - pos - 1);
+			for (size_t slash = path.find("\\\\"); slash != std::string::npos; slash = path.find("\\\\", slash)) path.replace(slash, 2, "/");
+			if (path.starts_with("Resources/") && path.size() > 10) out.insert(path);
+		}
+	}
+
 	/// `git init` + first commit when git is installed. Returns a log line.
 	std::string InitGitRepository(const std::filesystem::path& root)
 	{
@@ -179,6 +194,7 @@ bool EditorSuite::CreateNewProject(const std::string& parentFolder, const std::s
 		strncpy_s(openScenePathBuf_, currentScenePath_.c_str(), sizeof(openScenePathBuf_) - 1);
 		strncpy_s(buildStartupSceneBuf_, currentScenePath_.c_str(), sizeof(buildStartupSceneBuf_) - 1);
 		strncpy_s(buildGameTitleBuf_, name.c_str(), sizeof(buildGameTitleBuf_) - 1);
+		strncpy_s(buildOutputDirBuf_, (projPath / "Build").string().c_str(), sizeof(buildOutputDirBuf_) - 1);
 		sSessionProjectRoot_ = projPath;
 		AddRecentProject(projPath);
 		// .meta files first, so the first commit is complete
@@ -561,6 +577,7 @@ bool EditorSuite::OpenProject(const std::string& folderPath)
 	if (!std::filesystem::exists(currentDirectory_)) currentDirectory_ = currentProjectRoot_;
 	strncpy_s(openProjectFolderBuf_, currentProjectRoot_.string().c_str(), sizeof(openProjectFolderBuf_) - 1);
 	strncpy_s(buildGameTitleBuf_, (gameTitle.empty() ? projectName : gameTitle).c_str(), sizeof(buildGameTitleBuf_) - 1);
+	strncpy_s(buildOutputDirBuf_, (currentProjectRoot_ / "Build").string().c_str(), sizeof(buildOutputDirBuf_) - 1); // not next to the editor: updates replace that folder
 	SyncScriptModuleWithProject(); // before the scene so its scripts come from the project's DLL
 
 	std::filesystem::path sceneFullPath = currentProjectRoot_ / startupScene;
@@ -618,64 +635,134 @@ void EditorSuite::ToggleStandalonePreview()
 	}
 }
 
+bool EditorSuite::BuildScriptsForExport(std::filesystem::path& outDll)
+{
+	namespace fs = std::filesystem;
+	std::error_code ec;
+	outDll.clear();
+	if (isRunningTests_) { // self-tests never start MSBuild
+		outDll = ScriptModule::ResolveWorkspaceRoot() / ScriptModule::kScriptsDllSubpath;
+		return true;
+	}
+	const fs::path vcxproj = ResolveGameScriptsVcxproj();
+	if (!fs::exists(vcxproj, ec)) {
+		LogMessage("[Build] This project has no scripts project; exporting without scripts.", 1);
+		return true;
+	}
+	const std::string msbuild = ResolveMsBuildExe();
+	if (!fs::exists(msbuild, ec)) {
+		LogMessage(std::format("[Build] MSBuild.exe not found ('{}'). Install Visual Studio with C++.", msbuild), 2);
+		return false;
+	}
+	EnsureProjectScriptsProps();
+	// Own output folders: the editor keeps its hot-reloaded Development DLL
+	const fs::path output = vcxproj.parent_path().parent_path() / (ProjectScriptsDir().empty() ? "bin" : "Library") / "ScriptsExport";
+	fs::create_directories(output, ec);
+	const std::wstring outText = output.wstring();
+	const std::wstring cmd = L"\"" + fs::path(msbuild).wstring() + L"\" \"" + vcxproj.wstring() + L"\" /t:Build /p:Configuration=Release /p:Platform=x64"
+		L" \"/p:OutDir=" + outText + L"\\\\\" \"/p:IntDir=" + outText + L"\\obj\\\\\" /m /v:minimal /nologo";
+	LogMessage("[Build] Compiling the scripts (Release)...", 0);
+	std::string log;
+	const int code = EngineUpdate::RunHiddenProcess(cmd, vcxproj.parent_path(), &log);
+	if (code != 0 || !fs::exists(output / "GameScripts.dll", ec)) {
+		std::istringstream lines(log);
+		for (std::string line; std::getline(lines, line);) {
+			if (line.find(": error") != std::string::npos) LogMessage("[MSBuild] " + line, 2);
+		}
+		LogMessage(std::format("[Build] Export stopped: the scripts did not compile (exit code {}).", code), 2);
+		bottomPanelTab_ = 1;
+		return false;
+	}
+	outDll = output / "GameScripts.dll";
+	return true;
+}
+
 bool EditorSuite::ExportStandaloneGame()
 {
 	try {
-		std::filesystem::path outDir(buildOutputDirBuf_);
-		std::filesystem::create_directories(outDir);
+		namespace fs = std::filesystem;
+		const fs::path outDir = fs::absolute(buildOutputDirBuf_);
 
-		char exePath[MAX_PATH] = {};
-		GetModuleFileNameA(NULL, exePath, MAX_PATH);
-		std::filesystem::path sourceExe(exePath);
+		// Assets are copied below, so the game cannot live inside them
+		if (!currentProjectRoot_.empty()) {
+			std::error_code relEc;
+			const fs::path rel = fs::weakly_canonical(outDir, relEc).lexically_relative(fs::weakly_canonical(currentProjectRoot_ / "Assets", relEc));
+			if (!rel.empty() && !rel.native().starts_with(L"..")) {
+				LogMessage("[Build] Choose an output folder outside Assets/.", 2);
+				return false;
+			}
+		}
 
+		// The game runs on the Release runtime (no editor, no ImGui)
+		const fs::path runtimeDir = ResolveRuntimeDir();
+		const fs::path runtimeExe = runtimeDir / "RizealldaySandbox.exe";
+		if (!fs::exists(runtimeExe)) {
+			LogMessage(std::format("[Build] Export needs the Release runtime, which is missing: {}. Build the Release configuration, or reinstall the engine zip.", runtimeExe.string()), 2);
+			return false;
+		}
+
+		// Fresh, optimized scripts first: nothing is written if they do not compile
+		fs::path scriptsDll;
+		if (!BuildScriptsForExport(scriptsDll)) return false;
+
+		fs::create_directories(outDir);
 		std::string gameTitle = (buildGameTitleBuf_[0] != '\0') ? buildGameTitleBuf_ : "RizealldayGame";
 		std::string targetExeName = gameTitle + ".exe";
-		std::filesystem::copy_file(sourceExe, outDir / targetExeName, std::filesystem::copy_options::overwrite_existing);
+		fs::copy_file(runtimeExe, outDir / targetExeName, fs::copy_options::overwrite_existing);
+		for (const auto& entry : fs::directory_iterator(runtimeDir)) {
+			if (entry.is_regular_file() && entry.path().extension() == ".dll") {
+				fs::copy_file(entry.path(), outDir / entry.path().filename(), fs::copy_options::overwrite_existing);
+			}
+		}
+		if (!scriptsDll.empty()) {
+			const fs::path dstScriptsDll = outDir / ScriptModule::kScriptsDllSubpath;
+			fs::create_directories(dstScriptsDll.parent_path());
+			fs::copy_file(scriptsDll, dstScriptsDll, fs::copy_options::overwrite_existing);
+		}
 
-		auto binDir = sourceExe.parent_path();
-		std::vector<std::filesystem::path> dllSearchDirs = {
-			binDir,
-			std::filesystem::current_path(),
-			binDir.parent_path().parent_path()
-		};
-		for (const auto& dir : dllSearchDirs) {
-			if (std::filesystem::exists(dir) && std::filesystem::is_directory(dir)) {
-				for (const auto& entry : std::filesystem::directory_iterator(dir)) {
-					if (entry.is_regular_file() && entry.path().extension() == ".dll") {
-						std::filesystem::copy_file(entry.path(), outDir / entry.path().filename(), std::filesystem::copy_options::overwrite_existing);
-					}
+		// Shaders are compiled at startup
+		if (fs::exists("shaders")) {
+			fs::copy("shaders", outDir / "shaders", fs::copy_options::recursive | fs::copy_options::overwrite_existing);
+		}
+
+		// The project's Assets/ and input map. Scenes store paths relative to the project root, which becomes the game's working directory.
+		if (!currentProjectRoot_.empty() && fs::exists(currentProjectRoot_ / "Assets")) {
+			fs::copy(currentProjectRoot_ / "Assets", outDir / "Assets", fs::copy_options::recursive | fs::copy_options::overwrite_existing);
+		}
+		if (!currentProjectRoot_.empty() && fs::exists(currentProjectRoot_ / "ProjectSettings" / "input.json")) {
+			fs::create_directories(outDir / "ProjectSettings");
+			fs::copy_file(currentProjectRoot_ / "ProjectSettings" / "input.json", outDir / "ProjectSettings" / "input.json", fs::copy_options::overwrite_existing);
+		}
+
+		// Only the engine resources that are used: what the runtime always loads, plus every "Resources/..." the project names
+		std::set<std::string> resources = { "Resources/circle.png", "Resources/skybox.dds", "Resources/Model/white.png" };
+		if (!currentProjectRoot_.empty()) {
+			std::error_code scanEc;
+			for (const fs::path& dir : { currentProjectRoot_ / "Assets", currentProjectRoot_ / "GameScripts" / "Scripts" }) {
+				for (auto it = fs::recursive_directory_iterator(dir, scanEc); !scanEc && it != fs::recursive_directory_iterator(); it.increment(scanEc)) {
+					const std::string ext = it->path().extension().string();
+					if (ext == ".json" || ext == ".cpp" || ext == ".h") CollectResourceReferences(it->path(), resources);
 				}
+				scanEc.clear();
 			}
 		}
-
-		// Copy bin/Scripts/GameScripts.dll into exported standalone directory
-		{
-			std::filesystem::path srcScriptsDll = scriptModule_.ResolveDllPath();
-			if (std::filesystem::exists(srcScriptsDll)) {
-				std::error_code ec;
-				std::filesystem::path dstScriptsDll = outDir / ScriptModule::kScriptsDllSubpath;
-				std::filesystem::create_directories(dstScriptsDll.parent_path(), ec);
-				std::filesystem::copy_file(srcScriptsDll, dstScriptsDll, std::filesystem::copy_options::overwrite_existing, ec);
+		for (const std::string& resource : resources) {
+			const fs::path source(resource);
+			std::error_code copyEc;
+			if (!fs::is_regular_file(source, copyEc)) {
+				LogMessage("[Build] Referenced resource not found, not exported: " + resource, 1);
+				continue;
 			}
-		}
-
-		// Copy Resources/ and shaders/
-		if (std::filesystem::exists("Resources")) {
-			std::filesystem::copy("Resources", outDir / "Resources", std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing);
-		} else if (std::filesystem::exists(binDir / "Resources")) {
-			std::filesystem::copy(binDir / "Resources", outDir / "Resources", std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing);
-		}
-
-		if (std::filesystem::exists("shaders")) {
-			std::filesystem::copy("shaders", outDir / "shaders", std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing);
-		} else if (std::filesystem::exists(binDir / "shaders")) {
-			std::filesystem::copy(binDir / "shaders", outDir / "shaders", std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing);
-		}
-
-		// Copy the open project's Assets/ (scenes, textures, models, audio). Scenes store asset paths
-		// relative to the project root, which becomes the exported game's working directory.
-		if (!currentProjectRoot_.empty() && std::filesystem::exists(currentProjectRoot_ / "Assets")) {
-			std::filesystem::copy(currentProjectRoot_ / "Assets", outDir / "Assets", std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing);
+			fs::create_directories((outDir / source).parent_path());
+			fs::copy_file(source, outDir / source, fs::copy_options::overwrite_existing);
+			for (const std::string& companion : EditorSuiteDetail::ModelCompanionFiles(source)) {
+				fs::create_directories((outDir / source.parent_path() / companion).parent_path());
+				fs::copy_file(source.parent_path() / companion, outDir / source.parent_path() / companion, fs::copy_options::overwrite_existing, copyEc);
+			}
+			const fs::path fbm = source.parent_path() / (source.stem().string() + ".fbm");
+			if (fs::is_directory(fbm, copyEc)) {
+				fs::copy(fbm, outDir / fbm, fs::copy_options::recursive | fs::copy_options::overwrite_existing, copyEc);
+			}
 		}
 
 		// Determine relative path for startup scene inside exported directory
